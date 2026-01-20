@@ -140,7 +140,7 @@ export default function AddRoomScreen() {
 
   const handleSave = () => {
     if (!formData.name.trim()) {
-      Alert.alert('Error', 'Please enter a room name/number');
+      Alert.alert('Error', 'Please enter a room number');
       return;
     }
 
@@ -193,7 +193,9 @@ export default function AddRoomScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={primaryColor} />
           <ThemedText style={[styles.backButtonText, { color: primaryColor }]}>Cancel</ThemedText>
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Add New Room</ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textColor }]}>
+          {isEditing ? 'Edit Room' : 'Add New Room'}
+        </ThemedText>
         <TouchableOpacity
           style={[styles.saveHeaderButton, { backgroundColor: primaryColor }]}
           onPress={handleSave}
@@ -213,19 +215,23 @@ export default function AddRoomScreen() {
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Room Name */}
+          {/* Room Number */}
           <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Room Name/Number
+                Room Number <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
               </ThemedText>
               <TextInput
                 style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="e.g., Master Bedroom"
+                placeholder="e.g., 1, 2, 3"
                 placeholderTextColor={secondaryTextColor}
                 value={formData.name}
                 onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                keyboardType="default"
               />
+              <ThemedText style={[styles.inputHint, { color: secondaryTextColor }]}>
+                Use numbers only. Room details can be added in the lease form.
+              </ThemedText>
             </View>
 
             {/* Description */}
@@ -547,6 +553,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  inputHint: {
+    fontSize: 12,
+    marginTop: 4,
   },
 });
 

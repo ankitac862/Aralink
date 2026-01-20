@@ -32,7 +32,7 @@ export default function TenantLeaseStartScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Lease Application</ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Rental Application</ThemedText>
         <View style={{ width: 24 }} />
       </View>
 
@@ -65,7 +65,7 @@ export default function TenantLeaseStartScreen() {
             <TouchableOpacity
               style={[styles.primaryButton, { backgroundColor: primaryColor }]}
               onPress={() => router.push('/tenant-lease-step1')}>
-              <ThemedText style={styles.buttonText}>Apply for a Lease</ThemedText>
+              <ThemedText style={styles.buttonText}>Start Application</ThemedText>
             </TouchableOpacity>
           )}
         </View>

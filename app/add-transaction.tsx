@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,8 +18,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import PropertyAddressSelector, { SelectedPropertyData } from '@/components/PropertyAddressSelector';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/hooks/use-auth';
+import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
+import { createTransaction, findActiveLease } from '@/lib/supabase';
 
 type TransactionType = 'income' | 'expense';
 
@@ -26,6 +32,10 @@ interface FormData {
   amount: string;
   date: Date;
   propertyId: string;
+  unitId: string;
+  subunitId: string;
+  tenantId: string;
+  leaseId: string;
   category: string;
   serviceType: string;
   description: string;
@@ -48,7 +58,28 @@ export default function AddTransactionScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { properties } = usePropertyStore();
+  const { user: authUser } = useAuth(); // For createTransaction
+  const { user } = useAuthStore(); // For loading properties - same as properties page
+  const { properties, loadFromSupabase: loadProperties, isLoading: isLoadingProperties } = usePropertyStore();
+  
+  // Load properties on mount - same pattern as properties.tsx
+  useEffect(() => {
+    if (user?.id) {
+      console.log('Loading properties for user:', user.id);
+      loadProperties(user.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Get route params for prefill
+  const params = useLocalSearchParams<{
+    type?: string;
+    category?: string;
+    propertyId?: string;
+    unitId?: string;
+    subunitId?: string;
+    tenantId?: string;
+  }>();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -60,22 +91,103 @@ export default function AddTransactionScreen() {
   const placeholderColor = isDark ? '#64748b' : '#9ca3af';
   const primaryColor = '#137fec';
 
+  // Ensure we always have an array for properties
+  const safeProperties = Array.isArray(properties) ? properties : [];
+
+  // Debug: Log properties when they load
+  useEffect(() => {
+    console.log('=== ADD TRANSACTION DEBUG ===');
+    console.log('User ID:', user?.id);
+    console.log('Auth User ID:', authUser?.id);
+    console.log('Properties loaded:', safeProperties.length);
+    console.log('Loading state:', isLoadingProperties);
+    if (safeProperties.length > 0) {
+      console.log('First property:', safeProperties[0]);
+    } else {
+      console.log('No properties found in store');
+    }
+    console.log('============================');
+  }, [safeProperties, isLoadingProperties, user?.id, authUser?.id]);
+
   const [formData, setFormData] = useState<FormData>({
-    type: 'expense',
+    type: (params.type as TransactionType) || 'expense',
     amount: '',
     date: new Date(),
-    propertyId: '',
-    category: 'maintenance',
+    propertyId: params.propertyId || '',
+    unitId: params.unitId || '',
+    subunitId: params.subunitId || '',
+    tenantId: params.tenantId || '',
+    leaseId: '',
+    category: params.category || 'maintenance',
     serviceType: '',
     description: '',
   });
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showUnitModal, setShowUnitModal] = useState(false);
+  const [showSubunitModal, setShowSubunitModal] = useState(false);
+
+  // Handle property selection
+  const handlePropertySelect = (data: SelectedPropertyData) => {
+    setFormData(prev => ({
+      ...prev,
+      propertyId: data.property.id,
+      unitId: data.unit?.id || '',
+      subunitId: data.subUnit?.id || '',
+    }));
+  };
 
   const categories = formData.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
 
+  // Get selected property details
+  const selectedProperty = safeProperties.find(p => p.id === formData.propertyId);
+  const availableUnits = selectedProperty?.units || [];
+  const selectedUnit = availableUnits.find(u => u.id === formData.unitId);
+  const availableSubunits = selectedUnit?.subUnits || [];
+
+  // Auto-select if only one option
+  useEffect(() => {
+    if (selectedProperty && availableUnits.length === 1 && !formData.unitId) {
+      setFormData(prev => ({ ...prev, unitId: availableUnits[0].id }));
+    }
+  }, [selectedProperty, availableUnits, formData.unitId]);
+
+  useEffect(() => {
+    if (selectedUnit && availableSubunits.length === 1 && !formData.subunitId) {
+      setFormData(prev => ({ ...prev, subunitId: availableSubunits[0].id }));
+    }
+  }, [selectedUnit, availableSubunits, formData.subunitId]);
+
+  // Auto-map tenant for Rent transactions
+  useEffect(() => {
+    const autoMapTenant = async () => {
+      if (formData.category === 'rent' && formData.propertyId && !params.tenantId) {
+        const lease = await findActiveLease(
+          formData.propertyId,
+          formData.unitId || undefined,
+          formData.subunitId || undefined
+        );
+        
+        if (lease && lease.tenant_id) {
+          setFormData(prev => ({
+            ...prev,
+            tenantId: lease.tenant_id || '',
+            leaseId: lease.id,
+          }));
+        }
+      }
+    };
+
+    autoMapTenant();
+  }, [formData.category, formData.propertyId, formData.unitId, formData.subunitId]);
+
   const handleSubmit = async () => {
+    if (!authUser) {
+      Alert.alert('Error', 'You must be logged in to add a transaction');
+      return;
+    }
+
     if (!formData.amount || parseFloat(formData.amount) <= 0) {
       Alert.alert('Error', 'Please enter a valid amount');
       return;
@@ -84,11 +196,30 @@ export default function AddTransactionScreen() {
     setIsSubmitting(true);
     
     try {
-      // TODO: Save to Supabase when ready
-      // For now, just go back
-      console.log('Transaction data:', formData);
+      const result = await createTransaction({
+        user_id: authUser.id,
+        type: formData.type,
+        category: formData.category as any,
+        amount: parseFloat(formData.amount),
+        date: formData.date.toISOString(),
+        property_id: formData.propertyId || undefined,
+        unit_id: formData.unitId || undefined,
+        subunit_id: formData.subunitId || undefined,
+        tenant_id: formData.tenantId || undefined,
+        lease_id: formData.leaseId || undefined,
+        description: formData.description || undefined,
+        service_type: formData.serviceType || undefined,
+        status: 'paid',
+      });
+
+      if (result) {
+        Alert.alert('Success', 'Transaction added successfully');
       router.back();
+      } else {
+        Alert.alert('Error', 'Failed to save transaction. Please try again.');
+      }
     } catch (error) {
+      console.error('Error saving transaction:', error);
       Alert.alert('Error', 'Failed to save transaction');
     } finally {
       setIsSubmitting(false);
@@ -217,54 +348,67 @@ export default function AddTransactionScreen() {
           {/* Property Selection */}
           <View style={styles.inputGroup}>
             <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-              PROPERTY / UNIT
+              PROPERTY
             </ThemedText>
-            <View style={[styles.selectContainer, { backgroundColor: cardBgColor, borderColor }]}>
-              <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.propertyOptions}
-              >
+            <PropertyAddressSelector
+              onSelect={handlePropertySelect}
+              selectedPropertyId={formData.propertyId}
+              selectedUnitId={formData.unitId}
+              label=""
+              required
+              placeholder="Select a property..."
+            />
+          </View>
+
+          {/* Unit Selection (if property has units) */}
+          {formData.propertyId && availableUnits.length > 0 && (
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                UNIT {availableUnits.length === 1 && '(Auto-selected)'}
+              </ThemedText>
                 <TouchableOpacity
+                style={[styles.input, { backgroundColor: cardBgColor, borderColor }]}
+                onPress={() => setShowUnitModal(true)}
+              >
+                <ThemedText 
                   style={[
-                    styles.propertyOption,
-                    !formData.propertyId && { backgroundColor: `${primaryColor}15`, borderColor: primaryColor },
-                    { borderColor },
+                    styles.inputText, 
+                    { color: formData.unitId ? textColor : placeholderColor }
                   ]}
-                  onPress={() => setFormData(prev => ({ ...prev, propertyId: '' }))}
                 >
-                  <ThemedText 
-                    style={[
-                      styles.propertyOptionText, 
-                      { color: !formData.propertyId ? primaryColor : textColor }
-                    ]}
-                  >
-                    None
+                  {formData.unitId 
+                    ? `Unit ${availableUnits.find(u => u.id === formData.unitId)?.name || ''}`
+                    : 'Select Unit'}
                   </ThemedText>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
                 </TouchableOpacity>
-                {properties.map((property) => (
+            </View>
+          )}
+
+          {/* Subunit Selection (if unit has subunits) */}
+          {formData.propertyId && formData.unitId && availableSubunits.length > 0 && (
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                ROOM {availableSubunits.length === 1 && '(Auto-selected)'}
+              </ThemedText>
                   <TouchableOpacity
-                    key={property.id}
-                    style={[
-                      styles.propertyOption,
-                      formData.propertyId === property.id && { backgroundColor: `${primaryColor}15`, borderColor: primaryColor },
-                      { borderColor },
-                    ]}
-                    onPress={() => setFormData(prev => ({ ...prev, propertyId: property.id }))}
+                style={[styles.input, { backgroundColor: cardBgColor, borderColor }]}
+                onPress={() => setShowSubunitModal(true)}
                   >
                     <ThemedText 
                       style={[
-                        styles.propertyOptionText, 
-                        { color: formData.propertyId === property.id ? primaryColor : textColor }
+                    styles.inputText, 
+                    { color: formData.subunitId ? textColor : placeholderColor }
                       ]}
                     >
-                      {property.name || `${property.city}, ${property.state}`}
+                  {formData.subunitId 
+                    ? `Room ${availableSubunits.find(s => s.id === formData.subunitId)?.name || ''}`
+                    : 'Select Room'}
                     </ThemedText>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
             </View>
-          </View>
+          )}
 
           {/* Category Selection */}
           <View style={styles.inputGroup}>
@@ -330,6 +474,44 @@ export default function AddTransactionScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Subunit Selection Modal */}
+      <Modal
+        visible={showSubunitModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSubunitModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
+              <ThemedText style={[styles.modalTitle, { color: textColor }]}>Select Room</ThemedText>
+              <TouchableOpacity onPress={() => setShowSubunitModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textColor} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {availableSubunits.map((subunit) => (
+                <TouchableOpacity
+                  key={subunit.id}
+                  style={[styles.modalItem, { borderBottomColor: borderColor }]}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, subunitId: subunit.id }));
+                    setShowSubunitModal(false);
+                  }}
+                >
+                  <ThemedText style={[styles.modalItemText, { color: formData.subunitId === subunit.id ? primaryColor : textColor }]}>
+                    Room {subunit.name}
+                  </ThemedText>
+                  {formData.subunitId === subunit.id && (
+                    <MaterialCommunityIcons name="check" size={20} color={primaryColor} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Bottom Buttons */}
       <View 
@@ -462,23 +644,62 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
   },
-  selectContainer: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 8,
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
-  propertyOptions: {
-    gap: 8,
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 40,
   },
-  propertyOption: {
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
   },
-  propertyOptionText: {
-    fontSize: 14,
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalList: {
+    flex: 1,
+  },
+  modalListContent: {
+    paddingBottom: 20,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+  },
+  modalItemContent: {
+    flex: 1,
+  },
+  modalItemText: {
+    fontSize: 16,
     fontWeight: '500',
+  },
+  modalItemSubtext: {
+    fontSize: 12,
+    marginTop: 4,
+  },
+  modalEmptyState: {
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalEmptyText: {
+    fontSize: 14,
+    textAlign: 'center',
   },
   categoryOptions: {
     flexDirection: 'row',

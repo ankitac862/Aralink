@@ -5,17 +5,17 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "platforms": ["ios", "android", "web"],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "scheme": "aralink",
-
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.aralink.app"
     },
-
     "android": {
       "package": "com.aralink.app",
       "adaptiveIcon": {
@@ -25,15 +25,14 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "enableOnBackInvokedCallback": true,
+      "softwareKeyboardLayoutMode": "pan"
     },
-
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png",
       "bundler": "metro"
     },
-
     "plugins": [
       "expo-router",
       [
@@ -49,15 +48,18 @@
         }
       ]
     ],
-
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
-     "extra": {
+    "extra": {
       "googleClientIdWeb": "229949367486-mhedvdh4ga7av9ju321prtqj9oihu0sn.apps.googleusercontent.com",
       "googleClientIdAndroid": "229949367486-jq4ntjuf9ejtis59cvmi2nbfdi6j61e9.apps.googleusercontent.com",
-      "googleClientIdIos": "229949367486-visth6tu5tti0k5su4kvokpjifqee7ur.apps.googleusercontent.com"
+      "googleClientIdIos": "229949367486-visth6tu5tti0k5su4kvokpjifqee7ur.apps.googleusercontent.com",
+      "router": {},
+      "eas": {
+        "projectId": "435fd33d-8d9a-4d2a-bc5e-0a581e85c5a7"
+      }
     }
   }
 }

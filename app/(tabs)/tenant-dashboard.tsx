@@ -216,14 +216,14 @@ export default function TenantDashboardScreen() {
           </View>
         </View>
 
-        {/* Lease Application Button */}
+        {/* Start Application Button */}
         <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
           onPress={() => router.push('/tenant-lease-start')}>
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
           </View>
-          <ThemedText style={styles.maintenanceButtonText}>Apply for a Lease</ThemedText>
+          <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
         </TouchableOpacity>
 
         {/* Maintenance Request Button */}
