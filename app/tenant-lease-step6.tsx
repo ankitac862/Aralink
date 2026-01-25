@@ -1,19 +1,27 @@
 import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, View, TextInput, Checkbox } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useLeaseStore } from '@/store/leaseStore';
+import { useAuthStore } from '@/store/authStore';
 
 export default function TenantLeaseStep6Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { propertyId, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+    propertyId?: string;
+    unitId?: string;
+    subUnitId?: string;
+    inviteId?: string;
+  }>();
   const { tenantDraft, submitDraft } = useLeaseStore();
+  const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -48,11 +56,39 @@ export default function TenantLeaseStep6Screen() {
   const handleSubmit = async () => {
     if (validate()) {
       try {
-        await submitDraft();
+        console.log('🚀 Starting application submission...');
+        console.log('📋 Raw params from useLocalSearchParams:', {
+          propertyId,
+          unitId,
+          subUnitId,
+          inviteId,
+          types: {
+            propertyId: typeof propertyId,
+            unitId: typeof unitId,
+            subUnitId: typeof subUnitId,
+          },
+          isEmpty: {
+            propertyId: propertyId === '',
+            unitId: unitId === '',
+            subUnitId: subUnitId === '',
+          }
+        });
+        console.log('📋 User info:', {
+          userId: user?.id,
+          userName: user?.name,
+        });
+        
+        const applicationId = await submitDraft(propertyId, unitId, subUnitId, user?.id, inviteId);
+        
+        console.log('✅ Application submitted successfully! ID:', applicationId);
         router.push('/tenant-lease-submitted');
       } catch (error) {
-        console.error('Submission error:', error);
+        console.error('❌ Submission error:', error);
+        // Show error to user
+        alert('Failed to submit application. Please try again.');
       }
+    } else {
+      console.warn('⚠️ Validation failed, cannot submit');
     }
   };
 

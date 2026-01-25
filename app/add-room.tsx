@@ -19,6 +19,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
+import { useAuthStore } from '@/store/authStore';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -42,7 +43,8 @@ export default function AddRoomScreen() {
     roomId?: string;
   }>();
   
-  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, getPropertyById } = usePropertyStore();
+  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
+  const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -138,7 +140,7 @@ export default function AddRoomScreen() {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name.trim()) {
       Alert.alert('Error', 'Please enter a room number');
       return;
@@ -165,13 +167,18 @@ export default function AddRoomScreen() {
 
       if (isEditing && roomId && unitId) {
         // Update existing room
-        updateSubUnit(propertyId, unitId, roomId, roomData);
+        await updateSubUnit(propertyId, unitId, roomId, roomData);
       } else if (unitId) {
         // Add room to specific unit (multi-unit property)
-        addSubUnit(propertyId, unitId, roomData);
+        await addSubUnit(propertyId, unitId, roomData);
       } else {
         // Add room to single unit property
-        addRoomToSingleUnit(propertyId, roomData);
+        await addRoomToSingleUnit(propertyId, roomData);
+      }
+
+      // Reload property data from Supabase to refresh UI
+      if (user?.id) {
+        await loadFromSupabase(user.id);
       }
 
       router.back();

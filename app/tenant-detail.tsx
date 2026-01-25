@@ -104,9 +104,9 @@ export default function TenantDetailScreen() {
     name: `${tenantData.firstName} ${tenantData.lastName}`,
     email: tenantData.email,
     phone: tenantData.phone,
-    propertyName: property?.name || property?.streetAddress || 'Unknown Property',
+    propertyName: property?.name || 'Unknown Property',
     unitName: tenantData.unitName || 'N/A',
-    address: property ? `${property.streetAddress}, ${property.city}, ${property.state}` : 'N/A',
+    address: property ? `${property.address1}${property.address2 ? ', ' + property.address2 : ''}, ${property.city}, ${property.state}` : 'N/A',
     createdAt: new Date(tenantData.createdAt).toLocaleDateString('en-US', { 
       year: 'numeric', 
       month: 'short', 

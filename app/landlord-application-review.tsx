@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, ScrollView, TouchableOpacity, View, Modal, Alert, ActivityIndicator, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -7,14 +7,18 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useLeaseStore } from '@/store/leaseStore';
+import { getApplicationById, approveApplication, rejectApplication, supabase } from '@/lib/supabase';
 
 export default function LandlordApplicationReviewScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
-  const { selectApplication, approveApplication, rejectApplication, requestMoreInfo } = useLeaseStore();
+
+  const [application, setApplication] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -23,30 +27,174 @@ export default function LandlordApplicationReviewScreen() {
   const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
   const primaryColor = '#2A64F5';
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const modalBg = isDark ? '#192734' : '#ffffff';
 
-  const application = selectApplication(id as string);
+  // Load application details
+  useEffect(() => {
+    loadApplication();
+  }, [id]);
 
-  if (!application) {
-    return (
-      <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
-        <ThemedText style={{ color: textPrimaryColor }}>Application not found</ThemedText>
-      </ThemedView>
-    );
-  }
+  const loadApplication = async () => {
+    if (!id) return;
+    
+    setIsLoading(true);
+    try {
+      const data = await getApplicationById(id as string);
+      setApplication(data);
+    } catch (error) {
+      console.error('Error loading application:', error);
+      Alert.alert('Error', 'Failed to load application details');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleApprove = () => {
-    router.push(`/finalize-lease-terms?applicationId=${application.id}`);
+    setShowApprovalDialog(true);
+  };
+
+  const handleApproveWithTenant = async (action: 'now' | 'later') => {
+    setIsProcessing(true);
+    setShowApprovalDialog(false);
+    
+    try {
+      const result = await approveApplication(id as string, action);
+      
+      if (result.success) {
+        Alert.alert(
+          'Application Approved',
+          'The applicant has been notified of approval.',
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                if (action === 'now') {
+                  // Navigate to add-tenant with prefilled data
+                  router.replace(`/add-tenant?applicationId=${id}`);
+                } else {
+                  // Go back to applications list
+                  router.back();
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Error', result.error || 'Failed to approve application');
+      }
+    } catch (error) {
+      console.error('Error approving application:', error);
+      Alert.alert('Error', 'Failed to approve application');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleReject = () => {
-    rejectApplication(application.id);
-    router.back();
+    Alert.alert(
+      'Reject Application',
+      'Are you sure you want to reject this application? The applicant will be notified.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            setIsProcessing(true);
+            try {
+              const result = await rejectApplication(id as string);
+              
+              if (result.success) {
+                Alert.alert(
+                  'Application Rejected',
+                  'The applicant has been notified.',
+                  [{ text: 'OK', onPress: () => router.back() }]
+                );
+              } else {
+                Alert.alert('Error', result.error || 'Failed to reject application');
+              }
+            } catch (error) {
+              console.error('Error rejecting application:', error);
+              Alert.alert('Error', 'Failed to reject application');
+            } finally {
+              setIsProcessing(false);
+            }
+          }
+        }
+      ]
+    );
   };
 
-  const handleRequestInfo = () => {
-    requestMoreInfo(application.id);
-    router.back();
+  const handleDocumentView = async (documentUrl: string, documentName: string) => {
+    try {
+      console.log('📄 Opening document:', documentUrl);
+      
+      // Check if it's a local file URI (starts with file://)
+      if (documentUrl.startsWith('file://')) {
+        Alert.alert(
+          'Document Not Available',
+          'This document is stored locally on the applicant\'s device and cannot be viewed here. Please contact the applicant to share the document.'
+        );
+        return;
+      }
+
+      // Check if it's already a full URL (http:// or https://)
+      if (documentUrl.startsWith('http://') || documentUrl.startsWith('https://')) {
+        await Linking.openURL(documentUrl);
+        return;
+      }
+
+      // Otherwise, try to get signed URL from storage
+      // Extract bucket and path from the URL
+      // Expected format: bucket-name/path/to/file
+      const parts = documentUrl.split('/');
+      if (parts.length < 2) {
+        throw new Error('Invalid document path');
+      }
+
+      const bucket = parts[0];
+      const filePath = parts.slice(1).join('/');
+
+      const { data, error } = await supabase
+        .storage
+        .from(bucket)
+        .createSignedUrl(filePath, 3600); // 1 hour expiry
+
+      if (error) throw error;
+
+      if (data?.signedUrl) {
+        await Linking.openURL(data.signedUrl);
+      } else {
+        Alert.alert('Error', 'Unable to open document');
+      }
+    } catch (error: any) {
+      console.error('Error opening document:', error);
+      Alert.alert(
+        'Document Not Available',
+        'The document could not be opened. It may not have been uploaded to the server yet.'
+      );
+    }
   };
+
+  if (isLoading || !application) {
+    return (
+      <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
+          </TouchableOpacity>
+          <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>
+            Application Review
+          </ThemedText>
+          <View style={{ width: 24 }} />
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <ThemedText style={[{ color: textSecondaryColor, marginTop: 16 }]}>Loading...</ThemedText>
+        </View>
+      </ThemedView>
+    );
+  }
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -55,7 +203,7 @@ export default function LandlordApplicationReviewScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
         </TouchableOpacity>
         <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>
-          Application: {application.tenantName}
+          Application: {application.applicant_name}
         </ThemedText>
         <View style={{ width: 24 }} />
       </View>
@@ -66,33 +214,17 @@ export default function LandlordApplicationReviewScreen() {
           <View style={styles.applicantHeader}>
             <View style={styles.applicantInfo}>
               <ThemedText style={[styles.applicantName, { color: textPrimaryColor }]}>
-                {application.tenantName}
+                {application.applicant_name}
               </ThemedText>
               <ThemedText style={[styles.applicantProperty, { color: textSecondaryColor }]}>
-                Applied for: {application.propertyAddress || '123 Maple St, Unit 4B'}
+                Applied for: {application.property_address}
               </ThemedText>
               <ThemedText style={[styles.applicantDate, { color: textSecondaryColor }]}>
-                Submitted: {new Date(application.submittedAt || '').toLocaleDateString()}
+                Submitted: {new Date(application.submitted_at || application.created_at).toLocaleDateString()}
               </ThemedText>
-            </View>
-          </View>
-        </View>
-
-        {/* Insights Card */}
-        <View style={[styles.insightsCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.insightsTitle, { color: textPrimaryColor }]}>Insights</ThemedText>
-          <View style={styles.insightsGrid}>
-            <View style={styles.insightItem}>
-              <ThemedText style={[styles.insightLabel, { color: textSecondaryColor }]}>Credit Score</ThemedText>
-              <ThemedText style={[styles.insightValue, { color: textPrimaryColor }]}>750</ThemedText>
-            </View>
-            <View style={styles.insightItem}>
-              <ThemedText style={[styles.insightLabel, { color: textSecondaryColor }]}>Income/Rent</ThemedText>
-              <ThemedText style={[styles.insightValue, { color: textPrimaryColor }]}>3.5x</ThemedText>
-            </View>
-            <View style={styles.insightItem}>
-              <ThemedText style={[styles.insightLabel, { color: textSecondaryColor }]}>On-Time Payments</ThemedText>
-              <ThemedText style={[styles.insightValue, { color: textPrimaryColor }]}>100%</ThemedText>
+              <ThemedText style={[styles.applicantEmail, { color: textSecondaryColor }]}>
+                {application.applicant_email}
+              </ThemedText>
             </View>
           </View>
         </View>
@@ -102,98 +234,298 @@ export default function LandlordApplicationReviewScreen() {
           <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Personal Information</ThemedText>
           <View style={styles.sectionContent}>
             <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Date of Birth</ThemedText>
+              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Full Name</ThemedText>
               <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                {application.draft.personal.dob}
+                {application.applicant_name}
               </ThemedText>
             </View>
             <View style={styles.infoRow}>
               <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Email</ThemedText>
               <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                {application.draft.personal.email}
+                {application.applicant_email}
               </ThemedText>
             </View>
             <View style={styles.infoRow}>
               <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Phone</ThemedText>
               <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                {application.draft.personal.phone}
+                {application.applicant_phone || 'N/A'}
               </ThemedText>
             </View>
-          </View>
-        </View>
-
-        {/* Financial/Employment */}
-        <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Financial / Employment</ThemedText>
-          <View style={styles.sectionContent}>
-            <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Employer</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                {application.draft.employment.employerName}
-              </ThemedText>
-            </View>
-            <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Annual Income</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                ${application.draft.employment.annualIncome}
-              </ThemedText>
-            </View>
-          </View>
-        </View>
-
-        {/* Rental History */}
-        <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rental History</ThemedText>
-          <View style={styles.sectionContent}>
-            <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Current Address</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
-                {application.draft.residence.currentAddress}
-              </ThemedText>
-            </View>
-          </View>
-        </View>
-
-        {/* Uploaded Documents */}
-        <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Uploaded Documents</ThemedText>
-          <View style={styles.sectionContent}>
-            {Object.keys(application.draft.documents).map((docKey) => (
-              <View key={docKey} style={styles.documentItem}>
-                <MaterialCommunityIcons name="file-document" size={20} color={primaryColor} />
-                <ThemedText style={[styles.documentName, { color: textPrimaryColor }]}>
-                  {docKey.replace(/([A-Z])/g, ' $1').trim()}
+            {application.form_data?.personal?.dob && (
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Date of Birth</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                  {application.form_data.personal.dob}
                 </ThemedText>
               </View>
-            ))}
+            )}
           </View>
         </View>
 
-        {/* Decision Actions */}
-        <View style={styles.actionsContainer}>
-          <ThemedText style={[styles.actionsTitle, { color: textPrimaryColor }]}>Make a Decision</ThemedText>
+        {/* Employment & Financial Information */}
+        {application.form_data?.employment && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Employment & Financial</ThemedText>
+            <View style={styles.sectionContent}>
+              {application.form_data.employment.employerName && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Employer</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.employment.employerName}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.employment.jobTitle && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Job Title</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.employment.jobTitle}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.employment.employmentType && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Employment Type</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.employment.employmentType}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.employment.annualIncome && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Annual Income</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    ${application.form_data.employment.annualIncome}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.employment.additionalIncome && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Additional Income</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    ${application.form_data.employment.additionalIncome}
+                  </ThemedText>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={[styles.rejectButton, { borderColor: '#ff3b30' }]}
-            onPress={handleReject}>
-            <ThemedText style={[styles.rejectButtonText, { color: '#ff3b30' }]}>Reject Application</ThemedText>
-          </TouchableOpacity>
+        {/* Rental History */}
+        {application.form_data?.residence && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rental History</ThemedText>
+            <View style={styles.sectionContent}>
+              {application.form_data.residence.currentAddress && (
+                <>
+                  <ThemedText style={[styles.subsectionTitle, { color: textPrimaryColor }]}>Current Residence</ThemedText>
+                  <View style={styles.infoRow}>
+                    <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Address</ThemedText>
+                    <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                      {application.form_data.residence.currentAddress}
+                    </ThemedText>
+                  </View>
+                </>
+              )}
+              {application.form_data.residence.currentLandlordName && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Name</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.residence.currentLandlordName}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.residence.currentLandlordContact && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Contact</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.residence.currentLandlordContact}
+                  </ThemedText>
+                </View>
+              )}
+              
+              {application.form_data.residence.previousAddress && (
+                <>
+                  <View style={styles.divider} />
+                  <ThemedText style={[styles.subsectionTitle, { color: textPrimaryColor, marginTop: 12 }]}>Previous Residence</ThemedText>
+                  <View style={styles.infoRow}>
+                    <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Address</ThemedText>
+                    <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                      {application.form_data.residence.previousAddress}
+                    </ThemedText>
+                  </View>
+                </>
+              )}
+              {application.form_data.residence.previousLandlordName && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Name</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.residence.previousLandlordName}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.residence.previousLandlordContact && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Contact</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.residence.previousLandlordContact}
+                  </ThemedText>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={[styles.requestButton, { borderColor }]}
-            onPress={handleRequestInfo}>
-            <ThemedText style={[styles.requestButtonText, { color: textPrimaryColor }]}>
-              Request More Information
+        {/* Additional Information */}
+        {application.form_data?.other && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Additional Information</ThemedText>
+            <View style={styles.sectionContent}>
+              {application.form_data.other.occupants && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Other Occupants</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.other.occupants}
+                  </ThemedText>
+                </View>
+              )}
+              {application.form_data.other.vehicleInfo && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Vehicle Info</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.other.vehicleInfo}
+                  </ThemedText>
+                </View>
+              )}
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Pets</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                  {application.form_data.other.pets ? 'Yes' : 'No'}
+                </ThemedText>
+              </View>
+              {application.form_data.other.notes && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Notes</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                    {application.form_data.other.notes}
+                  </ThemedText>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        {/* Uploaded Documents */}
+        {application.form_data?.documents && Object.keys(application.form_data.documents).length > 0 && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Uploaded Documents</ThemedText>
+            <ThemedText style={[styles.documentNote, { color: textSecondaryColor }]}>
+              Note: Documents are currently stored on the applicant's device. They will be available after server upload is implemented.
             </ThemedText>
-          </TouchableOpacity>
+            <View style={styles.sectionContent}>
+              {Object.entries(application.form_data.documents).map(([key, value]) => {
+                if (!value) return null;
+                const documentName = key.replace(/([A-Z])/g, ' $1').trim();
+                const isLocalFile = typeof value === 'string' && value.startsWith('file://');
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={styles.documentItem}
+                    onPress={() => handleDocumentView(value as string, documentName)}>
+                    <MaterialCommunityIcons name="file-document" size={24} color={primaryColor} />
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={[styles.documentName, { color: textPrimaryColor }]}>
+                        {documentName}
+                      </ThemedText>
+                      <ThemedText style={[styles.documentHint, { color: textSecondaryColor }]}>
+                        {isLocalFile ? 'Stored locally on device' : 'Tap to view'}
+                      </ThemedText>
+                    </View>
+                    <MaterialCommunityIcons 
+                      name={isLocalFile ? 'information-outline' : 'chevron-right'} 
+                      size={20} 
+                      color={textSecondaryColor} 
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
-          <TouchableOpacity
-            style={[styles.approveButton, { backgroundColor: primaryColor }]}
-            onPress={handleApprove}>
-            <ThemedText style={styles.approveButtonText}>Approve Application</ThemedText>
-          </TouchableOpacity>
-        </View>
+        {/* Decision Actions - only show if status is 'submitted' */}
+        {application.status === 'submitted' && (
+          <View style={styles.actionsContainer}>
+            <ThemedText style={[styles.actionsTitle, { color: textPrimaryColor }]}>Make a Decision</ThemedText>
+
+            <TouchableOpacity
+              style={[styles.rejectButton, { borderColor: '#ff3b30' }]}
+              onPress={handleReject}
+              disabled={isProcessing}>
+              <ThemedText style={[styles.rejectButtonText, { color: '#ff3b30' }]}>Reject Application</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.approveButton, { backgroundColor: primaryColor }]}
+              onPress={handleApprove}
+              disabled={isProcessing}>
+              <ThemedText style={styles.approveButtonText}>Approve Application</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Status Info - show if already processed */}
+        {application.status !== 'submitted' && (
+          <View style={[styles.statusCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.statusTitle, { color: textPrimaryColor }]}>
+              Status: {application.status.toUpperCase()}
+            </ThemedText>
+            <ThemedText style={[styles.statusText, { color: textSecondaryColor }]}>
+              This application has already been {application.status}.
+            </ThemedText>
+          </View>
+        )}
       </ScrollView>
+
+      {/* Approval Dialog */}
+      <Modal
+        visible={showApprovalDialog}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowApprovalDialog(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: modalBg }]}>
+            <ThemedText style={[styles.modalTitle, { color: textPrimaryColor }]}>
+              Application Approved!
+            </ThemedText>
+            <ThemedText style={[styles.modalMessage, { color: textSecondaryColor }]}>
+              Do you want to add this applicant as a tenant now?
+            </ThemedText>
+
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: primaryColor }]}
+              onPress={() => handleApproveWithTenant('now')}>
+              <ThemedText style={styles.modalButtonText}>Add as Tenant Now</ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalButtonOutline, { borderColor }]}
+              onPress={() => handleApproveWithTenant('later')}>
+              <ThemedText style={[styles.modalButtonTextOutline, { color: textPrimaryColor }]}>
+                Do it Later
+              </ThemedText>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalButtonCancel}
+              onPress={() => setShowApprovalDialog(false)}>
+              <ThemedText style={[styles.modalButtonTextCancel, { color: textSecondaryColor }]}>
+                Cancel
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -215,6 +547,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
     textAlign: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   content: {
     padding: 16,
@@ -244,33 +581,10 @@ const styles = StyleSheet.create({
   },
   applicantDate: {
     fontSize: 12,
+    marginBottom: 4,
   },
-  insightsCard: {
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 16,
-  },
-  insightsTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  insightsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  insightItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  insightLabel: {
+  applicantEmail: {
     fontSize: 12,
-    marginBottom: 8,
-  },
-  insightValue: {
-    fontSize: 24,
-    fontWeight: '700',
   },
   sectionCard: {
     padding: 16,
@@ -283,8 +597,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 12,
   },
+  documentNote: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginBottom: 12,
+    lineHeight: 16,
+  },
   sectionContent: {
     gap: 12,
+  },
+  subsectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    marginVertical: 12,
   },
   infoRow: {
     flexDirection: 'row',
@@ -304,10 +634,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.02)',
     marginBottom: 8,
   },
   documentName: {
     fontSize: 14,
+    fontWeight: '600',
+  },
+  documentHint: {
+    fontSize: 12,
+    marginTop: 2,
   },
   actionsContainer: {
     marginTop: 8,
@@ -328,17 +667,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  requestButton: {
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    marginBottom: 12,
-  },
-  requestButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
   approveButton: {
     paddingVertical: 16,
     borderRadius: 12,
@@ -348,6 +676,72 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  statusCard: {
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+  },
+  statusTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  statusText: {
+    fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '85%',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  modalMessage: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  modalButton: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalButtonOutline: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  modalButtonTextOutline: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalButtonCancel: {
+    paddingVertical: 8,
+  },
+  modalButtonTextCancel: {
+    fontSize: 14,
   },
 });
 

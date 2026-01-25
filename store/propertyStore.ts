@@ -135,7 +135,7 @@ export interface PropertyStore {
   addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
   
   // Supabase sync
-  loadFromSupabase: (userId: string) => Promise<void>;
+  loadFromSupabase: (userId: string, forceReload?: boolean) => Promise<void>;
   syncToSupabase: (userId: string) => Promise<void>;
   
   // Filter management
@@ -242,10 +242,10 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   lastLoadedUserId: undefined,
   
   // Load properties from Supabase
-  loadFromSupabase: async (userId: string) => {
-    // Prevent redundant reloads for the same user
+  loadFromSupabase: async (userId: string, forceReload: boolean = false) => {
+    // Prevent redundant reloads for the same user (unless forceReload is true)
     const state = get();
-    if (state.lastLoadedUserId === userId && state.properties.length > 0 && !state.isLoading) {
+    if (!forceReload && state.lastLoadedUserId === userId && state.properties.length > 0 && !state.isLoading) {
       console.log('✅ PropertyStore: Properties already loaded for this user, skipping reload');
       return;
     }

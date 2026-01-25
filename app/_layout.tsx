@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -31,7 +32,9 @@ export default function RootLayout() {
 
     const inAuthGroup = segments[0] === '(auth)';
 
-    if (!user && !inAuthGroup) {
+    const isInviteRoute = segments[0] === 'invite';
+
+    if (!user && !inAuthGroup && !isInviteRoute) {
       // User is not authenticated and not in auth group, redirect to auth
       router.replace('/(auth)');
     } else if (user && inAuthGroup) {
@@ -41,6 +44,13 @@ export default function RootLayout() {
       } else {
         router.replace('/(tabs)/landlord-dashboard');
       }
+    } else if (user && !inAuthGroup && !isInviteRoute) {
+      (async () => {
+        const pendingToken = await AsyncStorage.getItem('pendingInviteToken');
+        if (pendingToken) {
+          router.replace(`/invite?token=${encodeURIComponent(pendingToken)}`);
+        }
+      })();
     }
   }, [user, segments, isInitialized, isLoading, router]);
 
@@ -67,6 +77,7 @@ export default function RootLayout() {
         <Stack.Screen name="splash" />
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="invite" />
         <Stack.Screen name="properties" />
         <Stack.Screen name="tenants" />
         <Stack.Screen name="leases" />

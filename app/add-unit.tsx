@@ -19,6 +19,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
+import { useAuthStore } from '@/store/authStore';
 
 export default function AddUnitScreen() {
   const colorScheme = useColorScheme();
@@ -26,7 +27,8 @@ export default function AddUnitScreen() {
   const insets = useSafeAreaInsets();
   const { propertyId } = useLocalSearchParams<{ propertyId: string }>();
   
-  const { addUnit, getPropertyById } = usePropertyStore();
+  const { addUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
+  const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -101,7 +103,7 @@ export default function AddUnitScreen() {
     }));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!propertyId) {
       Alert.alert('Error', 'Property ID is missing');
       return;
@@ -120,7 +122,7 @@ export default function AddUnitScreen() {
     setIsSubmitting(true);
 
     try {
-      addUnit(propertyId, {
+      await addUnit(propertyId, {
         name: formData.name,
         description: formData.description || undefined,
         bedrooms: formData.bedrooms ? parseInt(formData.bedrooms) : undefined,
@@ -136,6 +138,11 @@ export default function AddUnitScreen() {
         photos: formData.photos.length > 0 ? formData.photos : undefined,
         amenities: formData.amenities,
       });
+
+      // Reload property data from Supabase to refresh UI
+      if (user?.id) {
+        await loadFromSupabase(user.id);
+      }
 
       router.back();
     } catch (error) {

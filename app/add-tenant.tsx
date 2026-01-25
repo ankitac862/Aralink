@@ -20,7 +20,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { uploadImage, STORAGE_BUCKETS } from '@/lib/supabase';
+import { inviteTenantToProperty, uploadImage, STORAGE_BUCKETS, getApplicationById } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore, Property, Unit, SubUnit } from '@/store/propertyStore';
 import { useTenantStore } from '@/store/tenantStore';
@@ -29,7 +29,7 @@ export default function AddTenantScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, applicationId } = useLocalSearchParams<{ id?: string; applicationId?: string }>();
   const { properties, loadFromSupabase: loadProperties } = usePropertyStore();
   const { addTenant, updateTenant, getTenantById } = useTenantStore();
   const { user } = useAuthStore();
@@ -74,6 +74,83 @@ export default function AddTenantScreen() {
     }
   }, [user?.id]);
 
+  // Load application data if applicationId is provided
+  useEffect(() => {
+    if (applicationId && properties.length > 0) {
+      loadApplicationData();
+    }
+  }, [applicationId, properties.length]);
+
+  const loadApplicationData = async () => {
+    if (!applicationId) return;
+    
+    try {
+      console.log('📄 Loading application data:', applicationId);
+      const application = await getApplicationById(applicationId as string);
+      
+      if (application) {
+        console.log('📄 Application loaded:', application);
+        
+        // Parse name (assuming format: "First Last")
+        const nameParts = application.applicant_name?.split(' ') || [];
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        
+        // Find the property to get unit details
+        const property = properties.find(p => p.id === application.property_id);
+        let rentAmount = '';
+        
+        if (property) {
+          console.log('📄 Found property:', property.address1);
+          
+          // Determine rent amount based on selection
+          if (application.sub_unit_id) {
+            // Find the subunit and get its rent
+            const unit = property.units?.find(u => u.id === application.unit_id);
+            const subUnit = unit?.subUnits?.find(su => su.id === application.sub_unit_id);
+            if (subUnit?.rentPrice) {
+              rentAmount = subUnit.rentPrice.toString();
+              console.log('📄 Using subunit rent:', rentAmount);
+            }
+          } else if (application.unit_id) {
+            // Find the unit and get its rent
+            const unit = property.units?.find(u => u.id === application.unit_id);
+            if (unit?.defaultRentPrice) {
+              rentAmount = unit.defaultRentPrice.toString();
+              console.log('📄 Using unit rent:', rentAmount);
+            }
+          } else if (property.rentAmount) {
+            // Use property rent
+            rentAmount = property.rentAmount.toString();
+            console.log('📄 Using property rent:', rentAmount);
+          }
+        }
+        
+        // Prefill form with application data
+        setFormData(prev => ({
+          ...prev,
+          firstName,
+          lastName,
+          email: application.applicant_email || '',
+          phone: application.applicant_phone || '',
+          propertyId: application.property_id || '',
+          unitId: application.unit_id || '',
+          subUnitId: application.sub_unit_id || '',
+          rentAmount,
+        }));
+        
+        console.log('✅ Form prefilled with application data:', {
+          propertyId: application.property_id,
+          unitId: application.unit_id,
+          subUnitId: application.sub_unit_id,
+          rentAmount
+        });
+      }
+    } catch (error) {
+      console.error('Error loading application data:', error);
+    }
+  };
+
   // Populate form when editing
   useEffect(() => {
     if (existingTenant) {
@@ -99,12 +176,15 @@ export default function AddTenantScreen() {
     [properties, formData.propertyId]
   );
 
-  // Get units for selected property (only if multi_unit)
+  const isMultiUnitProperty = selectedProperty?.propertyType === 'multi_unit';
+  const isByRoomProperty = !!selectedProperty && !isMultiUnitProperty && selectedProperty.rentCompleteProperty === false;
+
+  // Get units for selected property
   const availableUnits = useMemo(() => {
     if (!selectedProperty) return [];
-    if (selectedProperty.propertyType === 'single_unit') return [];
+    if (!isMultiUnitProperty && !isByRoomProperty) return [];
     return selectedProperty.units || [];
-  }, [selectedProperty]);
+  }, [selectedProperty, isMultiUnitProperty, isByRoomProperty]);
 
   // Get selected unit
   const selectedUnit = useMemo(() =>
@@ -115,9 +195,9 @@ export default function AddTenantScreen() {
   // Get sub-units (rooms) for selected unit (only if rentEntireUnit is false)
   const availableSubUnits = useMemo(() => {
     if (!selectedUnit) return [];
-    if (selectedUnit.rentEntireUnit) return [];
+    if (!isByRoomProperty && selectedUnit.rentEntireUnit) return [];
     return selectedUnit.subUnits || [];
-  }, [selectedUnit]);
+  }, [selectedUnit, isByRoomProperty]);
 
   // Get selected sub-unit
   const selectedSubUnit = useMemo(() =>
@@ -145,13 +225,13 @@ export default function AddTenantScreen() {
       if (selectedProperty.propertyType === 'single_unit') {
         return {
           type: 'property',
-          name: selectedProperty.address1 || selectedProperty.streetAddress,
+          name: selectedProperty.address1,
           rent: selectedProperty.rentAmount,
         };
       }
       return {
         type: 'select_unit',
-        name: selectedProperty.address1 || selectedProperty.streetAddress,
+        name: selectedProperty.address1,
         rent: undefined,
       };
     }
@@ -160,17 +240,20 @@ export default function AddTenantScreen() {
 
   // Reset dependent selections when property changes
   const handlePropertyChange = (propertyId: string) => {
+    const property = properties.find(p => p.id === propertyId);
+    const shouldAutoSelectUnit = property && property.propertyType !== 'multi_unit' && property.rentCompleteProperty === false;
+    const autoUnitId = shouldAutoSelectUnit ? property.units?.[0]?.id || '' : '';
+
     setFormData(prev => ({
       ...prev,
       propertyId,
-      unitId: '',
+      unitId: autoUnitId,
       subUnitId: '',
       rentAmount: '',
     }));
     setShowPropertyDropdown(false);
 
     // Auto-set rent for single unit properties
-    const property = properties.find(p => p.id === propertyId);
     if (property?.propertyType === 'single_unit' && property.rentAmount) {
       setFormData(prev => ({ ...prev, rentAmount: property.rentAmount?.toString() || '' }));
     }
@@ -298,6 +381,99 @@ export default function AddTenantScreen() {
           photo: photoUrl || undefined,
         });
       } else {
+        if (!user?.id) {
+          Alert.alert('Error', 'You must be signed in to invite a tenant.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        // If this tenant was added from an application, delete it
+        if (applicationId) {
+          const { supabase } = await import('@/lib/supabase');
+          
+          console.log('🔄 Processing application conversion for applicationId:', applicationId);
+          
+          // Get application details BEFORE deleting
+          const { data: application } = await supabase
+            .from('applications')
+            .select('id, applicant_email, applicant_name, property_id')
+            .eq('id', applicationId)
+            .maybeSingle();
+          
+          console.log('📧 Application to delete:', application);
+          
+          if (!application) {
+            console.error('❌ Application not found with ID:', applicationId);
+          } else {
+            // Delete the application record
+            const { error: deleteError, count } = await supabase
+              .from('applications')
+              .delete({ count: 'exact' })
+              .eq('id', applicationId);
+            
+            if (deleteError) {
+              console.error('❌ Error deleting application:', deleteError);
+            } else {
+              console.log('✅ Application deleted successfully. Rows deleted:', count);
+            }
+            
+            // Verify deletion
+            const { data: checkDeleted } = await supabase
+              .from('applications')
+              .select('id')
+              .eq('id', applicationId)
+              .maybeSingle();
+            
+            if (checkDeleted) {
+              console.error('⚠️ WARNING: Application still exists after delete!', checkDeleted);
+            } else {
+              console.log('✅ VERIFIED: Application', applicationId, 'no longer exists in database');
+            }
+            
+            // Log what we deleted
+            console.log('🗑️ DELETED APPLICATION:', {
+              id: applicationId,
+              email: application.applicant_email,
+              name: application.applicant_name
+            });
+            
+            // Try to update applicant status (silently, don't fail if RLS blocks it)
+            await supabase
+              .from('applicants')
+              .update({ status: 'converted_to_tenant', updated_at: new Date().toISOString() })
+              .eq('email', application.applicant_email.toLowerCase())
+              .eq('property_id', application.property_id);
+            console.log('ℹ️ Attempted to update applicant status for:', application.applicant_email);
+          }
+        }
+
+        const inviteResult = await inviteTenantToProperty({
+          propertyId: formData.propertyId,
+          tenantEmail: formData.email.trim(),
+          tenantName: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
+          unitId: formData.unitId || undefined,
+          subUnitId: formData.subUnitId || undefined,
+        });
+
+        if (!inviteResult) {
+          Alert.alert('Error', 'Failed to send invite. Please try again.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (inviteResult.error) {
+          Alert.alert('Error', inviteResult.error);
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Success: Either email sent or notification queued
+        if (!inviteResult.inviteId) {
+          Alert.alert('Error', 'Failed to create invite. Please try again.');
+          setIsSubmitting(false);
+          return;
+        }
+
         // Add new tenant
         await addTenant({
           firstName: formData.firstName.trim(),
@@ -312,9 +488,29 @@ export default function AddTenantScreen() {
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
           photo: photoUrl || undefined,
         }, user?.id);
+
+        // Force refresh property store to show new tenant immediately
+        await usePropertyStore.getState().loadFromSupabase(user?.id!, true);
+        console.log('🔄 Property store force refreshed after tenant addition');
+
+        // Show success message based on how tenant was notified
+        const successMessage = inviteResult.notificationQueued 
+          ? 'In-app notification sent to tenant. They can now view and apply for this property.'
+          : 'Email invitation sent to tenant. They will receive instructions to apply for this property.';
+        
+        Alert.alert('Success', successMessage, [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Navigate back and trigger refresh
+              router.back();
+            }
+          }
+        ]);
+        return;
       }
       
-      // Use setTimeout to ensure router is ready
+      // Edit mode - no success alert, just navigate back
       setTimeout(() => {
         router.back();
       }, 100);
@@ -329,7 +525,7 @@ export default function AddTenantScreen() {
   // Build property options
   const propertyOptions = properties.map(p => ({
     id: p.id,
-    label: `${p.address1 || p.streetAddress || 'Unknown'}, ${p.city}`,
+    label: `${p.address1 || 'Unknown'}, ${p.city}`,
     type: p.propertyType,
   }));
 
@@ -443,7 +639,7 @@ export default function AddTenantScreen() {
               >
                 <ThemedText style={[styles.selectText, { color: formData.propertyId ? textColor : secondaryTextColor }]}>
                   {selectedProperty 
-                    ? `${selectedProperty.address1 || selectedProperty.streetAddress}, ${selectedProperty.city}` 
+                    ? `${selectedProperty.address1}, ${selectedProperty.city}` 
                     : 'Select a property'}
                 </ThemedText>
                 <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
@@ -538,7 +734,7 @@ export default function AddTenantScreen() {
             )}
 
             {/* Sub-Unit/Room Selection (only if unit is rented by room) */}
-            {selectedUnit && !selectedUnit.rentEntireUnit && availableSubUnits.length > 0 && (
+            {selectedUnit && (!selectedUnit.rentEntireUnit || isByRoomProperty) && availableSubUnits.length > 0 && (
               <View style={styles.inputGroup}>
                 <ThemedText style={[styles.label, { color: textColor }]}>Select Room *</ThemedText>
                 <TouchableOpacity

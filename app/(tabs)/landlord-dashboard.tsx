@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Href, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   FlatList,
   ListRenderItem,
@@ -8,13 +9,18 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React from 'react';
 
 import RentChart from '@/components/RentChart';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
+import { usePropertyStore } from '@/store/propertyStore';
+import { getUserProfile, supabase, fetchLandlordNotifications } from '@/lib/supabase';
 
 interface PortfolioOverview {
   activeLeases: number;
@@ -36,7 +42,7 @@ interface Activity {
   title: string;
   description: string;
   time: string;
-  type: 'payment' | 'maintenance' | 'message';
+  type: 'payment' | 'maintenance' | 'message' | 'application';
 }
 
 interface DashboardTile {
@@ -47,11 +53,43 @@ interface DashboardTile {
   route: string;
 }
 
+interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  data?: any;
+  created_at: string;
+  is_read?: boolean;
+}
+
 export default function LandlordDashboardScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
+  const { properties, loadFromSupabase } = usePropertyStore();
+  
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [userName, setUserName] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [stats, setStats] = useState({
+    propertyCount: 0,
+    tenantCount: 0,
+    leaseCount: 0,
+    occupancyRate: 0,
+    maintenanceCount: 0,
+    applicantCount: 0,
+  });
+  const [rentCollection, setRentCollection] = useState<RentCollection>({
+    collected: 0,
+    pending: 0,
+    notPaid: 0,
+    total: 0,
+    month: new Date().toLocaleDateString('en-US', { month: 'long' }),
+    year: new Date().getFullYear(),
+  });
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -61,19 +99,131 @@ export default function LandlordDashboardScreen() {
   const textSecondaryColor = isDark ? '#a0aec0' : '#8E8E93';
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
 
-  const portfolio: PortfolioOverview = {
-    activeLeases: 10,
-    occupancyRate: 83,
+  // Load data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user?.id) {
+        loadDashboardData();
+      }
+    }, [user?.id])
+  );
+
+  const loadDashboardData = async () => {
+    if (!user?.id) return;
+    
+    setIsLoading(true);
+    try {
+      // Load profile for name
+      const profile = await getUserProfile(user.id);
+      if (profile?.full_name) {
+        setUserName(profile.full_name.split(' ')[0]); // Get first name
+      }
+
+      // Load properties
+      await loadFromSupabase(user.id);
+
+      // Get property count
+      const { data: propertiesData } = await supabase
+        .from('properties')
+        .select('id', { count: 'exact' })
+        .eq('user_id', user.id);
+      const propertyCount = propertiesData?.length || 0;
+
+      // Get tenant count from tenant_property_links (active tenants)
+      const { data: tenantsData, error: tenantError } = await supabase
+        .from('tenant_property_links')
+        .select('tenant_id', { count: 'exact' })
+        .eq('landlord_id', user.id)
+        .eq('status', 'active');
+      
+      const tenantCount = tenantsData?.length || 0;
+      console.log('👥 Tenant count:', tenantCount, 'Error:', tenantError);
+      if (tenantsData && tenantsData.length > 0) {
+        console.log('👥 Tenant IDs:', tenantsData.map(t => t.tenant_id));
+      }
+
+      // Get lease count (active leases)
+      const { data: leasesData } = await supabase
+        .from('leases')
+        .select('id', { count: 'exact' })
+        .eq('landlord_id', user.id)
+        .eq('status', 'active');
+      const leaseCount = leasesData?.length || 0;
+
+      // Get maintenance requests count (open/pending)
+      const { data: maintenanceData } = await supabase
+        .from('maintenance_requests')
+        .select('id', { count: 'exact' })
+        .eq('landlord_id', user.id)
+        .in('status', ['pending', 'in_progress']);
+      const maintenanceCount = maintenanceData?.length || 0;
+
+      // Get applicant count (invited/applied status only, exclude converted to tenant)
+      const { data: applicantsData } = await supabase
+        .from('applicants')
+        .select('id', { count: 'exact' })
+        .eq('landlord_id', user.id)
+        .in('status', ['invited', 'applied']);
+      const applicantCount = applicantsData?.length || 0;
+
+      console.log('📊 Applicant count:', applicantCount, 'from data:', applicantsData);
+
+      // Calculate occupancy rate
+      let occupancyRate = 0;
+      if (propertyCount > 0 && tenantCount > 0) {
+        occupancyRate = Math.round((tenantCount / propertyCount) * 100);
+      }
+
+      // Calculate rent collection dynamically
+      const { data: rentData } = await supabase
+        .from('tenant_property_links')
+        .select('rent_amount')
+        .eq('landlord_id', user.id)
+        .eq('status', 'active');
+      
+      const totalExpectedRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
+      
+      // For now, assume 90% collected (you can add actual payment tracking later)
+      const collectedRent = Math.round(totalExpectedRent * 0.9);
+      const pendingRent = totalExpectedRent - collectedRent;
+
+      setStats({
+        propertyCount,
+        tenantCount,
+        leaseCount,
+        occupancyRate,
+        maintenanceCount,
+        applicantCount,
+      });
+
+      setRentCollection({
+        collected: collectedRent,
+        pending: pendingRent,
+        notPaid: 0,
+        total: totalExpectedRent,
+        month: new Date().toLocaleDateString('en-US', { month: 'long' }),
+        year: new Date().getFullYear(),
+      });
+
+      // Load notifications
+      const notifs = await fetchLandlordNotifications(user.id);
+      setNotifications(notifs.filter(n => n.type === 'application').slice(0, 3)); // Show only application notifications
+
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const rentCollection: RentCollection = {
-    collected: 16250,
-    pending: 6250,
-    notPaid: 2500,
-    total: 25000,
-    month: 'July',
-    year: 2024,
-  };
+  // Refresh dashboard when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        loadDashboardData();
+      }
+    }, [user?.id])
+  );
 
   const activities: Activity[] = [
     {
@@ -95,12 +245,48 @@ export default function LandlordDashboardScreen() {
   ];
 
   const dashboardTiles: DashboardTile[] = [
-    { id: '1', title: 'My Properties', subtitle: '12 units', icon: 'office-building', route: '/properties' },
-    { id: '2', title: 'My Tenants', subtitle: '10 active', icon: 'account-group', route: '/tenants' },
-    { id: '3', title: 'Leases', subtitle: 'Manage all', icon: 'gavel', route: '/leases' },
-    { id: '4', title: 'Accounting', subtitle: 'Review finances', icon: 'file-document-outline', route: '/accounting' },
-    { id: '5', title: 'Maintenance', subtitle: '2 open requests', icon: 'toolbox', route: '/landlord-maintenance-overview' },
-    { id: '6', title: 'New Applicants', subtitle: '4 new', icon: 'file-document', route: '/landlord-applications' },
+    { 
+      id: '1', 
+      title: 'My Properties', 
+      subtitle: `${stats.propertyCount} ${stats.propertyCount === 1 ? 'property' : 'properties'}`, 
+      icon: 'office-building', 
+      route: '/properties' 
+    },
+    { 
+      id: '2', 
+      title: 'My Tenants', 
+      subtitle: `${stats.tenantCount} active`, 
+      icon: 'account-group', 
+      route: '/tenants' 
+    },
+    { 
+      id: '3', 
+      title: 'Leases', 
+      subtitle: `${stats.leaseCount} active`, 
+      icon: 'gavel', 
+      route: '/leases' 
+    },
+    { 
+      id: '4', 
+      title: 'Accounting', 
+      subtitle: 'Review finances', 
+      icon: 'file-document-outline', 
+      route: '/accounting' 
+    },
+    { 
+      id: '5', 
+      title: 'Maintenance', 
+      subtitle: `${stats.maintenanceCount} open ${stats.maintenanceCount === 1 ? 'request' : 'requests'}`, 
+      icon: 'toolbox', 
+      route: '/landlord-maintenance-overview' 
+    },
+    { 
+      id: '6', 
+      title: 'New Applicants', 
+      subtitle: `${stats.applicantCount} new`, 
+      icon: 'file-document', 
+      route: '/landlord-applications' 
+    },
   ];
 
   const handleAddProperty = () => {
@@ -111,6 +297,11 @@ export default function LandlordDashboardScreen() {
   const handleAddTenant = () => {
     setShowAddMenu(false);
     router.push('/add-tenant');
+  };
+
+  const handleInviteApplicant = () => {
+    setShowAddMenu(false);
+    router.push('/add-applicant');
   };
 
   const renderTile: ListRenderItem<DashboardTile> = ({ item }) => {
@@ -164,26 +355,38 @@ export default function LandlordDashboardScreen() {
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Header Card */}
-        <TouchableOpacity
-          style={[styles.headerCard, { backgroundColor: cardBgColor, marginTop: insets.top + 16 }]}
-          onPress={() => router.push('/profile')}>
-          <View style={styles.headerTop}>
-            <View style={styles.profileSection}>
-              <View style={[styles.profilePicture, { backgroundColor: isDark ? '#475569' : '#e2e8f0' }]}>
-                <MaterialCommunityIcons name="account" size={24} color={textPrimaryColor} />
-              </View>
-              <View>
-                <ThemedText style={[styles.greeting, { color: textPrimaryColor }]}>Hello, Taylor</ThemedText>
-                <ThemedText style={[styles.portfolioLabel, { color: textSecondaryColor }]}>PORTFOLIO OVERVIEW</ThemedText>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <ThemedText style={[styles.loadingText, { color: textSecondaryColor }]}>
+            Loading dashboard...
+          </ThemedText>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* Header Card */}
+          <TouchableOpacity
+            style={[styles.headerCard, { backgroundColor: cardBgColor, marginTop: insets.top + 16 }]}
+            onPress={() => router.push('/profile')}>
+            <View style={styles.headerTop}>
+              <View style={styles.profileSection}>
+                <View style={[styles.profilePicture, { backgroundColor: isDark ? '#475569' : '#e2e8f0' }]}>
+                  <MaterialCommunityIcons name="account" size={24} color={textPrimaryColor} />
+                </View>
+                <View>
+                  <ThemedText style={[styles.greeting, { color: textPrimaryColor }]}>
+                    Hello, {userName || user?.name || 'there'}
+                  </ThemedText>
+                  <ThemedText style={[styles.portfolioLabel, { color: textSecondaryColor }]}>
+                    PORTFOLIO OVERVIEW
+                  </ThemedText>
+                </View>
               </View>
             </View>
-          </View>
-          <ThemedText style={[styles.statsText, { color: textPrimaryColor }]}>
-            {portfolio.activeLeases} Active Leases • {portfolio.occupancyRate}% Occupancy
-          </ThemedText>
-        </TouchableOpacity>
+            <ThemedText style={[styles.statsText, { color: textPrimaryColor }]}>
+              {stats.leaseCount} Active {stats.leaseCount === 1 ? 'Lease' : 'Leases'} • {stats.occupancyRate}% Occupancy
+            </ThemedText>
+          </TouchableOpacity>
 
         {/* Rent Collection Card */}
         <View style={[styles.rentCard, { backgroundColor: cardBgColor }]}>
@@ -225,6 +428,44 @@ export default function LandlordDashboardScreen() {
           columnWrapperStyle={styles.tilesRow}
         />
 
+        {/* Notifications Section */}
+        {notifications.length > 0 && (
+          <>
+            <View style={styles.notificationHeader}>
+              <ThemedText style={[styles.activitySectionTitle, { color: textPrimaryColor }]}>
+                Recent Notifications
+              </ThemedText>
+              <TouchableOpacity onPress={() => router.push('/landlord-applications')}>
+                <ThemedText style={[styles.viewAllText, { color: primaryColor }]}>View All</ThemedText>
+              </TouchableOpacity>
+            </View>
+            {notifications.map((notif) => (
+              <TouchableOpacity
+                key={notif.id}
+                style={[styles.notificationCard, { backgroundColor: cardBgColor }]}
+                onPress={() => router.push('/landlord-applications')}>
+                <View style={[styles.notificationIcon, { backgroundColor: `${primaryColor}20` }]}>
+                  <MaterialCommunityIcons name="file-document" size={24} color={primaryColor} />
+                </View>
+                <View style={styles.notificationContent}>
+                  <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
+                    {notif.title}
+                  </ThemedText>
+                  <ThemedText style={[styles.notificationMessage, { color: textSecondaryColor }]}>
+                    {notif.message}
+                  </ThemedText>
+                  <ThemedText style={[styles.notificationTime, { color: textSecondaryColor }]}>
+                    {new Date(notif.created_at).toLocaleString()}
+                  </ThemedText>
+                </View>
+                {!notif.is_read && (
+                  <View style={[styles.unreadBadge, { backgroundColor: primaryColor }]} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
+
         {/* Recent Activity */}
         <ThemedText style={[styles.activitySectionTitle, { color: textPrimaryColor }]}>Recent Activity</ThemedText>
         <FlatList
@@ -236,12 +477,18 @@ export default function LandlordDashboardScreen() {
         />
 
         <View style={{ height: 100 }} />
-      </ScrollView>
+        </ScrollView>
+      )}
 
       {/* FAB Button */}
       <View style={styles.fabContainer}>
         {showAddMenu && (
           <View style={[styles.addMenu, { backgroundColor: cardBgColor }]}>
+            <TouchableOpacity style={styles.addMenuItem} onPress={handleInviteApplicant}>
+              <MaterialCommunityIcons name="email-plus" size={24} color={primaryColor} />
+              <ThemedText style={[styles.addMenuText, { color: textPrimaryColor }]}>Invite Applicant</ThemedText>
+            </TouchableOpacity>
+            <View style={[styles.menuDivider, { backgroundColor: borderColor }]} />
             <TouchableOpacity style={styles.addMenuItem} onPress={handleAddTenant}>
               <MaterialCommunityIcons name="account-plus" size={24} color={primaryColor} />
               <ThemedText style={[styles.addMenuText, { color: textPrimaryColor }]}>Add Tenant</ThemedText>
@@ -266,6 +513,15 @@ export default function LandlordDashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -457,5 +713,58 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+  },
+  notificationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 12,
+  },
+  viewAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  notificationCard: {
+    flexDirection: 'row',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  notificationIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  notificationContent: {
+    flex: 1,
+  },
+  notificationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  notificationMessage: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  notificationTime: {
+    fontSize: 12,
+    opacity: 0.7,
+  },
+  unreadBadge: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginLeft: 8,
+    marginTop: 4,
   },
 });

@@ -89,6 +89,7 @@ export interface UserProfile {
   email: string;
   full_name: string;
   user_type: 'landlord' | 'tenant' | 'manager';
+  account_status?: 'active' | 'pending' | 'invited' | 'suspended';
   phone?: string;
   avatar_url?: string;
   is_social_login: boolean;
@@ -482,6 +483,8 @@ export async function fetchProperties(userId: string): Promise<DbProperty[]> {
 // Fetch a single property with units and subunits
 export async function fetchPropertyById(propertyId: string): Promise<DbProperty | null> {
   try {
+    console.log('🔍 fetchPropertyById called with ID:', propertyId);
+    
     const { data, error } = await supabase
       .from('properties')
       .select('*')
@@ -489,13 +492,16 @@ export async function fetchPropertyById(propertyId: string): Promise<DbProperty 
       .single();
 
     if (error) {
-      console.error('Error fetching property:', error);
+      console.error('❌ Error fetching property:', error);
+      console.error('❌ Property ID that failed:', propertyId);
       return null;
     }
 
+    console.log('✅ Property found:', data ? `${data.address1}, ${data.city}` : 'null');
     return data;
   } catch (error) {
-    console.error('Error fetching property:', error);
+    console.error('❌ Exception fetching property:', error);
+    console.error('❌ Property ID that failed:', propertyId);
     return null;
   }
 }
@@ -902,6 +908,591 @@ export async function deleteTenantFromDb(tenantId: string): Promise<boolean> {
   } catch (error) {
     console.error('Error deleting tenant:', error);
     return false;
+  }
+}
+
+// =====================================================
+// TENANT-LANDLORD CONNECTION FUNCTIONS
+// =====================================================
+
+export interface TenantResolutionResult {
+  tenantId: string;
+  existed: boolean;
+  invited: boolean;
+  accountStatus?: string;
+  userType?: string;
+}
+
+export interface DbTenantPropertyLink {
+  id: string;
+  tenant_id: string;
+  property_id: string;
+  unit_id?: string | null;
+  sub_unit_id?: string | null;
+  status: 'active' | 'pending_invite' | 'inactive' | 'removed';
+  created_via: 'landlord_invite' | 'lease_creation' | 'application_approval';
+  created_by_user_id: string;
+  link_start_date?: string | null;
+  link_end_date?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbApplication {
+  id: string;
+  user_id: string;
+  property_id: string | null;
+  unit_id?: string | null;
+  applicant_name: string;
+  applicant_email: string;
+  applicant_phone?: string | null;
+  status: 'draft' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'lease_ready' | 'lease_signed';
+  form_data?: Record<string, any>;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbInvite {
+  id: string;
+  token_hash: string;
+  property_id: string;
+  landlord_id: string;
+  tenant_id?: string | null;
+  tenant_email: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  expires_at: string;
+  used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InviteDetails {
+  inviteStatus: string;
+  expiresAt?: string;
+  property?: {
+    id: string;
+    address1: string;
+    address2?: string | null;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
+  landlord?: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+  };
+}
+
+export async function resolveTenantByEmail(
+  email: string,
+  fullName?: string
+): Promise<TenantResolutionResult | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke('resolve-tenant', {
+      body: { email, fullName },
+    });
+
+    if (error) {
+      console.error('Error resolving tenant via edge function:', error);
+      return null;
+    }
+
+    return data as TenantResolutionResult;
+  } catch (error) {
+    console.error('Error resolving tenant:', error);
+    return null;
+  }
+}
+
+export async function addTenantToProperty(params: {
+  landlordUserId: string;
+  propertyId: string;
+  tenantEmail: string;
+  tenantName?: string;
+  unitId?: string;
+  subUnitId?: string;
+  linkStartDate?: string;
+}): Promise<DbTenantPropertyLink | null> {
+  try {
+    const property = await fetchPropertyById(params.propertyId);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenant = await resolveTenantByEmail(params.tenantEmail, params.tenantName);
+    if (!tenant?.tenantId) {
+      return null;
+    }
+
+    // Always set status to active for landlord-added tenants
+    const status = 'active';
+
+    // First, ensure tenant record exists in tenants table with active status
+    const { data: existingTenant } = await supabase
+      .from('tenants')
+      .select('id, user_id, landlord_id')
+      .eq('user_id', tenant.tenantId)
+      .maybeSingle();
+
+    if (existingTenant) {
+      // Update existing tenant to active
+      await supabase
+        .from('tenants')
+        .update({
+          status: 'active',
+          landlord_id: params.landlordUserId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingTenant.id);
+      console.log('✅ Updated tenant status to active in tenants table');
+    } else {
+      // Create new tenant record
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name, phone')
+        .eq('id', tenant.tenantId)
+        .maybeSingle();
+
+      await supabase
+        .from('tenants')
+        .insert({
+          user_id: tenant.tenantId,
+          landlord_id: params.landlordUserId,
+          email: profile?.email || params.tenantEmail,
+          first_name: profile?.full_name?.split(' ')[0] || params.tenantName?.split(' ')[0] || '',
+          last_name: profile?.full_name?.split(' ').slice(1).join(' ') || params.tenantName?.split(' ').slice(1).join(' ') || '',
+          phone: profile?.phone || '',
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      console.log('✅ Created new tenant record with active status');
+    }
+
+    const { data, error } = await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenant.tenantId,
+          landlord_id: params.landlordUserId,
+          property_id: params.propertyId,
+          unit_id: params.unitId || null,
+          sub_unit_id: params.subUnitId || null,
+          status,
+          created_via: 'landlord_invite',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: params.linkStartDate || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      )
+      .select()
+      .single();
+
+    console.log('✅ Tenant property link created:', {
+      status: status,
+      landlord_id: params.landlordUserId,
+      tenant_id: tenant.tenantId,
+      link_data: data
+    });
+
+    if (error) {
+      console.error('Error creating tenant-property link:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error adding tenant to property:', error);
+    return null;
+  }
+}
+
+export async function createLeaseWithTenant(params: {
+  landlordUserId: string;
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  tenantEmail: string;
+  tenantName?: string;
+  applicationId?: string;
+  formData?: OntarioLeaseFormData;
+  status?: LeaseStatus;
+  effectiveDate?: string;
+  expiryDate?: string;
+}): Promise<DbLease | null> {
+  try {
+    const property = await fetchPropertyById(params.propertyId);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenant = await resolveTenantByEmail(params.tenantEmail, params.tenantName);
+    if (!tenant?.tenantId) {
+      return null;
+    }
+
+    await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenant.tenantId,
+          property_id: params.propertyId,
+          unit_id: params.unitId || null,
+          sub_unit_id: params.subUnitId || null,
+          status: 'active',
+          created_via: 'lease_creation',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: params.effectiveDate || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      );
+
+    // Set tenant to active when creating lease
+    await supabase
+      .from('tenants')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', tenant.tenantId);
+    
+    console.log('✅ Tenant set to active upon lease creation');
+
+    const { data, error } = await supabase
+      .from('leases')
+      .insert({
+        user_id: params.landlordUserId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        tenant_id: tenant.tenantId,
+        application_id: params.applicationId || null,
+        status: params.status || 'generated',
+        form_data: params.formData || null,
+        effective_date: params.effectiveDate || null,
+        expiry_date: params.expiryDate || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating lease:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error creating lease with tenant:', error);
+    return null;
+  }
+}
+
+export async function submitPropertyApplication(params: {
+  tenantUserId: string;
+  propertyId: string;
+  unitId?: string;
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone?: string;
+  formData?: Record<string, any>;
+}): Promise<DbApplication | null> {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .insert({
+        user_id: params.tenantUserId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        applicant_name: params.applicantName,
+        applicant_email: params.applicantEmail,
+        applicant_phone: params.applicantPhone || null,
+        status: 'submitted',
+        form_data: params.formData || null,
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error submitting application:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    return null;
+  }
+}
+
+export async function approvePropertyApplication(params: {
+  applicationId: string;
+  landlordUserId: string;
+  unitId?: string;
+  subUnitId?: string;
+}): Promise<{ application: DbApplication; link: DbTenantPropertyLink } | null> {
+  try {
+    const { data: application, error: appError } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('id', params.applicationId)
+      .single();
+
+    if (appError || !application) {
+      console.error('Error fetching application:', appError);
+      return null;
+    }
+
+    if (!application.property_id) {
+      console.error('Application missing property id.');
+      return null;
+    }
+
+    const property = await fetchPropertyById(application.property_id);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenantId = application.user_id;
+    const { data: link, error: linkError } = await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenantId,
+          property_id: application.property_id,
+          unit_id: params.unitId || application.unit_id || null,
+          sub_unit_id: params.subUnitId || null,
+          status: 'active',
+          created_via: 'application_approval',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: new Date().toISOString().split('T')[0],
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      )
+      .select()
+      .single();
+
+    if (linkError || !link) {
+      console.error('Error creating tenant-property link:', linkError);
+      return null;
+    }
+
+    const { data: updatedApp, error: updateError } = await supabase
+      .from('applications')
+      .update({
+        status: 'approved',
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.applicationId)
+      .select()
+      .single();
+
+    if (updateError || !updatedApp) {
+      console.error('Error updating application status:', updateError);
+      return null;
+    }
+
+    return { application: updatedApp, link };
+  } catch (error) {
+    console.error('Error approving application:', error);
+    return null;
+  }
+}
+
+export async function inviteTenantToProperty(params: {
+  propertyId: string;
+  tenantEmail: string;
+  tenantName?: string;
+  unitId?: string;
+  subUnitId?: string;
+  expiresInHours?: number;
+}): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { error: 'Supabase credentials are missing in env.' };
+    }
+
+    if (!accessToken) {
+      return { error: 'No auth session found. Please sign in again.' };
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/invite-tenant`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+
+    const rawText = await response.text();
+    if (!response.ok) {
+      let message = rawText || `Invite failed with status ${response.status}`;
+      try {
+        const parsed = JSON.parse(rawText);
+        message = parsed?.error || parsed?.message || message;
+      } catch {
+        // keep raw text
+      }
+      console.error('Error inviting tenant:', { message, status: response.status, rawText });
+      return { error: `${message} (status ${response.status})` };
+    }
+
+    const data = rawText ? JSON.parse(rawText) : {};
+    return { 
+      inviteId: data?.inviteId, 
+      token: data?.token,
+      notificationQueued: data?.notificationQueued,
+      emailQueued: data?.emailQueued,
+    };
+  } catch (error) {
+    console.error('Error inviting tenant:', error);
+    return null;
+  }
+}
+
+// Invite applicant to property (similar to tenant invite but for applicants)
+export async function inviteApplicantToProperty(params: {
+  propertyId: string;
+  applicantEmail: string;
+  applicantName?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  unitId?: string;
+  subUnitId?: string;
+}): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
+  try {
+    console.log('🚀 inviteApplicantToProperty called with params:', JSON.stringify(params, null, 2));
+    
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { error: 'Supabase credentials are missing in env.' };
+    }
+
+    if (!accessToken) {
+      return { error: 'No auth session found. Please sign in again.' };
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/invite-applicant`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+
+    const rawText = await response.text();
+    console.log('📥 Raw response text:', rawText);
+    
+    if (!response.ok) {
+      let message = rawText || `Invite failed with status ${response.status}`;
+      try {
+        const parsed = JSON.parse(rawText);
+        message = parsed?.error || parsed?.message || message;
+      } catch {
+        // keep raw text
+      }
+      console.error('❌ Error inviting applicant:', { message, status: response.status, rawText });
+      return { error: `${message} (status ${response.status})` };
+    }
+
+    const data = rawText ? JSON.parse(rawText) : {};
+    console.log('✅ Parsed applicant invite response:', JSON.stringify(data, null, 2));
+    
+    return { 
+      inviteId: data?.inviteId, 
+      token: data?.token,
+      notificationQueued: data?.notificationQueued,
+      emailQueued: data?.emailQueued,
+    };
+  } catch (error) {
+    console.error('❌ Unexpected error inviting applicant:', error);
+    return null;
+  }
+}
+
+export async function getInviteDetails(params: {
+  token: string;
+  tenantEmail?: string;
+}): Promise<InviteDetails | null> {
+  try {
+    const searchParams = new URLSearchParams({ token: params.token });
+    if (params.tenantEmail) {
+      searchParams.append('tenant_email', params.tenantEmail);
+    }
+    const { data, error } = await supabase.functions.invoke(
+      `get-invite?${searchParams.toString()}`,
+      { method: 'GET' }
+    );
+
+    if (error) {
+      console.error('Error fetching invite details:', error);
+      return null;
+    }
+
+    return data as InviteDetails;
+  } catch (error) {
+    console.error('Error fetching invite details:', error);
+    return null;
+  }
+}
+
+export async function acceptInvite(token: string): Promise<{ inviteStatus: string } | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      `accept-invite?token=${encodeURIComponent(token)}`
+    );
+
+    if (error) {
+      console.error('Error accepting invite:', error);
+      return null;
+    }
+
+    return { inviteStatus: data?.inviteStatus };
+  } catch (error) {
+    console.error('Error accepting invite:', error);
+    return null;
+  }
+}
+
+export async function declineInvite(token: string): Promise<{ inviteStatus: string } | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      `decline-invite?token=${encodeURIComponent(token)}`
+    );
+
+    if (error) {
+      console.error('Error declining invite:', error);
+      return null;
+    }
+
+    return { inviteStatus: data?.inviteStatus };
+  } catch (error) {
+    console.error('Error declining invite:', error);
+    return null;
   }
 }
 
@@ -1675,6 +2266,34 @@ export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>
       return null;
     }
 
+    // Auto-update tenant status based on lease status
+    if (data && updates.status && data.tenant_id) {
+      const tenantStatus = ['active', 'signed'].includes(updates.status) ? 'active' : 'inactive';
+      
+      console.log(`🔄 Auto-updating tenant status to '${tenantStatus}' based on lease status: ${updates.status}`);
+      
+      // Update tenant status in tenants table
+      await supabase
+        .from('tenants')
+        .update({ 
+          status: tenantStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', data.tenant_id);
+      
+      // Update tenant_property_links status
+      await supabase
+        .from('tenant_property_links')
+        .update({ 
+          status: tenantStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('tenant_id', data.tenant_id)
+        .eq('property_id', data.property_id);
+      
+      console.log(`✅ Tenant status updated to: ${tenantStatus}`);
+    }
+
     return data;
   } catch (error) {
     console.error('Error updating lease:', error);
@@ -2213,5 +2832,681 @@ export async function getTransactionCategorySummary(
   } catch (error) {
     console.error('Error getting category summary:', error);
     return [];
+  }
+}
+
+// Fetch tenant notifications (for announcements section)
+export async function fetchTenantNotifications(userId: string) {
+  try {
+    console.log('📡 Fetching notifications for user:', userId);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('❌ Error fetching notifications:', error);
+      return [];
+    }
+
+    console.log('✅ Notifications fetched:', data?.length || 0);
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error fetching tenant notifications:', error);
+    return [];
+  }
+}
+
+// Fetch landlord notifications (same as tenant but for clarity)
+export async function fetchLandlordNotifications(userId: string) {
+  try {
+    console.log('📡 Fetching landlord notifications for user:', userId);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error('❌ Error fetching notifications:', error);
+      return [];
+    }
+
+    console.log('✅ Landlord notifications fetched:', data?.length || 0);
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error fetching landlord notifications:', error);
+    return [];
+  }
+}
+
+// Mark a single notification as read
+export async function markNotificationAsRead(notificationId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', notificationId);
+
+    if (error) {
+      console.error('Error marking notification as read:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    return false;
+  }
+}
+
+// Mark all notifications as read for a user
+export async function markAllNotificationsAsRead(userId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      console.error('Error marking all notifications as read:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+    return false;
+  }
+}
+
+// Get unread notification count
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  try {
+    const { count, error } = await supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      console.error('Error getting unread count:', error);
+      return 0;
+    }
+
+    return count || 0;
+  } catch (error) {
+    console.error('Error getting unread count:', error);
+    return 0;
+  }
+}
+
+
+// Fetch pending invites for tenant (to auto-select property when starting application)
+export async function fetchPendingInvites(userId: string) {
+  try {
+    // Get user's email first
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .single();
+
+    const userEmail = profile?.email;
+
+    // Fetch pending invites from invites table (has unit_id and sub_unit_id columns)
+    const { data: invites, error: invitesError } = await supabase
+      .from('invites')
+      .select('*')
+      .or(`tenant_id.eq.${userId}${userEmail ? `,tenant_email.eq.${userEmail}` : ''}`)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (invitesError) {
+      console.error('Error fetching invites:', invitesError);
+      // Fallback to notification-based approach
+      return await fetchPendingInvitesFromNotifications(userId);
+    }
+
+    if (!invites || invites.length === 0) {
+      return [];
+    }
+
+    // Get property details for each invite
+    const invitesWithDetails = await Promise.all(
+      invites.map(async (invite) => {
+        // Fetch property details
+        const { data: property, error: propError } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('id', invite.property_id)
+          .single();
+
+        if (propError || !property) {
+          return null;
+        }
+
+        // Fetch unit details if unit_id exists in invite
+        let unit = null;
+        if (invite.unit_id) {
+          const { data: unitData } = await supabase
+            .from('units')
+            .select('*')
+            .eq('id', invite.unit_id)
+            .single();
+          unit = unitData;
+        }
+
+        // Fetch subunit details if sub_unit_id exists in invite
+        let subUnit = null;
+        if (invite.sub_unit_id) {
+          const { data: subUnitData } = await supabase
+            .from('sub_units')
+            .select('*')
+            .eq('id', invite.sub_unit_id)
+            .single();
+          subUnit = subUnitData;
+        }
+
+        return {
+          id: invite.id,
+          property,
+          unit,
+          subUnit,
+          inviteData: {
+            propertyId: invite.property_id,
+            unitId: invite.unit_id,
+            subUnitId: invite.sub_unit_id,
+          },
+        };
+      })
+    );
+
+    return invitesWithDetails.filter(Boolean);
+  } catch (error) {
+    console.error('Error fetching pending invites:', error);
+    return [];
+  }
+}
+
+// Fallback: Fetch from notifications if invites table query fails
+async function fetchPendingInvitesFromNotifications(userId: string) {
+  try {
+    const { data: notifications, error: notifError } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'invite')
+      .eq('is_read', false)
+      .order('created_at', { ascending: false });
+
+    if (notifError || !notifications || notifications.length === 0) {
+      return [];
+    }
+
+    const invitesWithDetails = await Promise.all(
+      notifications.map(async (notif) => {
+        const data = notif.data as { propertyId?: string; unitId?: string; subUnitId?: string };
+        
+        if (!data.propertyId) {
+          return null;
+        }
+
+        const { data: property, error: propError } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('id', data.propertyId)
+          .single();
+
+        if (propError || !property) {
+          return null;
+        }
+
+        let unit = null;
+        if (data.unitId) {
+          const { data: unitData } = await supabase
+            .from('units')
+            .select('*')
+            .eq('id', data.unitId)
+            .single();
+          unit = unitData;
+        }
+
+        let subUnit = null;
+        if (data.subUnitId) {
+          const { data: subUnitData } = await supabase
+            .from('sub_units')
+            .select('*')
+            .eq('id', data.subUnitId)
+            .single();
+          subUnit = subUnitData;
+        }
+
+        return {
+          id: notif.id,
+          property,
+          unit,
+          subUnit,
+          notificationData: data,
+        };
+      })
+    );
+
+    return invitesWithDetails.filter(Boolean);
+  } catch (error) {
+    console.error('Error fetching from notifications:', error);
+    return [];
+  }
+}
+
+// Submit application to database
+export async function submitApplication(params: {
+  userId: string;
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone?: string;
+  formData: any;
+  inviteId?: string;
+}) {
+  try {
+    console.log('🗄️ submitApplication called with params:', {
+      userId: params.userId,
+      propertyId: params.propertyId,
+      unitId: params.unitId,
+      subUnitId: params.subUnitId,
+      unitIdType: typeof params.unitId,
+      subUnitIdType: typeof params.subUnitId,
+      hasUnitId: !!params.unitId,
+      hasSubUnitId: !!params.subUnitId,
+      inviteId: params.inviteId,
+    });
+
+    // First, get the property to find the landlord
+    const { data: property, error: propError } = await supabase
+      .from('properties')
+      .select('user_id, address1, city')
+      .eq('id', params.propertyId)
+      .single();
+
+    if (propError) {
+      console.error('Error fetching property:', propError);
+      return { success: false, error: 'Property not found' };
+    }
+
+    const landlordId = property.user_id;
+    const propertyAddress = `${property.address1}, ${property.city}`;
+
+    console.log('🗄️ About to insert application with:', {
+      unit_id: params.unitId || null,
+      sub_unit_id: params.subUnitId || null,
+      willBeNull: !params.unitId,
+    });
+
+    // Insert the application
+    const { data, error } = await supabase
+      .from('applications')
+      .insert({
+        user_id: params.userId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        sub_unit_id: params.subUnitId || null,
+        invite_id: params.inviteId || null,
+        applicant_name: params.applicantName,
+        applicant_email: params.applicantEmail,
+        applicant_phone: params.applicantPhone || null,
+        status: 'submitted',
+        form_data: params.formData,
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error submitting application:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('✅ Application inserted successfully:', {
+      id: data.id,
+      unit_id: data.unit_id,
+      sub_unit_id: data.sub_unit_id,
+    });
+
+    // Update applicant record status to 'applied'
+    if (params.inviteId) {
+      await supabase
+        .from('applicants')
+        .update({ 
+          status: 'applied',
+          application_id: data.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('invite_id', params.inviteId)
+        .eq('email', params.applicantEmail);
+    }
+
+    // Send notification to landlord
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: landlordId,
+          type: 'application',
+          title: 'New Application Received',
+          message: `${params.applicantName} has submitted an application for ${propertyAddress}`,
+          data: {
+            applicationId: data.id,
+            applicantName: params.applicantName,
+            applicantEmail: params.applicantEmail,
+            propertyId: params.propertyId,
+            propertyAddress: propertyAddress,
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Notification sent to landlord:', landlordId);
+    } catch (notifError) {
+      console.error('Error sending notification to landlord:', notifError);
+      // Don't fail the application submission if notification fails
+    }
+
+    console.log('✅ Application submitted successfully:', data.id);
+    return { success: true, applicationId: data.id };
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    return { success: false, error: 'Failed to submit application' };
+  }
+}
+
+// Fetch applications for landlord
+export async function fetchLandlordApplications(landlordId: string) {
+  try {
+    // First, get all properties for this landlord
+    const { data: properties, error: propError } = await supabase
+      .from('properties')
+      .select('id')
+      .eq('user_id', landlordId);
+
+    if (propError) {
+      console.error('Error fetching properties:', propError);
+      return [];
+    }
+
+    if (!properties || properties.length === 0) {
+      return [];
+    }
+
+    const propertyIds = properties.map(p => p.id);
+
+    // Get applications for those properties
+    // Note: Applications are deleted when converted to tenant, so no filtering needed
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .in('property_id', propertyIds)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching applications:', error);
+      return [];
+    }
+
+    console.log('📋 Total applications fetched:', data?.length || 0);
+    if (data && data.length > 0) {
+      console.log('📋 Application IDs:', data.map(a => ({ id: a.id, email: a.applicant_email, name: a.applicant_name })));
+    }
+
+    // Fetch property details for each application
+    const applicationsWithAddress = await Promise.all(
+      (data || []).map(async (app) => {
+        const { data: property } = await supabase
+          .from('properties')
+          .select('address1, address2, city, state, zip_code')
+          .eq('id', app.property_id)
+          .single();
+
+        const propertyAddress = property
+          ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+              .filter(Boolean)
+              .join(', ')
+          : 'Unknown Property';
+
+        return {
+          ...app,
+          property_address: propertyAddress,
+        };
+      })
+    );
+
+    return applicationsWithAddress;
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    return [];
+  }
+}
+
+// Fetch applications by property
+export async function fetchApplicationsByProperty(propertyId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching applications:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    return [];
+  }
+}
+
+// Approve application
+export async function approveApplication(applicationId: string, shouldAddTenant: 'now' | 'later') {
+  try {
+    console.log('✅ Approving application:', applicationId, 'Add tenant:', shouldAddTenant);
+
+    // Update application status
+    const { data: application, error: updateError } = await supabase
+      .from('applications')
+      .update({ 
+        status: 'approved',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', applicationId)
+      .select('*, property_id')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating application:', updateError);
+      return { success: false, error: 'Failed to approve application' };
+    }
+
+    // Get property details for notification
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', application.property_id)
+      .single();
+
+    const propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Send notification to tenant (applicant)
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: application.applicant_id,
+          type: 'application_approved',
+          title: 'Application Approved! 🎉',
+          message: `Your application for ${propertyAddress} has been approved!`,
+          data: {
+            applicationId: application.id,
+            propertyId: application.property_id,
+            propertyAddress: propertyAddress,
+            status: 'approved'
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Approval notification sent to applicant:', application.applicant_id);
+    } catch (notifError) {
+      console.error('Error sending approval notification:', notifError);
+    }
+
+    return { 
+      success: true, 
+      application,
+      shouldAddTenant 
+    };
+  } catch (error) {
+    console.error('Error approving application:', error);
+    return { success: false, error: 'Failed to approve application' };
+  }
+}
+
+// Reject application
+export async function rejectApplication(applicationId: string, reason?: string) {
+  try {
+    console.log('❌ Rejecting application:', applicationId);
+
+    // Update application status
+    const { data: application, error: updateError } = await supabase
+      .from('applications')
+      .update({ 
+        status: 'rejected',
+        rejection_reason: reason,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', applicationId)
+      .select('*, property_id')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating application:', updateError);
+      return { success: false, error: 'Failed to reject application' };
+    }
+
+    // Get property details for notification
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', application.property_id)
+      .single();
+
+    const propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Send notification to tenant (applicant)
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: application.applicant_id,
+          type: 'application_rejected',
+          title: 'Application Update',
+          message: `Your application for ${propertyAddress} has been reviewed.`,
+          data: {
+            applicationId: application.id,
+            propertyId: application.property_id,
+            propertyAddress: propertyAddress,
+            status: 'rejected',
+            reason: reason
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Rejection notification sent to applicant:', application.applicant_id);
+    } catch (notifError) {
+      console.error('Error sending rejection notification:', notifError);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error rejecting application:', error);
+    return { success: false, error: 'Failed to reject application' };
+  }
+}
+
+// Get application by ID
+export async function getApplicationById(applicationId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('id', applicationId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching application:', error);
+      return null;
+    }
+
+    // Get property details
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', data.property_id)
+      .single();
+
+    let propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Add unit info if available
+    if (data.unit_id) {
+      const { data: unit } = await supabase
+        .from('units')
+        .select('name')
+        .eq('id', data.unit_id)
+        .single();
+      
+      if (unit?.name) {
+        propertyAddress += ` - Unit ${unit.name}`;
+      }
+    }
+
+    // Add sub-unit (room) info if available
+    if (data.sub_unit_id) {
+      const { data: subUnit } = await supabase
+        .from('sub_units')
+        .select('name')
+        .eq('id', data.sub_unit_id)
+        .single();
+      
+      if (subUnit?.name) {
+        propertyAddress += ` - Room ${subUnit.name}`;
+      }
+    }
+
+    return {
+      ...data,
+      property_address: propertyAddress,
+    };
+  } catch (error) {
+    console.error('Error fetching application:', error);
+    return null;
   }
 }

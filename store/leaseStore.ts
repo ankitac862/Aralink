@@ -74,7 +74,7 @@ interface LeaseStore {
   currentLeaseDraft?: DraftLease;
 
   updateDraft: (section: keyof LeaseApplicationDraft, data: Partial<LeaseApplicationDraft[keyof LeaseApplicationDraft]>) => void;
-  submitDraft: () => Promise<string>;
+  submitDraft: (propertyId?: string, unitId?: string, subUnitId?: string, userId?: string, inviteId?: string) => Promise<string>;
   getTenantStatus: () => LeaseApplicationStatus | undefined;
   loadLandlordApplications: () => void;
   selectApplication: (id: string) => LeaseApplication | undefined;
@@ -177,26 +177,75 @@ export const useLeaseStore = create<LeaseStore>((set, get) => ({
     }));
   },
 
-  submitDraft: async () => {
+  submitDraft: async (propertyId?: string, unitId?: string, subUnitId?: string, userId?: string, inviteId?: string) => {
     const { tenantDraft } = get();
     const applicationId = `app-${Date.now()}`;
     
+    console.log('📤 submitDraft called with:', { propertyId, unitId, subUnitId, userId, inviteId });
+    console.log('📤 unitId type:', typeof unitId, 'value:', unitId);
+    console.log('📤 subUnitId type:', typeof subUnitId, 'value:', subUnitId);
+    console.log('📤 Are they empty strings?', { 
+      unitIdIsEmptyString: unitId === '', 
+      subUnitIdIsEmptyString: subUnitId === '' 
+    });
+    console.log('📤 Application data:', {
+      fullName: tenantDraft.personal.fullName,
+      email: tenantDraft.personal.email,
+      phone: tenantDraft.personal.phoneNumber,
+    });
+    
     const application: LeaseApplication = {
       id: applicationId,
-      tenantId: 'current-tenant',
+      tenantId: userId || 'current-tenant',
       tenantName: tenantDraft.personal.fullName,
       status: 'submitted',
       draft: tenantDraft,
       submittedAt: new Date().toISOString(),
+      propertyId, // Include propertyId if provided
     };
 
-    // Simulate async operation
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
+    // Save to local state
     set({
       tenantApplication: application,
       landlordApplications: [...get().landlordApplications, application],
     });
+
+    // Save to database if we have required data
+    if (propertyId && userId) {
+      console.log('✅ Required data present, calling submitApplication API...');
+      console.log('🔍 Passing to submitApplication:', {
+        propertyId,
+        unitId: unitId || undefined,
+        subUnitId: subUnitId || undefined,
+        unitIdAfterConversion: unitId || undefined,
+        subUnitIdAfterConversion: subUnitId || undefined,
+      });
+      
+      const { submitApplication } = await import('@/lib/supabase');
+      const result = await submitApplication({
+        userId,
+        propertyId,
+        unitId: unitId && unitId !== '' ? unitId : undefined,
+        subUnitId: subUnitId && subUnitId !== '' ? subUnitId : undefined,
+        applicantName: tenantDraft.personal.fullName,
+        applicantEmail: tenantDraft.personal.email,
+        applicantPhone: tenantDraft.personal.phoneNumber,
+        formData: tenantDraft,
+        inviteId,
+      });
+
+      if (result.success) {
+        console.log('✅ Application saved to database:', result.applicationId);
+        return result.applicationId || applicationId;
+      } else {
+        console.error('❌ Failed to save application to database:', result.error);
+      }
+    } else {
+      console.warn('⚠️ Missing required data for database save:', { 
+        hasPropertyId: !!propertyId, 
+        hasUserId: !!userId 
+      });
+    }
 
     return applicationId;
   },
