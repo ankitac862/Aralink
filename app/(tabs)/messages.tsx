@@ -8,11 +8,13 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import messageService, { Conversation } from '@/services/messageService';
+import { useUserRole } from '@/hooks/use-user-role';
 
 export default function MessagesScreen() {
   const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const userRole = useUserRole();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +76,12 @@ export default function MessagesScreen() {
   };
 
   const handleStartNewChat = () => {
-    router.push('/start-chat');
+    // Tenants go to tenant-start-chat, landlords go to start-chat
+    if (userRole === 'tenant') {
+      router.push('/tenant-start-chat');
+    } else {
+      router.push('/start-chat');
+    }
   };
 
   const renderConversation = ({ item }: { item: Conversation }) => {
