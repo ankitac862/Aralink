@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
-  SearchBase,
   TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,8 +40,8 @@ export default function StartChatScreen() {
   const [searchText, setSearchText] = useState('');
   const [messagingId, setMessagingId] = useState<string | null>(null);
 
-  const { tenants: allTenants } = useTenantStore();
-  const { getPropertyById } = usePropertyStore();
+  const { tenants: allTenants, loadFromSupabase: loadTenantsFromSupabase } = useTenantStore();
+  const { getPropertyById, loadFromSupabase: loadPropertiesFromSupabase } = usePropertyStore();
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
@@ -55,8 +54,23 @@ export default function StartChatScreen() {
   const primaryColor = '#4A90E2';
 
   useEffect(() => {
+    // Load store data when screen opens
+    if (user?.id) {
+      Promise.all([
+        loadPropertiesFromSupabase(user.id),
+        loadTenantsFromSupabase(user.id),
+      ]).catch(err => console.error('Error loading store data:', err));
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
     loadTenants();
   }, []);
+
+  useEffect(() => {
+    // Reload tenants when store data changes (properties or tenants loaded)
+    loadTenants();
+  }, [allTenants, getPropertyById]);
 
   useEffect(() => {
     if (searchText.trim() === '') {
@@ -87,7 +101,7 @@ export default function StartChatScreen() {
           email: tenant.email,
           phone: tenant.phone,
           propertyId: tenant.propertyId,
-          propertyName: property?.name || property?.streetAddress || 'Unknown Property',
+          propertyName: property?.name || property?.address1 || 'Unknown Property',
         };
       });
       setTenants(tenantList);
@@ -105,15 +119,27 @@ export default function StartChatScreen() {
     }
 
     try {
+      console.log('💬 handleStartChat - Starting conversation with tenant:', {
+        tenantRecordId: tenant.id,
+        tenantName: `${tenant.firstName} ${tenant.lastName}`,
+        propertyId: tenant.propertyId,
+        landlordId: user.id,
+      });
+
       setMessagingId(tenant.id);
 
       const conversation = await messageService.getOrCreateConversation(
         tenant.propertyId,
-        tenant.id,
+        tenant.id, // Pass the tenant RECORD ID (not user_id)
         user.id,
         `${tenant.firstName} ${tenant.lastName}`,
         user.name || 'You'
       );
+
+      console.log('💬 Got conversation:', {
+        conversationId: conversation.id,
+        tenantRecordId: conversation.tenant_record_id,
+      });
 
       setMessagingId(null);
       router.push(`/chat/${conversation.id}`);

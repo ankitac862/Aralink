@@ -17,6 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 import messageService, { Message } from '@/services/messageService';
 import { supabase } from '@/lib/supabase';
 
@@ -25,6 +26,7 @@ export default function ChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
+  const { user } = useAuthStore();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState('');
@@ -33,7 +35,7 @@ export default function ChatScreen() {
   const [conversationName, setConversationName] = useState('');
   const [subscription, setSubscription] = useState<any>(null);
   const flatListRef = useRef<FlatList>(null);
-  const userId = supabase.auth.user()?.id;
+  const userId = user?.id;
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -115,7 +117,36 @@ export default function ChatScreen() {
       const trimmedText = text.trim();
       setText('');
 
-      await messageService.sendMessage(conversationId as string, trimmedText);
+      // OPTIMIZATION: Add message to UI immediately (optimistic update)
+      // Don't wait for database confirmation
+      const optimisticMessage: Message = {
+        id: Date.now().toString(), // Temporary ID
+        conversation_id: conversationId as string,
+        sender_id: userId || '',
+        text: trimmedText,
+        is_read: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Add to messages immediately
+      setMessages((prev) => [...prev, optimisticMessage]);
+      flatListRef.current?.scrollToEnd({ animated: true });
+
+      // Send to database in background
+      const sentMessage = await messageService.sendMessage(
+        conversationId as string,
+        trimmedText
+      );
+
+      // Replace temporary message with actual message from database
+      if (sentMessage) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === optimisticMessage.id ? sentMessage : msg
+          )
+        );
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       setText(text);
