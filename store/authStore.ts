@@ -2,7 +2,7 @@ import { Session, User } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
 
-import { clearCorruptedSession, getUserProfile, supabase, upsertUserProfile, UserProfile } from '@/lib/supabase';
+import { clearCorruptedSession, getUserProfile, supabase, UserProfile } from '@/lib/supabase';
 
 export type UserRole = 'landlord' | 'tenant' | 'manager';
 
@@ -131,79 +131,89 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ isLoading: true });
 
-      // Get session with better error handling
-      let session = null;
-      try {
-        const { data, error } = await supabase.auth.getSession();
+      // Add timeout to prevent infinite hanging (10 seconds for better UX)
+      const timeoutPromise = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('Auth initialization timeout')), 10000)
+      );
+
+      const initPromise = (async () => {
+        // Get session with better error handling
+        let session = null;
+        try {
+          const { data, error } = await supabase.auth.getSession();
         
-        if (error) {
-          // If there's a session error, try to clear it and start fresh
-          console.warn('Session error, clearing:', error.message);
-          try {
-            await supabase.auth.signOut();
-          } catch (signOutError) {
-            // Ignore sign out errors
+          if (error) {
+            // If there's a session error, try to clear it and start fresh
+            console.warn('Session error, clearing:', error.message);
+            try {
+              await supabase.auth.signOut();
+            } catch (signOutError) {
+              // Ignore sign out errors
+            }
+            set({ isInitialized: true, isLoading: false });
+            return;
           }
+          
+          session = data?.session;
+        } catch (sessionError: any) {
+          // Handle specific session scope errors
+          if (sessionError?.message?.includes('missing destination name scopes') || 
+              sessionError?.code === 'PGRST205' ||
+              sessionError?.message?.includes('Session')) {
+            console.warn('Session scope error detected, clearing corrupted session');
+            try {
+              await clearCorruptedSession();
+            } catch (clearError) {
+              console.error('Error clearing corrupted session:', clearError);
+            }
+          }
+          console.error('Error getting session:', sessionError);
           set({ isInitialized: true, isLoading: false });
           return;
         }
-        
-        session = data?.session;
-      } catch (sessionError: any) {
-        // Handle specific session scope errors
-        if (sessionError?.message?.includes('missing destination name scopes') || 
-            sessionError?.code === 'PGRST205' ||
-            sessionError?.message?.includes('Session')) {
-          console.warn('Session scope error detected, clearing corrupted session');
-          try {
-            await clearCorruptedSession();
-          } catch (clearError) {
-            console.error('Error clearing corrupted session:', clearError);
-          }
-        }
-        console.error('Error getting session:', sessionError);
-        set({ isInitialized: true, isLoading: false });
-        return;
-      }
 
-      if (session?.user) {
-        try {
-          const profile = await getUserProfile(session.user.id);
-          const savedRole = await getStorageValue('userRole') as UserRole | null;
-          const authUser = toAuthUser(session.user, profile, savedRole || undefined);
-          set({ user: authUser, session, isInitialized: true, isLoading: false });
-        } catch (userError) {
-          console.error('Error loading user profile:', userError);
-          // Still mark as initialized even if profile load fails
+        if (session?.user) {
+          try {
+            const profile = await getUserProfile(session.user.id);
+            const savedRole = await getStorageValue('userRole') as UserRole | null;
+            const authUser = toAuthUser(session.user, profile, savedRole || undefined);
+            set({ user: authUser, session, isInitialized: true, isLoading: false });
+          } catch (userError) {
+            console.error('Error loading user profile:', userError);
+            // Still mark as initialized even if profile load fails
+            set({ isInitialized: true, isLoading: false });
+          }
+        } else {
           set({ isInitialized: true, isLoading: false });
         }
-      } else {
-        set({ isInitialized: true, isLoading: false });
-      }
 
-      // Listen for auth changes with error handling
-      supabase.auth.onAuthStateChange(async (event, newSession) => {
-        try {
-          console.log('Auth state changed:', event);
-          
-          if (event === 'SIGNED_IN' && newSession?.user) {
-            const profile = await getUserProfile(newSession.user.id);
-            const savedRole = await getStorageValue('userRole') as UserRole | null;
-            const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
-            set({ user: authUser, session: newSession });
-          } else if (event === 'SIGNED_OUT') {
-            set({ user: null, session: null });
-          } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
-            const profile = await getUserProfile(newSession.user.id);
-            const savedRole = await getStorageValue('userRole') as UserRole | null;
-            const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
-            set({ user: authUser, session: newSession });
+        // Listen for auth changes with error handling
+        supabase.auth.onAuthStateChange(async (event, newSession) => {
+          try {
+            console.log('Auth state changed:', event);
+            
+            if (event === 'SIGNED_IN' && newSession?.user) {
+              const profile = await getUserProfile(newSession.user.id);
+              const savedRole = await getStorageValue('userRole') as UserRole | null;
+              const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
+              set({ user: authUser, session: newSession });
+            } else if (event === 'SIGNED_OUT') {
+              set({ user: null, session: null });
+            } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
+              const profile = await getUserProfile(newSession.user.id);
+              const savedRole = await getStorageValue('userRole') as UserRole | null;
+              const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
+              set({ user: authUser, session: newSession });
+            }
+          } catch (stateChangeError) {
+            console.error('Error in auth state change handler:', stateChangeError);
+            // Don't crash the app, just log the error
           }
-        } catch (stateChangeError) {
-          console.error('Error in auth state change handler:', stateChangeError);
-          // Don't crash the app, just log the error
-        }
-      });
+        });
+      })();
+
+      // Race between timeout and init
+      await Promise.race([initPromise, timeoutPromise]);
     } catch (error) {
       console.error('Error initializing auth:', error);
       set({ isInitialized: true, isLoading: false });
@@ -250,18 +260,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
 
       if (data.user) {
-        // Try to create user profile
-        await upsertUserProfile({
-          id: data.user.id,
-          email: data.user.email || email,
-          full_name: name,
-          user_type: role,
-          is_social_login: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        // NOTE: Profile creation is handled by the database trigger (handle_new_user)
+        // which runs with SECURITY DEFINER to bypass RLS.
+        // DO NOT call upsertUserProfile here - the user is not authenticated yet
+        // (email not verified), so RLS would block the insert.
 
-        // Save role to storage
+        // Save role to storage for local use
         await setStorageValue('userRole', role);
         await setStorageValue('userName', name);
 

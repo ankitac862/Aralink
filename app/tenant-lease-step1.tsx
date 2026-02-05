@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Alert, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -14,6 +14,14 @@ export default function TenantLeaseStep1Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+    propertyId?: string; 
+    address?: string; 
+    fromInvite?: string;
+    unitId?: string;
+    subUnitId?: string;
+    inviteId?: string;
+  }>();
   const { tenantDraft, updateDraft } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
@@ -68,7 +76,10 @@ export default function TenantLeaseStep1Screen() {
   const handleContinue = () => {
     if (validate()) {
       updateDraft('personal', formData);
-      router.push('/tenant-lease-step2');
+      router.push({
+        pathname: '/tenant-lease-step2',
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId }
+      });
     }
   };
 

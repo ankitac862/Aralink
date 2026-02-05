@@ -1,7 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   ScrollView,
@@ -17,6 +18,8 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
+import { DbTransaction, fetchTenantTransactions } from '@/lib/supabase';
+import { exportTransactionsToExcel } from '@/utils/excelExport';
 
 const PAYMENT_CATEGORIES = [
   { key: 'rent', label: 'Rent', color: '#3b82f6', active: true },
@@ -70,9 +73,30 @@ export default function TenantDetailScreen() {
   const { getPropertyById } = usePropertyStore();
   
   const [selectedCategory, setSelectedCategory] = useState('rent');
+  const [transactions, setTransactions] = useState<DbTransaction[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(true);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
+
+  // Load transactions for this tenant
+  useEffect(() => {
+    const loadTransactions = async () => {
+      if (!id) return;
+      
+      setLoadingTransactions(true);
+      try {
+        const data = await fetchTenantTransactions(id);
+        setTransactions(data);
+      } catch (error) {
+        console.error('Error loading tenant transactions:', error);
+      } finally {
+        setLoadingTransactions(false);
+      }
+    };
+
+    loadTransactions();
+  }, [id]);
   
   // Format tenant data for display
   const tenant = tenantData ? {
@@ -80,9 +104,9 @@ export default function TenantDetailScreen() {
     name: `${tenantData.firstName} ${tenantData.lastName}`,
     email: tenantData.email,
     phone: tenantData.phone,
-    propertyName: property?.name || property?.streetAddress || 'Unknown Property',
+    propertyName: property?.name || 'Unknown Property',
     unitName: tenantData.unitName || 'N/A',
-    address: property ? `${property.streetAddress}, ${property.city}, ${property.state}` : 'N/A',
+    address: property ? `${property.address1}${property.address2 ? ', ' + property.address2 : ''}, ${property.city}, ${property.state}` : 'N/A',
     createdAt: new Date(tenantData.createdAt).toLocaleDateString('en-US', { 
       year: 'numeric', 
       month: 'short', 
@@ -250,13 +274,48 @@ export default function TenantDetailScreen() {
           <View style={styles.ledgerHeader}>
             <ThemedText style={[styles.cardTitle, { color: textColor }]}>Ledger</ThemedText>
             <View style={styles.ledgerActions}>
-              <TouchableOpacity style={styles.ledgerActionButton}>
+              <TouchableOpacity 
+                style={styles.ledgerActionButton}
+                onPress={() => {
+                  if (!tenant || transactions.length === 0) {
+                    Alert.alert('No Data', 'No transactions to export');
+                    return;
+                  }
+                  exportTransactionsToExcel(transactions, tenant.name);
+                }}
+              >
                 <MaterialCommunityIcons name="download" size={20} color={secondaryTextColor} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.ledgerActionButton}>
-                <MaterialCommunityIcons name="attachment" size={20} color={secondaryTextColor} />
+              <TouchableOpacity 
+                style={[styles.ledgerActionButton, { backgroundColor: '#10b981' }]}
+                onPress={() => {
+                  if (!tenant || !property) return;
+                  router.push({
+                    pathname: '/add-transaction',
+                    params: {
+                      type: 'income',
+                      category: 'rent',
+                      propertyId: tenantData?.propertyId,
+                      tenantId: tenant.id,
+                    },
+                  });
+                }}
+              >
+                <MaterialCommunityIcons name="cash-plus" size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.ledgerActionButton, { backgroundColor: '#137fec' }]}>
+              <TouchableOpacity 
+                style={[styles.ledgerActionButton, { backgroundColor: '#137fec' }]}
+                onPress={() => {
+                  if (!tenant) return;
+                  router.push({
+                    pathname: '/add-transaction',
+                    params: {
+                      propertyId: tenantData?.propertyId,
+                      tenantId: tenant.id,
+                    },
+                  });
+                }}
+              >
                 <MaterialCommunityIcons name="plus" size={20} color="#fff" />
               </TouchableOpacity>
             </View>
@@ -295,16 +354,67 @@ export default function TenantDetailScreen() {
             </View>
           </ScrollView>
 
-          {/* Empty State */}
-          <View style={styles.emptyLedger}>
-            <MaterialCommunityIcons name="receipt-text-outline" size={64} color={secondaryTextColor} />
-            <ThemedText style={[styles.emptyLedgerTitle, { color: textColor }]}>
-              No invoices found
-            </ThemedText>
-            <ThemedText style={[styles.emptyLedgerSubtitle, { color: secondaryTextColor }]}>
-              There are no invoices for the selected category.
-            </ThemedText>
-          </View>
+          {/* Ledger List */}
+          {loadingTransactions ? (
+            <View style={styles.emptyLedger}>
+              <ActivityIndicator size="large" color="#137fec" />
+              <ThemedText style={[styles.emptyLedgerSubtitle, { color: secondaryTextColor }]}>
+                Loading transactions...
+              </ThemedText>
+            </View>
+          ) : (
+            <>
+              {transactions.filter(t => t.category === selectedCategory).length === 0 ? (
+                <View style={styles.emptyLedger}>
+                  <MaterialCommunityIcons name="receipt-text-outline" size={64} color={secondaryTextColor} />
+                  <ThemedText style={[styles.emptyLedgerTitle, { color: textColor }]}>
+                    No transactions found
+                  </ThemedText>
+                  <ThemedText style={[styles.emptyLedgerSubtitle, { color: secondaryTextColor }]}>
+                    There are no transactions for the selected category.
+                  </ThemedText>
+                </View>
+              ) : (
+                <View style={styles.transactionsList}>
+                  {transactions
+                    .filter(t => t.category === selectedCategory)
+                    .map((transaction) => (
+                      <View key={transaction.id} style={[styles.transactionRow, { borderBottomColor: borderColor }]}>
+                        <View style={styles.transactionLeft}>
+                          <ThemedText style={[styles.transactionDate, { color: textColor }]}>
+                            {new Date(transaction.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </ThemedText>
+                          <ThemedText style={[styles.transactionDesc, { color: secondaryTextColor }]}>
+                            {transaction.description || transaction.category}
+                          </ThemedText>
+                        </View>
+                        <View style={styles.transactionRight}>
+                          <ThemedText 
+                            style={[
+                              styles.transactionAmount,
+                              { color: transaction.type === 'income' ? '#10b981' : '#ef4444' }
+                            ]}
+                          >
+                            {transaction.type === 'income' ? '+' : '-'}${transaction.amount.toFixed(2)}
+                          </ThemedText>
+                          <View style={[
+                            styles.transactionStatus,
+                            { backgroundColor: transaction.status === 'paid' ? '#dcfce7' : '#fef3c7' }
+                          ]}>
+                            <ThemedText style={[
+                              styles.transactionStatusText,
+                              { color: transaction.status === 'paid' ? '#10b981' : '#f59e0b' }
+                            ]}>
+                              {transaction.status}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      </View>
+                    ))}
+                </View>
+              )}
+            </>
+          )}
         </View>
       </ScrollView>
     </ThemedView>
@@ -475,5 +585,44 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+  },
+  transactionsList: {
+    gap: 0,
+  },
+  transactionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  transactionLeft: {
+    flex: 1,
+  },
+  transactionDate: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  transactionDesc: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  transactionRight: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  transactionAmount: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  transactionStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  transactionStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
 });

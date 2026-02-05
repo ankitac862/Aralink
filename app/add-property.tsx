@@ -17,10 +17,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
+import { StructuredAddress, EMPTY_ADDRESS } from '@/services/location-service';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 
@@ -40,18 +42,28 @@ export default function AddPropertyScreen() {
   const primaryColor = '#137fec';
   const inputBgColor = isDark ? '#1f2937' : '#ffffff';
 
-  const [formData, setFormData] = useState({
-    // Location fields
-    location: '',
-    address1: '',
-    address2: '',
+  // Toggle for manual address entry mode
+  const [manualAddressMode, setManualAddressMode] = useState(false);
+
+  // Structured address from autocomplete OR manual entry
+  const [structuredAddress, setStructuredAddress] = useState<StructuredAddress>(EMPTY_ADDRESS);
+
+  // Manual address fields (when API fails or user prefers manual)
+  const [manualAddress, setManualAddress] = useState({
+    streetNumber: '',
+    streetName: '',
+    unit: '',
     city: '',
-    state: '',
-    zipCode: '',
-    country: 'United States',
+    province: '',
+    postalCode: '',
+    country: 'Canada',
+  });
+
+  const [formData, setFormData] = useState({
+    // Address Line 2 (unit/apt) - optional, can be filled manually
+    address2: '',
     
     // Property details
-    name: '',
     propertyType: 'single_unit' as 'single_unit' | 'multi_unit' | 'commercial' | 'parking',
     landlordName: '',
     
@@ -75,35 +87,48 @@ export default function AddPropertyScreen() {
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [addressSuggestions, setAddressSuggestions] = useState<string[]>([]);
 
-  // Handle address autocomplete
-  const handleAddressChange = (text: string) => {
-    setFormData(prev => ({ ...prev, address1: text }));
-    
-    // TODO: Implement Google Places API call
-    // For now, just show mock suggestions
-    if (text.length > 2) {
-      setAddressSuggestions([
-        `${text} Street, New York, NY`,
-        `${text} Avenue, Los Angeles, CA`,
-        `${text} Road, Chicago, IL`,
-      ]);
-    } else {
-      setAddressSuggestions([]);
+  // Handle address selection from autocomplete
+  const handleAddressSelect = (address: StructuredAddress) => {
+    setStructuredAddress(address);
+    // Sync to manual fields too (for editing)
+    setManualAddress({
+      streetNumber: address.streetNumber || '',
+      streetName: address.streetName || '',
+      unit: address.unit || '',
+      city: address.city || '',
+      province: address.province || '',
+      postalCode: address.postalCode || '',
+      country: address.country || 'Canada',
+    });
+    // Auto-fill unit if detected
+    if (address.unit) {
+      setFormData(prev => ({ ...prev, address2: `Unit ${address.unit}` }));
     }
   };
 
-  const selectAddress = (address: string) => {
-    // Parse the selected address
-    const parts = address.split(', ');
-    setFormData(prev => ({
-      ...prev,
-      address1: parts[0] || '',
-      city: parts[1] || '',
-      state: parts[2] || '',
-    }));
-    setAddressSuggestions([]);
+  // Handle manual address field changes
+  const handleManualAddressChange = (field: keyof typeof manualAddress, value: string) => {
+    setManualAddress(prev => ({ ...prev, [field]: value }));
+    // Sync to structured address
+    const updated = { ...manualAddress, [field]: value };
+    setStructuredAddress({
+      streetNumber: updated.streetNumber,
+      streetName: updated.streetName,
+      unit: updated.unit,
+      city: updated.city,
+      province: updated.province,
+      postalCode: updated.postalCode,
+      country: updated.country,
+      formattedAddress: `${updated.streetNumber} ${updated.streetName}, ${updated.city}, ${updated.province} ${updated.postalCode}`.trim(),
+      latitude: structuredAddress.latitude,
+      longitude: structuredAddress.longitude,
+    });
+  };
+
+  // Toggle between autocomplete and manual mode
+  const toggleAddressMode = () => {
+    setManualAddressMode(!manualAddressMode);
   };
 
   const pickImages = async () => {
@@ -139,13 +164,21 @@ export default function AddPropertyScreen() {
   };
 
   const handleSubmit = async () => {
-    // Validation
-    if (!formData.address1.trim()) {
-      Alert.alert('Error', 'Please enter an address');
+    // Get address from either autocomplete or manual entry
+    const streetNum = structuredAddress.streetNumber || manualAddress.streetNumber;
+    const streetName = structuredAddress.streetName || manualAddress.streetName;
+    const city = structuredAddress.city || manualAddress.city;
+    const province = structuredAddress.province || manualAddress.province;
+    const postalCode = structuredAddress.postalCode || manualAddress.postalCode;
+    const country = structuredAddress.country || manualAddress.country || 'Canada';
+
+    // Validation - check address fields
+    if (!streetNum || !streetName) {
+      Alert.alert('Error', 'Please enter the street number and street name');
       return;
     }
-    if (!formData.city.trim() || !formData.state.trim() || !formData.zipCode.trim()) {
-      Alert.alert('Error', 'Please complete the location details');
+    if (!city || !province || !postalCode) {
+      Alert.alert('Error', 'Please enter the city, province/state, and postal code');
       return;
     }
 
@@ -172,16 +205,26 @@ export default function AddPropertyScreen() {
         uploadedPhotoUrls = [...existingUrls, ...uploadedPhotoUrls];
       }
 
+      // Build the full address (streetNumber + streetName)
+      const fullStreetAddress = `${streetNum} ${streetName}`.trim();
+      const unitValue = manualAddressMode 
+        ? manualAddress.unit 
+        : (formData.address2 || structuredAddress.unit);
+
       // Pass the user ID to save to Supabase
       await addProperty({
-        location: formData.location || `${formData.city}, ${formData.state}`,
-        address1: formData.address1,
-        address2: formData.address2 || undefined,
-        city: formData.city,
-        state: formData.state,
-        zipCode: formData.zipCode,
-        country: formData.country,
-        name: formData.name || undefined,
+        // Use structured address fields (from autocomplete or manual)
+        address1: fullStreetAddress,
+        address2: unitValue || undefined,
+        city: city,
+        state: province,
+        zipCode: postalCode,
+        country: country,
+        
+        // Store latitude/longitude if available
+        // Note: These would need to be added to the Property type
+        
+        // Property details - NO name/location field
         propertyType: formData.propertyType,
         landlordName: formData.landlordName || undefined,
         rentCompleteProperty: formData.propertyType !== 'multi_unit' ? formData.rentCompleteProperty : undefined,
@@ -224,140 +267,203 @@ export default function AddPropertyScreen() {
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          {/* Location Section */}
+          {/* Property Address Section */}
           <View style={styles.section}>
-            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Location</ThemedText>
+            <View style={styles.sectionHeaderRow}>
+              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+                Property Address
+              </ThemedText>
+              <TouchableOpacity 
+                style={[styles.toggleModeButton, { borderColor: primaryColor }]}
+                onPress={toggleAddressMode}
+              >
+                <MaterialCommunityIcons 
+                  name={manualAddressMode ? "map-search" : "pencil"} 
+                  size={16} 
+                  color={primaryColor} 
+                />
+                <ThemedText style={[styles.toggleModeText, { color: primaryColor }]}>
+                  {manualAddressMode ? "Use Autocomplete" : "Enter Manually"}
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
             
-            {/* Location Name (Optional) */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Location Name (Optional)
-              </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="e.g., Downtown San Francisco"
-                placeholderTextColor={secondaryTextColor}
-                value={formData.location}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, location: text }))}
-              />
-            </View>
+            {!manualAddressMode ? (
+              <>
+                {/* Google Maps Address Autocomplete */}
+                <AddressAutocomplete
+                  onAddressSelect={handleAddressSelect}
+                  initialAddress={structuredAddress.formattedAddress ? structuredAddress : undefined}
+                  placeholder="Start typing address..."
+                  label="Street Address"
+                  required
+                  showUseMyLocation
+                />
 
-            {/* Address 1 with Autocomplete */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>
-                Address <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
-              </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="Start typing address..."
-                placeholderTextColor={secondaryTextColor}
-                value={formData.address1}
-                onChangeText={handleAddressChange}
-              />
-              {addressSuggestions.length > 0 && (
-                <View style={[styles.suggestionsContainer, { backgroundColor: cardBgColor, borderColor }]}>
-                  {addressSuggestions.map((suggestion, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={[styles.suggestionItem, { borderBottomColor: borderColor }]}
-                      onPress={() => selectAddress(suggestion)}
-                    >
-                      <MaterialCommunityIcons name="map-marker" size={20} color={secondaryTextColor} />
-                      <ThemedText style={[styles.suggestionText, { color: textColor }]}>
-                        {suggestion}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  ))}
+                {/* Hint for manual mode */}
+                <TouchableOpacity 
+                  style={styles.manualHint}
+                  onPress={toggleAddressMode}
+                >
+                  <MaterialCommunityIcons name="information-outline" size={14} color={secondaryTextColor} />
+                  <ThemedText style={[styles.manualHintText, { color: secondaryTextColor }]}>
+                    Can't find your address? Switch to manual entry
+                  </ThemedText>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                {/* Manual Address Entry Fields */}
+                <View style={styles.addressGrid}>
+                  {/* Street Number */}
+                  <View style={styles.halfInput}>
+                    <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                      Street Number <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                    </ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                      placeholder="123"
+                      placeholderTextColor={secondaryTextColor}
+                      value={manualAddress.streetNumber}
+                      onChangeText={(text) => handleManualAddressChange('streetNumber', text)}
+                      keyboardType="number-pad"
+                    />
+                  </View>
+
+                  {/* Street Name */}
+                  <View style={styles.halfInput}>
+                    <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                      Street Name <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                    </ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                      placeholder="Main Street"
+                      placeholderTextColor={secondaryTextColor}
+                      value={manualAddress.streetName}
+                      onChangeText={(text) => handleManualAddressChange('streetName', text)}
+                    />
+                  </View>
                 </View>
-              )}
-            </View>
 
-            {/* Address 2 */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Address Line 2 (Optional)
-              </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="Apartment, suite, unit, etc."
-                placeholderTextColor={secondaryTextColor}
-                value={formData.address2}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, address2: text }))}
-              />
-            </View>
+                {/* Unit (Optional) */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    Unit / Apt / Suite (Optional)
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="e.g., Apt 4B, Suite 200"
+                    placeholderTextColor={secondaryTextColor}
+                    value={manualAddress.unit}
+                    onChangeText={(text) => handleManualAddressChange('unit', text)}
+                  />
+                </View>
 
-            {/* City, State, Zip */}
-            <View style={styles.row}>
-              <View style={[styles.inputGroup, { flex: 2 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>
-                  City <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                {/* City */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    City <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="Toronto"
+                    placeholderTextColor={secondaryTextColor}
+                    value={manualAddress.city}
+                    onChangeText={(text) => handleManualAddressChange('city', text)}
+                  />
+                </View>
+
+                {/* Province and Postal Code */}
+                <View style={styles.addressGrid}>
+                  <View style={styles.halfInput}>
+                    <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                      Province / State <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                    </ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                      placeholder="ON"
+                      placeholderTextColor={secondaryTextColor}
+                      value={manualAddress.province}
+                      onChangeText={(text) => handleManualAddressChange('province', text)}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+
+                  <View style={styles.halfInput}>
+                    <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                      Postal Code <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                    </ThemedText>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                      placeholder="M5V 2T6"
+                      placeholderTextColor={secondaryTextColor}
+                      value={manualAddress.postalCode}
+                      onChangeText={(text) => handleManualAddressChange('postalCode', text)}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                </View>
+
+                {/* Country */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    Country
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="Canada"
+                    placeholderTextColor={secondaryTextColor}
+                    value={manualAddress.country}
+                    onChangeText={(text) => handleManualAddressChange('country', text)}
+                  />
+                </View>
+              </>
+            )}
+
+            {/* Address Line 2 (Optional) - Only show if not in manual mode (manual mode has unit field) */}
+            {!manualAddressMode && (
+              <View style={styles.inputGroup}>
+                <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                  Apartment, Suite, Unit, etc. (Optional)
                 </ThemedText>
                 <TextInput
                   style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="City"
+                  placeholder="e.g., Apt 4B, Suite 200"
                   placeholderTextColor={secondaryTextColor}
-                  value={formData.city}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, city: text }))}
+                  value={formData.address2}
+                  onChangeText={(text) => setFormData(prev => ({ ...prev, address2: text }))}
                 />
               </View>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>
-                  State <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
-                </ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="State"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.state}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, state: text }))}
-                />
-              </View>
-            </View>
+            )}
 
-            {/* Zip Code and Country */}
-            <View style={styles.row}>
-              <View style={[styles.inputGroup, { flex: 1 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>
-                  Zip Code <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
-                </ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="Zip Code"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.zipCode}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, zipCode: text }))}
-                  keyboardType="numeric"
-                />
+            {/* Display parsed address fields (read-only feedback) */}
+            {(structuredAddress.city || manualAddress.city) && (
+              <View style={[styles.addressPreview, { backgroundColor: isDark ? '#1a242d' : '#f0f9ff', borderColor: primaryColor }]}>
+                <MaterialCommunityIcons name="check-circle" size={18} color={primaryColor} />
+                <View style={styles.addressPreviewContent}>
+                  <ThemedText style={[styles.addressPreviewLabel, { color: secondaryTextColor }]}>
+                    Address Summary:
+                  </ThemedText>
+                  <ThemedText style={[styles.addressPreviewText, { color: textColor }]}>
+                    {structuredAddress.formattedAddress || 
+                      `${manualAddress.streetNumber} ${manualAddress.streetName}, ${manualAddress.city}, ${manualAddress.province} ${manualAddress.postalCode}`.trim()}
+                  </ThemedText>
+                  <View style={styles.addressDetails}>
+                    <ThemedText style={[styles.addressDetailText, { color: secondaryTextColor }]}>
+                      City: {structuredAddress.city || manualAddress.city}
+                    </ThemedText>
+                    <ThemedText style={[styles.addressDetailText, { color: secondaryTextColor }]}>
+                      Province: {structuredAddress.province || manualAddress.province}
+                    </ThemedText>
+                    <ThemedText style={[styles.addressDetailText, { color: secondaryTextColor }]}>
+                      Postal: {structuredAddress.postalCode || manualAddress.postalCode}
+                    </ThemedText>
+                  </View>
+                </View>
               </View>
-              <View style={[styles.inputGroup, { flex: 2 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>Country</ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="Country"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.country}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, country: text }))}
-                />
-              </View>
-            </View>
-          </View>
-
-          {/* Property Name (Optional) */}
-          <View style={styles.section}>
-            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Property Details</ThemedText>
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Property Name (Optional)
-              </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="e.g., Sunset Apartments"
-                placeholderTextColor={secondaryTextColor}
-                value={formData.name}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
-              />
-            </View>
+            )}
           </View>
 
           {/* Rental Setup - 4 Radio Buttons */}
@@ -507,7 +613,7 @@ export default function AddPropertyScreen() {
           )}
 
           {/* Rent Amount (Only for non-multi-unit) */}
-          {!isMultiUnit && formData.rentCompleteProperty === true &&(
+          {!isMultiUnit && formData.rentCompleteProperty === true && (
             <View style={styles.section}>
               <View style={styles.inputGroup}>
                 <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
@@ -674,6 +780,43 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 4,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  toggleModeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  toggleModeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  manualHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  manualHintText: {
+    fontSize: 12,
+  },
+  addressGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  halfInput: {
+    flex: 1,
+  },
   sectionSubtitle: {
     fontSize: 14,
     marginBottom: 16,
@@ -701,28 +844,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     fontSize: 16,
   },
-  row: {
+  addressPreview: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
-  suggestionsContainer: {
-    marginTop: 4,
+    padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    overflow: 'hidden',
-  },
-  suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     gap: 12,
-    borderBottomWidth: 1,
+    alignItems: 'flex-start',
   },
-  suggestionText: {
-    fontSize: 14,
+  addressPreviewContent: {
     flex: 1,
+  },
+  addressPreviewLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  addressPreviewText: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 8,
+  },
+  addressDetails: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  addressDetailText: {
+    fontSize: 12,
   },
   radioGrid: {
     flexDirection: 'row',

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
@@ -13,6 +13,14 @@ export default function TenantLeaseStep3Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+    propertyId?: string; 
+    address?: string; 
+    fromInvite?: string;
+    unitId?: string;
+    subUnitId?: string;
+    inviteId?: string;
+  }>();
   const { tenantDraft, updateDraft } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
@@ -60,7 +68,10 @@ export default function TenantLeaseStep3Screen() {
   const handleContinue = () => {
     if (validate()) {
       updateDraft('employment', formData);
-      router.push('/tenant-lease-step4');
+      router.push({ 
+        pathname: '/tenant-lease-step4', 
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId } 
+      });
     }
   };
 
