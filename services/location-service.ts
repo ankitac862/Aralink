@@ -14,7 +14,7 @@
  * DO NOT commit API keys to version control.
  */
 
-// import * as Location from 'expo-location';
+ import * as Location from 'expo-location';
 
 // Read API key from environment variables
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
@@ -96,7 +96,7 @@ export async function getAddressPredictions(
       input,
       key: GOOGLE_MAPS_API_KEY,
       types: 'address',
-      components: 'country:us|country:ca', // Restrict to US and Canada
+    // components: 'country:us|country:ca', // Restrict to US and Canada
     });
 
     if (sessionToken) {
