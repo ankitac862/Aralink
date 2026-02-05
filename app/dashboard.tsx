@@ -2,12 +2,14 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/hooks/use-auth';
+import { getDashboardMetrics, getRentCollectionSummary, DashboardMetrics, RentCollectionSummary, getUserProfile } from '@/lib/supabase';
 
 interface QuickAccessItem {
   id: string;
@@ -35,24 +37,58 @@ export default function DashboardScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [userRole, setUserRole] = useState<UserRole>(null);
+  const [userName, setUserName] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    activeLeases: 0,
+    totalRentableUnits: 0,
+    rentedUnits: 0,
+    occupancyPercentage: 0,
+  });
+  const [rentCollection, setRentCollection] = useState<RentCollectionSummary>({
+    totalExpected: 0,
+    paid: 0,
+    pending: 0,
+    overdue: 0,
+  });
 
   useEffect(() => {
-    const getUserRole = async () => {
+    const loadDashboardData = async () => {
       try {
+        // Get user role
         const role = await AsyncStorage.getItem('userRole');
         setUserRole((role as UserRole) || 'tenant');
+
+        // Get user profile for name
+        if (user?.id) {
+          const profile = await getUserProfile(user.id);
+          if (profile?.full_name) {
+            setUserName(profile.full_name.split(' ')[0]); // First name only
+          } else if (user.email) {
+            setUserName(user.email.split('@')[0]); // Email prefix fallback
+          }
+
+          // Load metrics for landlord/manager
+          if (role === 'landlord' || role === 'manager') {
+            const [metricsData, rentData] = await Promise.all([
+              getDashboardMetrics(user.id),
+              getRentCollectionSummary(user.id),
+            ]);
+            setMetrics(metricsData);
+            setRentCollection(rentData);
+          }
+        }
       } catch (error) {
-        console.error('Failed to get user role:', error);
-        setUserRole('tenant');
+        console.error('Failed to load dashboard data:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    getUserRole();
-  }, []);
+    loadDashboardData();
+  }, [user]);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#18181b' : '#f8fafc';
@@ -91,7 +127,9 @@ export default function DashboardScreen() {
               <MaterialCommunityIcons name="account-circle" size={32} color={secondaryTextColor} />
             </View>
             <View>
-              <ThemedText style={[styles.greeting, { color: textColor }]}>Hello, Taylor</ThemedText>
+              <ThemedText style={[styles.greeting, { color: textColor }]}>
+                Hello, {userName || 'User'}
+              </ThemedText>
               <ThemedText style={[styles.subtitle, { color: secondaryTextColor }]}>
                 PORTFOLIO OVERVIEW
               </ThemedText>
@@ -106,57 +144,90 @@ export default function DashboardScreen() {
         </View>
 
         {/* Stats Card */}
-        <View style={[styles.statsCard, { backgroundColor: cardBgColor }]}>
-          <ThemedText style={[styles.statsText, { color: textColor }]}>
-            10 Active Leases <ThemedText style={{ color: borderColor }}>  •  </ThemedText>
-            83% Occupancy
-          </ThemedText>
-        </View>
+        {isLandlordOrManager && (
+          <View style={[styles.statsCard, { backgroundColor: cardBgColor }]}>
+            {loading ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <ThemedText style={[styles.statsText, { color: textColor }]}>
+                {metrics.activeLeases} Active Lease{metrics.activeLeases !== 1 ? 's' : ''} 
+                <ThemedText style={{ color: borderColor }}>  •  </ThemedText>
+                {metrics.occupancyPercentage}% Occupancy ({metrics.rentedUnits}/{metrics.totalRentableUnits})
+              </ThemedText>
+            )}
+          </View>
+        )}
 
         {/* Rent Collection Card */}
-        <View style={[styles.rentCollectionCard, { backgroundColor: cardBgColor }]}>
-          <ThemedText style={[styles.rentTitle, { color: textColor }]}>Rent Collection</ThemedText>
-          <ThemedText style={[styles.rentSubtitle, { color: secondaryTextColor }]}>For July 2024</ThemedText>
+        {isLandlordOrManager && (
+          <View style={[styles.rentCollectionCard, { backgroundColor: cardBgColor }]}>
+            <ThemedText style={[styles.rentTitle, { color: textColor }]}>Rent Collection</ThemedText>
+            <ThemedText style={[styles.rentSubtitle, { color: secondaryTextColor }]}>
+              For {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </ThemedText>
 
-          {/* Circular Progress Chart */}
-          <View style={styles.chartContainer}>
-            <View style={styles.chartCircle}>
-              <View
-                style={[
-                  styles.progressRing,
-                  {
-                    borderTopColor: '#10b981',
-                    borderRightColor: '#fbbf24',
-                    borderBottomColor: '#60a5fa',
-                    borderLeftColor: isDark ? '#3f3f46' : '#e2e8f0',
-                  },
-                ]}>
+            {loading ? (
+              <View style={styles.chartContainer}>
+                <ActivityIndicator size="large" color={primaryColor} />
               </View>
-              <View style={styles.chartCenter}>
-                <ThemedText style={[styles.chartAmount, { color: textColor }]}>$21,250</ThemedText>
-                <ThemedText style={[styles.chartTotal, { color: secondaryTextColor }]}>
-                  out of $25,000
+            ) : rentCollection.totalExpected === 0 ? (
+              <View style={styles.chartContainer}>
+                <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                  No rent data for this month
                 </ThemedText>
               </View>
-            </View>
-          </View>
+            ) : (
+              <>
+                {/* Circular Progress Chart */}
+                <View style={styles.chartContainer}>
+                  <View style={styles.chartCircle}>
+                    <View
+                      style={[
+                        styles.progressRing,
+                        {
+                          borderTopColor: '#10b981',
+                          borderRightColor: '#fbbf24',
+                          borderBottomColor: '#60a5fa',
+                          borderLeftColor: isDark ? '#3f3f46' : '#e2e8f0',
+                        },
+                      ]}>
+                    </View>
+                    <View style={styles.chartCenter}>
+                      <ThemedText style={[styles.chartAmount, { color: textColor }]}>
+                        ${rentCollection.paid.toLocaleString()}
+                      </ThemedText>
+                      <ThemedText style={[styles.chartTotal, { color: secondaryTextColor }]}>
+                        out of ${rentCollection.totalExpected.toLocaleString()}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
 
-          {/* Legend */}
-          <View style={styles.legendContainer}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-              <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>Paid</ThemedText>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#fbbf24' }]} />
-              <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>Pending</ThemedText>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#60a5fa' }]} />
-              <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>Overdue</ThemedText>
-            </View>
+                {/* Legend */}
+                <View style={styles.legendContainer}>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                      Paid (${rentCollection.paid.toLocaleString()})
+                    </ThemedText>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#fbbf24' }]} />
+                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                      Pending (${rentCollection.pending.toLocaleString()})
+                    </ThemedText>
+                  </View>
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#60a5fa' }]} />
+                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                      Overdue (${rentCollection.overdue.toLocaleString()})
+                    </ThemedText>
+                  </View>
+                </View>
+              </>
+            )}
           </View>
-        </View>
+        )}
 
         {/* Quick Access Grid */}
         <View style={styles.quickAccessGrid}>
@@ -291,6 +362,11 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 12,
     fontWeight: '400',
+  },
+  emptyText: {
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 20,
   },
   quickAccessGrid: {
     flexDirection: 'row',

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -7,17 +7,45 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
+import { getTenantLeaseStatus } from '@/lib/supabase';
 
 export default function TenantsScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tenants } = useTenantStore();
-  const { getPropertyById } = usePropertyStore();
+  const { user } = useAuthStore();
+  const { tenants, loadFromSupabase, isLoading } = useTenantStore();
+  const { getPropertyById, getUnitById, loadFromSupabase: loadProperties } = usePropertyStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending'>('all');
+  const [leaseStatuses, setLeaseStatuses] = useState<Record<string, 'active' | 'inactive' | 'pending'>>({});
+
+  // Load tenants from Supabase on mount
+  useEffect(() => {
+    if (user?.id) {
+      loadFromSupabase(user.id);
+      loadProperties(user.id);
+    }
+  }, [user?.id]);
+
+  // Load lease statuses for all tenants
+  useEffect(() => {
+    const loadLeaseStatuses = async () => {
+      const statuses: Record<string, 'active' | 'inactive' | 'pending'> = {};
+      for (const tenant of tenants) {
+        const status = await getTenantLeaseStatus(tenant.id);
+        statuses[tenant.id] = status;
+      }
+      setLeaseStatuses(statuses);
+    };
+
+    if (tenants.length > 0) {
+      loadLeaseStatuses();
+    }
+  }, [tenants]);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101622' : '#f4f6f8';
@@ -31,13 +59,41 @@ export default function TenantsScreen() {
   // Transform tenants for display
   const displayTenants = tenants.map(tenant => {
     const property = getPropertyById(tenant.propertyId);
+    const unit = tenant.unitId ? getUnitById(tenant.unitId) : null;
+    
+    // Build location string based on property type
+    let locationParts: string[] = [];
+    if (property) {
+      // Use property name if available, otherwise use address
+      const propertyLabel = property.name || `${property.address1}${property.address2 ? ', ' + property.address2 : ''}`;
+      
+      // For commercial/parking properties, just show the property
+      if (property.propertyType === 'commercial' || property.propertyType === 'parking') {
+        locationParts.push(`${propertyLabel} (${property.propertyType})`);
+      } else if (property.propertyType === 'multi_unit') {
+        // For multi-unit, show property and unit/room
+        locationParts.push(propertyLabel);
+        if (unit) {
+          locationParts.push(`Unit ${unit.name || unit.id}`);
+        }
+        if (tenant.unitName) {
+          locationParts.push(`Room ${tenant.unitName}`);
+        }
+      } else {
+        // For single_unit properties
+        locationParts.push(propertyLabel);
+        if (tenant.unitName) {
+          locationParts.push(`Room ${tenant.unitName}`);
+        }
+      }
+    }
+    
     return {
       id: tenant.id,
       name: `${tenant.firstName} ${tenant.lastName}`,
-      unit: tenant.unitName 
-        ? `${tenant.unitName}, ${property ? property.streetAddress : 'Unknown'}`
-        : property ? property.streetAddress : 'Unknown',
-      status: tenant.status,
+      email: tenant.email,
+      location: locationParts.join(' / ') || 'Unknown',
+      status: leaseStatuses[tenant.id] || 'inactive',
       image: tenant.photo || 'https://via.placeholder.com/150',
     };
   });
@@ -45,7 +101,8 @@ export default function TenantsScreen() {
   const filteredTenants = displayTenants.filter((t) => {
     const matchSearch = !searchQuery || 
       t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.unit.toLowerCase().includes(searchQuery.toLowerCase());
+      t.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.location.toLowerCase().includes(searchQuery.toLowerCase());
     const matchStatus = filterStatus === 'all' || t.status === filterStatus;
     return matchSearch && matchStatus;
   });
@@ -53,8 +110,9 @@ export default function TenantsScreen() {
   interface DisplayTenant {
     id: string;
     name: string;
-    unit: string;
-    status: 'active' | 'inactive';
+    email: string;
+    location: string;
+    status: 'active' | 'inactive' | 'pending';
     image: string;
   }
 
@@ -71,30 +129,38 @@ export default function TenantsScreen() {
                 {tenant.name}
               </ThemedText>
               <ThemedText style={[styles.tenantUnit, { color: secondaryTextColor }]}>
-                {tenant.unit}
+                {tenant.location}
               </ThemedText>
             </View>
           </View>
-          <TouchableOpacity>
-            <MaterialCommunityIcons name="dots-vertical" size={20} color={secondaryTextColor} />
-          </TouchableOpacity>
         </View>
         <View style={[styles.divider, { borderTopColor: borderColor }]} />
         <View style={styles.statusRow}>
-          <ThemedText style={[styles.statusLabel, { color: secondaryTextColor }]}>Status</ThemedText>
+          <View style={styles.emailContainer}>
+            <MaterialCommunityIcons name="email-outline" size={14} color={secondaryTextColor} />
+            <ThemedText style={[styles.emailText, { color: secondaryTextColor }]}>
+              {tenant.email}
+            </ThemedText>
+          </View>
           <View
             style={[
               styles.statusBadge,
               {
-                backgroundColor: tenant.status === 'active' ? `${successColor}19` : '#f0f0f0',
+                backgroundColor: 
+                  tenant.status === 'active' ? `${successColor}19` : 
+                  tenant.status === 'pending' ? '#fef3c7' : '#f0f0f0',
               },
             ]}>
             <ThemedText
               style={[
                 styles.statusBadgeText,
-                { color: tenant.status === 'active' ? successColor : secondaryTextColor },
+                { 
+                  color: 
+                    tenant.status === 'active' ? successColor : 
+                    tenant.status === 'pending' ? '#f59e0b' : secondaryTextColor 
+                },
               ]}>
-              {tenant.status === 'active' ? 'Active' : 'Inactive'}
+              {tenant.status.charAt(0).toUpperCase() + tenant.status.slice(1)}
             </ThemedText>
           </View>
         </View>
@@ -136,7 +202,7 @@ export default function TenantsScreen() {
 
       {/* Filter Tabs */}
       <View style={[styles.filterContainer, { backgroundColor: isDark ? '#1a2332' : '#f4f6f8' }]}>
-        {(['all', 'active', 'inactive'] as const).map((status) => (
+        {(['all', 'active', 'pending', 'inactive'] as const).map((status) => (
           <TouchableOpacity
             key={status}
             style={[
@@ -304,7 +370,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  statusLabel: {
+  emailContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  emailText: {
     fontSize: 11,
     fontWeight: '400',
   },

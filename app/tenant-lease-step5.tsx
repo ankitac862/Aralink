@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, View, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -73,6 +73,14 @@ export default function TenantLeaseStep5Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+    propertyId?: string; 
+    address?: string; 
+    fromInvite?: string;
+    unitId?: string;
+    subUnitId?: string;
+    inviteId?: string;
+  }>();
   const { tenantDraft, updateDraft } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
@@ -122,7 +130,10 @@ export default function TenantLeaseStep5Screen() {
 
   const handleContinue = () => {
     if (canContinue) {
-      router.push('/tenant-lease-step6');
+      router.push({ 
+        pathname: '/tenant-lease-step6', 
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId } 
+      });
     } else {
       Alert.alert('Missing Document', 'Please upload your Government ID before continuing.');
     }

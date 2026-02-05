@@ -19,6 +19,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
+import { useAuthStore } from '@/store/authStore';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -42,7 +43,8 @@ export default function AddRoomScreen() {
     roomId?: string;
   }>();
   
-  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, getPropertyById } = usePropertyStore();
+  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
+  const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -138,9 +140,9 @@ export default function AddRoomScreen() {
     }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name.trim()) {
-      Alert.alert('Error', 'Please enter a room name/number');
+      Alert.alert('Error', 'Please enter a room number');
       return;
     }
 
@@ -165,13 +167,18 @@ export default function AddRoomScreen() {
 
       if (isEditing && roomId && unitId) {
         // Update existing room
-        updateSubUnit(propertyId, unitId, roomId, roomData);
+        await updateSubUnit(propertyId, unitId, roomId, roomData);
       } else if (unitId) {
         // Add room to specific unit (multi-unit property)
-        addSubUnit(propertyId, unitId, roomData);
+        await addSubUnit(propertyId, unitId, roomData);
       } else {
         // Add room to single unit property
-        addRoomToSingleUnit(propertyId, roomData);
+        await addRoomToSingleUnit(propertyId, roomData);
+      }
+
+      // Reload property data from Supabase to refresh UI
+      if (user?.id) {
+        await loadFromSupabase(user.id);
       }
 
       router.back();
@@ -193,7 +200,9 @@ export default function AddRoomScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={primaryColor} />
           <ThemedText style={[styles.backButtonText, { color: primaryColor }]}>Cancel</ThemedText>
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Add New Room</ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textColor }]}>
+          {isEditing ? 'Edit Room' : 'Add New Room'}
+        </ThemedText>
         <TouchableOpacity
           style={[styles.saveHeaderButton, { backgroundColor: primaryColor }]}
           onPress={handleSave}
@@ -213,19 +222,23 @@ export default function AddRoomScreen() {
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Room Name */}
+          {/* Room Number */}
           <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Room Name/Number
+                Room Number <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
               </ThemedText>
               <TextInput
                 style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="e.g., Master Bedroom"
+                placeholder="e.g., 1, 2, 3"
                 placeholderTextColor={secondaryTextColor}
                 value={formData.name}
                 onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+                keyboardType="default"
               />
+              <ThemedText style={[styles.inputHint, { color: secondaryTextColor }]}>
+                Use numbers only. Room details can be added in the lease form.
+              </ThemedText>
             </View>
 
             {/* Description */}
@@ -547,6 +560,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  inputHint: {
+    fontSize: 12,
+    marginTop: 4,
   },
 });
 

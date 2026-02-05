@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -13,50 +12,17 @@ SplashScreen.preventAutoHideAsync().catch(() => {
 });
 
 export default function SplashRoute() {
-  const router = useRouter();
   const colorScheme = useColorScheme();
-  const { user, isInitialized, initialize } = useAuthStore();
+  const { isInitialized } = useAuthStore();
 
+  // Hide splash screen when auth is initialized
   useEffect(() => {
-    // Initialize auth if not already done
-    if (!isInitialized) {
-      initialize();
+    if (isInitialized) {
+      SplashScreen.hideAsync().catch(() => {
+        // Splash already hidden
+      });
     }
-  }, [isInitialized, initialize]);
-
-  useEffect(() => {
-    const navigateAway = async () => {
-      try {
-        // Wait for auth to be initialized
-        if (!isInitialized) return;
-
-        // Hide the splash screen
-        await SplashScreen.hideAsync();
-
-        // Navigate based on auth state
-        if (user) {
-          // User is logged in, navigate to appropriate dashboard
-          if (user.role === 'tenant') {
-            router.replace('/(tabs)/tenant-dashboard');
-          } else {
-            router.replace('/(tabs)/landlord-dashboard');
-          }
-        } else {
-          // User is not logged in, go to auth
-          router.replace('/(auth)');
-        }
-      } catch (e) {
-        console.log('Error hiding splash:', e);
-        // Fallback to auth screen
-        router.replace('/(auth)');
-      }
-    };
-
-    // Wait for animation to complete (2 seconds) then check auth
-    const timer = setTimeout(navigateAway, 2000);
-
-    return () => clearTimeout(timer);
-  }, [router, user, isInitialized]);
+  }, [isInitialized]);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -77,7 +43,7 @@ export default function SplashRoute() {
       </View>
       <ActivityIndicator 
         size="large" 
-        color={isDark ? '#2A64F5' : '#2A64F5'} 
+        color="#2A64F5" 
         style={styles.loader}
       />
     </View>

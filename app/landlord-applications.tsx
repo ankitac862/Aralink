@@ -1,19 +1,34 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, FlatList } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, ScrollView, TouchableOpacity, View, FlatList, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useLeaseStore, LeaseApplication } from '@/store/leaseStore';
+import { useAuthStore } from '@/store/authStore';
+import { fetchLandlordApplications } from '@/lib/supabase';
+
+interface Application {
+  id: string;
+  applicant_name: string;
+  applicant_email: string;
+  property_address: string;
+  status: string;
+  submitted_at: string;
+  created_at: string;
+}
 
 export default function LandlordApplicationsScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { landlordApplications, loadLandlordApplications } = useLeaseStore();
+  const { user } = useAuthStore();
+  
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -23,9 +38,30 @@ export default function LandlordApplicationsScreen() {
   const primaryColor = '#2A64F5';
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
 
-  useEffect(() => {
-    loadLandlordApplications();
-  }, []);
+  // Load applications when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user?.id) {
+        loadApplications();
+      }
+    }, [user?.id])
+  );
+
+  const loadApplications = async () => {
+    if (!user?.id) return;
+    
+    setIsLoading(true);
+    try {
+      console.log('📋 Loading applications for landlord:', user.id);
+      const data = await fetchLandlordApplications(user.id);
+      console.log('📋 Loaded applications:', data.length);
+      setApplications(data);
+    } catch (error) {
+      console.error('Error loading applications:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -52,17 +88,20 @@ export default function LandlordApplicationsScreen() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const renderApplication = ({ item }: { item: LeaseApplication }) => (
+  const renderApplication = ({ item }: { item: Application }) => (
     <TouchableOpacity
       style={[styles.applicationCard, { backgroundColor: cardBgColor, borderColor }]}
       onPress={() => router.push(`/landlord-application-review?id=${item.id}`)}>
       <View style={styles.applicationHeader}>
         <View style={styles.applicationInfo}>
           <ThemedText style={[styles.applicationName, { color: textPrimaryColor }]}>
-            {item.tenantName}
+            {item.applicant_name}
+          </ThemedText>
+          <ThemedText style={[styles.applicationEmail, { color: textSecondaryColor, fontSize: 12 }]}>
+            {item.applicant_email}
           </ThemedText>
           <ThemedText style={[styles.applicationProperty, { color: textSecondaryColor }]}>
-            {item.propertyAddress || 'Property Address'}
+            {item.property_address || 'Property Address'}
           </ThemedText>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(item.status)}20` }]}>
@@ -73,10 +112,23 @@ export default function LandlordApplicationsScreen() {
       </View>
       <View style={styles.applicationFooter}>
         <ThemedText style={[styles.applicationDate, { color: textSecondaryColor }]}>
-          Submitted: {formatDate(item.submittedAt)}
+          Submitted: {formatDate(item.submitted_at)}
         </ThemedText>
         <MaterialCommunityIcons name="chevron-right" size={20} color={textSecondaryColor} />
       </View>
+      
+      {/* Add as Tenant button for approved applications */}
+      {item.status === 'approved' && (
+        <TouchableOpacity
+          style={[styles.addTenantButton, { backgroundColor: primaryColor }]}
+          onPress={(e) => {
+            e.stopPropagation();
+            router.push(`/add-tenant?applicationId=${item.id}`);
+          }}>
+          <MaterialCommunityIcons name="account-plus" size={16} color="#fff" />
+          <ThemedText style={styles.addTenantButtonText}>Add as Tenant</ThemedText>
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 
@@ -90,20 +142,37 @@ export default function LandlordApplicationsScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      {landlordApplications.length === 0 ? (
+      {isLoading ? (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <ThemedText style={[styles.emptyText, { color: textSecondaryColor, marginTop: 16 }]}>
+            Loading applications...
+          </ThemedText>
+        </View>
+      ) : applications.length === 0 ? (
         <View style={styles.emptyContainer}>
           <MaterialCommunityIcons name="file-document-outline" size={64} color={textSecondaryColor} />
           <ThemedText style={[styles.emptyText, { color: textSecondaryColor }]}>No applications yet</ThemedText>
+          <ThemedText style={[styles.emptySubtext, { color: textSecondaryColor }]}>
+            Invite applicants to start receiving applications
+          </ThemedText>
         </View>
       ) : (
         <FlatList
-          data={landlordApplications}
+          data={applications}
           keyExtractor={(item) => item.id}
           renderItem={renderApplication}
           contentContainerStyle={styles.listContent}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         />
       )}
+
+      {/* FAB Button */}
+      <TouchableOpacity
+        style={[styles.fab, { backgroundColor: primaryColor, bottom: insets.bottom + 16 }]}
+        onPress={() => router.push('/add-applicant')}>
+        <MaterialCommunityIcons name="email-plus" size={24} color="#fff" />
+      </TouchableOpacity>
     </ThemedView>
   );
 }
@@ -181,6 +250,44 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  applicationEmail: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  addTenantButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 12,
+    gap: 6,
+  },
+  addTenantButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  fab: {
+    position: 'absolute',
+    right: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
 });
 

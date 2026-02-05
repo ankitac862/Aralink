@@ -106,18 +106,20 @@ export interface Property {
   createdAt: string;
 }
 
-interface PropertyStore {
+export interface PropertyStore {
   properties: Property[];
   selectedPropertyIds: string[];
   isLoading: boolean;
   isSynced: boolean;
   error: string | null;
+  lastLoadedUserId?: string; // Track which user's properties are loaded
   
   // Actions
   addProperty: (property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>, userId?: string) => Promise<string>;
   updateProperty: (id: string, updates: Partial<Property>) => Promise<void>;
   deleteProperty: (id: string) => Promise<void>;
   getPropertyById: (id: string) => Property | undefined;
+  getUnitById: (id: string) => Unit | undefined;
   
   // Unit management
   addUnit: (propertyId: string, unit: Omit<Unit, 'id' | 'subUnits' | 'isOccupied'>) => Promise<void>;
@@ -133,7 +135,7 @@ interface PropertyStore {
   addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
   
   // Supabase sync
-  loadFromSupabase: (userId: string) => Promise<void>;
+  loadFromSupabase: (userId: string, forceReload?: boolean) => Promise<void>;
   syncToSupabase: (userId: string) => Promise<void>;
   
   // Filter management
@@ -231,123 +233,32 @@ const isValidUUID = (str: string): boolean => {
   return uuidRegex.test(str);
 };
 
-// Mock initial data
-const INITIAL_PROPERTIES: Property[] = [
-  {
-    id: '1',
-    name: 'The Grand Estate',
-    streetAddress: '123 Market Street, Suite 400',
-    city: 'San Francisco',
-    state: 'CA',
-    zipCode: '94103',
-    landlordName: 'Jane Doe',
-    photos: [
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuBAbiBSHxCO6alOOyK9tMu0KS0E3X2oa1j8SugpNPdhBDCBlieAWLKflr3ottyyresA68ZlZ8sWNTTz0Eu7TfEagOrxWRvOyLHrDnrlGTNWq68l6cnqC6LX_NPywpwJ1_9fj7OeccY1nDdAUZPhkfw3D6WjCLrqmwucL_5KgaE5YBSCipyuxMJZIm9wbj_j_kZAKZyWIeoqhczjEA6eHdIu6Vs2KES2FHHsLPBFuqSVJ08XCKIvJAH2COVQ5-6aNrKnEwSnowV2VvA',
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuD_FgV6yhdSYsBeUftfptBSRFixU6bGJyUCY6x_BQahFEdzt8LJVdN4W4Pl4se1HCWXuNnnbARUqss_9gnhtzmjT2HkVYGHmD9w_zeO4qX8JNJohv_0SLTV4i57TtaUPwsmx9c7VFErsOpb3L8q-N96vYVV0ak2hiukbl3ftKc_dMM63Ia6PCiYeFoKnaFwroYGB8v8LWm9OGdtjx6stJkYaAW0_VizILKWwWOauql2vae1l0SsfI2YdHwojT6jj1a5TUak2ZinAw',
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuDn8qj_O5cq64kO1z9_hyzdjLP3fwx23V6z-y9_M6P8MuGLFY2dvphJKQ1goaiAYthYtbVGnHOXC-cyaEp6OvxKg64VsCUtwDxTHKuLquRCT-DLnR87bRRejLyj1tkJU4pjh069MnspJOZIVi2MR5PKPhVdhEzljCCip5rVwZGiMKn5XHKFe--etIxdtfb8X1NoxB7MzrcWKvt0Wfwxz_KV-s9LUS2l0G-FTi5fQLfv101NGPrLqbAqEl6ggUb433YuOhUjAEbH82Q',
-    ],
-    propertyType: 'single_unit',
-    propertyCategory: 'apartment',
-    units: [
-      { 
-        id: 'u1', 
-        name: 'Main Unit', 
-        subUnits: [
-          { 
-            id: 'su1', 
-            name: 'Master Bedroom', 
-            type: 'bedroom',
-            rentPrice: 1500,
-            tenantId: 't1',
-            tenantName: 'John Appleseed',
-          },
-          { 
-            id: 'su2', 
-            name: 'Guest Room', 
-            type: 'bedroom',
-            rentPrice: 1200,
-          },
-        ], 
-        isOccupied: true,
-        tenantId: 't1'
-      },
-    ],
-    status: 'active',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    streetAddress: '456 Oak Avenue',
-    city: 'Springfield',
-    state: 'USA',
-    zipCode: '67890',
-    photos: ['https://lh3.googleusercontent.com/aida-public/AB6AXuBaQrNC5AVv_VN4gyhuq1ObvDv4lxocsTs0JvkK9DQ-45Zgw9uye_1ivcovcB2Z_rbBQDbNWfDw9mjpQcPeSS1T5CEs9aCySdJnJOA3a2aB4ji3AqqCe5xbS5mGx-QYFxJbn4LLNRtFIgqeSngm63LLSms23UmEDqCwR7To82mubPInHRhEY5C35wy7twj3XoN5VizEx9VFidxL_b1dTNDOaEO2ZeOcU5jD5dvVCsI1pxqH2g20hTAjAyc-6c5N3v-59Gf5C6zuWXvk'],
-    propertyType: 'multi_unit',
-    propertyCategory: 'multi_unit_house',
-    units: [
-      { 
-        id: 'u2', 
-        name: 'Unit A', 
-        subUnits: [
-          { id: 'su3', name: 'Master Bedroom', type: 'bedroom' },
-          { id: 'su4', name: 'Living Room', type: 'living_room' }
-        ], 
-        isOccupied: true,
-        tenantId: 't2'
-      },
-      { 
-        id: 'u3', 
-        name: 'Unit B', 
-        subUnits: [
-          { id: 'su5', name: 'Bedroom', type: 'bedroom' }
-        ], 
-        isOccupied: true,
-        tenantId: 't3'
-      },
-    ],
-    status: 'active',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    streetAddress: '789 Pine Lane',
-    city: 'Rivertown',
-    state: 'USA',
-    zipCode: '54321',
-    photos: ['https://lh3.googleusercontent.com/aida-public/AB6AXuArhC6WSeHtE0JWt9WeX4kBHe-izTwmluzQAVor-6Uqy98SVY-7r_Uu2mFg0i8_rox-DznmIBTpOkLHlUzlWmw_lIg05ZDF1u27itGzo4VKDjDMYLFirTGctnpxecIUbOy8sQGicTrdEmX27ybhhA_bz83d7698wxoTX8GHLrwt0d8ujN88PaWufNBeOCK1_Mg-mWuxjD4x776Unz9VKLW4CkQQkuakn5qT1-ON0ztwiNm9C_kLsmNbg-5utcHSKygVdyKkazPFxpmh'],
-    propertyType: 'multi_unit',
-    propertyCategory: 'apartment',
-    units: [
-      { 
-        id: 'u4', 
-        name: 'Apartment 1', 
-        subUnits: [
-          { id: 'su6', name: 'Bedroom', type: 'bedroom' }
-        ], 
-        isOccupied: true,
-        tenantId: 't4'
-      },
-    ],
-    status: 'active',
-    createdAt: new Date().toISOString(),
-  },
-];
-
 export const usePropertyStore = create<PropertyStore>((set, get) => ({
-  properties: INITIAL_PROPERTIES,
+  properties: [],
   selectedPropertyIds: [],
   isLoading: false,
   isSynced: false,
   error: null,
+  lastLoadedUserId: undefined,
   
   // Load properties from Supabase
-  loadFromSupabase: async (userId: string) => {
+  loadFromSupabase: async (userId: string, forceReload: boolean = false) => {
+    // Prevent redundant reloads for the same user (unless forceReload is true)
+    const state = get();
+    if (!forceReload && state.lastLoadedUserId === userId && state.properties.length > 0 && !state.isLoading) {
+      console.log('✅ PropertyStore: Properties already loaded for this user, skipping reload');
+      return;
+    }
+
     try {
+      console.log('🔄 PropertyStore: Starting loadFromSupabase for userId:', userId);
       set({ isLoading: true, error: null });
       
       const dbProperties = await fetchProperties(userId);
+      console.log('✅ PropertyStore: Fetched properties count:', dbProperties.length);
       
       if (dbProperties.length > 0) {
+        console.log('📦 PropertyStore: Loading units for properties...');
         // Load units and sub-units for each property
         const propertiesWithUnits: Property[] = await Promise.all(
           dbProperties.map(async (dbProp) => {
@@ -365,13 +276,14 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           })
         );
         
-        set({ properties: propertiesWithUnits, isLoading: false, isSynced: true });
+        console.log('✅ PropertyStore: Successfully loaded', propertiesWithUnits.length, 'properties with units');
+        set({ properties: propertiesWithUnits, isLoading: false, isSynced: true, lastLoadedUserId: userId });
       } else {
-        // No properties in database, keep local data but mark as synced
-        set({ isLoading: false, isSynced: true });
+        console.log('⚠️ PropertyStore: No properties found in database');
+        set({ properties: [], isLoading: false, isSynced: true, lastLoadedUserId: userId });
       }
     } catch (error) {
-      console.error('Error loading from Supabase:', error);
+      console.error('❌ PropertyStore: Error loading from Supabase:', error);
       set({ isLoading: false, error: 'Failed to load properties' });
     }
   },
@@ -461,7 +373,7 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     try {
       await updatePropertyInDb(id, {
         name: updates.name,
-        address1: updates.address1 || updates.streetAddress,
+        address1: updates.address1,
         address2: updates.address2,
         city: updates.city,
         state: updates.state,
@@ -499,28 +411,22 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   getPropertyById: (id) => {
     return get().properties.find((p) => p.id === id);
   },
+
+  getUnitById: (id) => {
+    // Search through all properties' units
+    for (const property of get().properties) {
+      const unit = property.units.find((u) => u.id === id);
+      if (unit) return unit;
+    }
+    return undefined;
+  },
   
   // Unit management
   addUnit: async (propertyId, unitData) => {
-    const unitId = generateId();
-    
-    // Update local state
-    set((state) => ({
-      properties: state.properties.map((p) =>
-        p.id === propertyId
-          ? {
-              ...p,
-              units: [
-                ...p.units,
-                { ...unitData, id: unitId, subUnits: [], isOccupied: false },
-              ],
-            }
-          : p
-      ),
-    }));
-    
-    // Try to save to Supabase
     try {
+      console.log('Creating unit in Supabase for property:', propertyId);
+      
+      // Save to Supabase FIRST
       const savedUnit = await createUnitInDb({
         property_id: propertyId,
         name: unitData.name,
@@ -540,23 +446,30 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         is_occupied: false,
       });
       
-      // Update local state with Supabase-generated UUID if saved successfully
-      if (savedUnit) {
-        set((state) => ({
-          properties: state.properties.map((p) =>
-            p.id === propertyId
-              ? {
-                  ...p,
-                  units: p.units.map((u) =>
-                    u.id === unitId ? { ...u, id: savedUnit.id } : u
-                  ),
-                }
-              : p
-          ),
-        }));
+      if (!savedUnit) {
+        throw new Error('Failed to create unit in Supabase');
       }
+
+      // Update local state with Supabase UUID
+      set((state) => ({
+        properties: state.properties.map((p) =>
+          p.id === propertyId
+            ? {
+                ...p,
+                units: [
+                  ...p.units,
+                  { ...unitData, id: savedUnit.id, subUnits: [], isOccupied: false },
+                ],
+              }
+            : p
+        ),
+      }));
+
+      console.log('Unit created successfully with UUID:', savedUnit.id);
+      return savedUnit.id;
     } catch (error) {
       console.error('Error saving unit to Supabase:', error);
+      throw error;
     }
   },
   
@@ -619,68 +532,70 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   
   // Sub-unit management
   addSubUnit: async (propertyId, unitId, subUnitData) => {
-    const subUnitId = generateId();
-    
-    // Update local state
-    set((state) => ({
-      properties: state.properties.map((p) =>
-        p.id === propertyId
-          ? {
-              ...p,
-              units: p.units.map((u) =>
-                u.id === unitId
-                  ? { ...u, subUnits: [...u.subUnits, { ...subUnitData, id: subUnitId }] }
-                  : u
-              ),
-            }
-          : p
-      ),
-    }));
-    
-    // Try to save to Supabase only if unitId is a valid UUID
-    if (isValidUUID(unitId)) {
-      try {
-        const savedSubUnit = await createSubUnitInDb({
-          unit_id: unitId,
-          name: subUnitData.name,
-          type: subUnitData.type,
-          rent_price: subUnitData.rentPrice,
-          area: subUnitData.area,
-          availability_date: subUnitData.availabilityDate,
-          photos: subUnitData.photos,
-          amenities: subUnitData.amenities,
-          shared_spaces: subUnitData.sharedSpaces,
-          tenant_id: subUnitData.tenantId,
-          tenant_name: subUnitData.tenantName,
-        });
+    // Validate unitId is a UUID (must be saved to Supabase first)
+    if (!isValidUUID(unitId)) {
+      console.error('Cannot add subunit: unitId is not a valid UUID. Unit must be saved to Supabase first.');
+      throw new Error('Unit must be saved to Supabase before adding subunits');
+    }
+
+    try {
+      console.log('Creating subunit in Supabase for unit:', unitId);
       
-      // Update local state with Supabase-generated UUID if saved successfully
-      if (savedSubUnit) {
-        set((state) => ({
-          properties: state.properties.map((p) =>
-            p.id === propertyId
-              ? {
-                  ...p,
-                  units: p.units.map((u) =>
-                    u.id === unitId
-                      ? {
-                          ...u,
-                          subUnits: u.subUnits.map((su) =>
-                            su.id === subUnitId ? { ...su, id: savedSubUnit.id } : su
-                          ),
-                        }
-                      : u
-                  ),
-                }
-              : p
-          ),
-        }));
+      // Save to Supabase FIRST
+      const savedSubUnit = await createSubUnitInDb({
+        unit_id: unitId,
+        name: subUnitData.name,
+        type: subUnitData.type,
+        rent_price: subUnitData.rentPrice,
+        area: subUnitData.area,
+        availability_date: subUnitData.availabilityDate,
+        photos: subUnitData.photos,
+        amenities: subUnitData.amenities,
+        shared_spaces: subUnitData.sharedSpaces,
+        tenant_id: subUnitData.tenantId,
+        tenant_name: subUnitData.tenantName,
+      });
+      
+      if (!savedSubUnit) {
+        throw new Error('Failed to create subunit in Supabase');
       }
-      } catch (error) {
-        console.error('Error saving sub-unit to Supabase:', error);
-      }
-    } else {
-      console.log('Skipping Supabase save: unitId is not a valid UUID (local-only sub-unit)');
+
+      // Update local state with Supabase UUID
+      set((state) => ({
+        properties: state.properties.map((p) =>
+          p.id === propertyId
+            ? {
+                ...p,
+                units: p.units.map((u) =>
+                  u.id === unitId
+                    ? {
+                        ...u,
+                        subUnits: [...u.subUnits, {
+                          id: savedSubUnit.id,
+                          name: savedSubUnit.name,
+                          type: savedSubUnit.type,
+                          rentPrice: savedSubUnit.rent_price,
+                          area: savedSubUnit.area,
+                          availabilityDate: savedSubUnit.availability_date,
+                          photos: savedSubUnit.photos,
+                          amenities: savedSubUnit.amenities,
+                          sharedSpaces: savedSubUnit.shared_spaces,
+                          tenantId: savedSubUnit.tenant_id,
+                          tenantName: savedSubUnit.tenant_name,
+                        }],
+                      }
+                    : u
+                ),
+              }
+            : p
+        ),
+      }));
+
+      console.log('Subunit created successfully with UUID:', savedSubUnit.id);
+      return savedSubUnit.id;
+    } catch (error) {
+      console.error('Error saving sub-unit to Supabase:', error);
+      throw error;
     }
   },
   
@@ -769,94 +684,113 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   
   // For single unit properties - add room directly
   addRoomToSingleUnit: async (propertyId, subUnitData) => {
-    const subUnitId = generateId();
-    let unitId: string | null = null;
-    
-    // Update local state
-    set((state) => ({
-      properties: state.properties.map((p) => {
-        if (p.id === propertyId) {
-          // If no units exist, create a main unit first
-          if (p.units.length === 0) {
-            const mainUnitId = generateId();
-            unitId = mainUnitId;
-            return {
-              ...p,
-              units: [
-                {
-                  id: mainUnitId,
-                  name: 'Main Unit',
-                  subUnits: [{ ...subUnitData, id: subUnitId }],
-                  isOccupied: false,
-                },
-              ],
-            };
-          }
-          // Add to the first (main) unit
-          const mainUnit = p.units[0];
-          unitId = mainUnit.id;
-          return {
-            ...p,
-            units: [
-              {
-                ...mainUnit,
-                subUnits: [...mainUnit.subUnits, { ...subUnitData, id: subUnitId }],
-              },
-              ...p.units.slice(1),
-            ],
-          };
-        }
-        return p;
-      }),
-    }));
-    
-    // Try to save to Supabase only if unitId is a valid UUID
-    if (unitId && isValidUUID(unitId)) {
+    const property = get().properties.find(p => p.id === propertyId);
+    if (!property) {
+      console.error('Property not found:', propertyId);
+      return;
+    }
+
+    let unitId: string;
+
+    // If no units exist, create a Main Unit in Supabase FIRST
+    if (property.units.length === 0) {
       try {
-        const savedSubUnit = await createSubUnitInDb({
-          unit_id: unitId,
-          name: subUnitData.name,
-          type: subUnitData.type,
-          rent_price: subUnitData.rentPrice,
-          area: subUnitData.area,
-          availability_date: subUnitData.availabilityDate,
-          photos: subUnitData.photos,
-          amenities: subUnitData.amenities,
-          shared_spaces: subUnitData.sharedSpaces,
-          tenant_id: subUnitData.tenantId,
-          tenant_name: subUnitData.tenantName,
+        console.log('Creating Main Unit in Supabase for property:', propertyId);
+        const savedUnit = await createUnitInDb({
+          property_id: propertyId,
+          name: 'Main Unit',
+          description: '',
+          unit_type: 'apartment',
+          is_occupied: false,
         });
-        
-        // Update local state with Supabase-generated UUID if saved successfully
-        if (savedSubUnit) {
-          set((state) => ({
-            properties: state.properties.map((p) => {
-              if (p.id === propertyId) {
-                return {
+
+        if (!savedUnit) {
+          throw new Error('Failed to create Main Unit');
+        }
+
+        unitId = savedUnit.id;
+
+        // Add the unit to local state
+        set((state) => ({
+          properties: state.properties.map((p) =>
+            p.id === propertyId
+              ? {
+                  ...p,
+                  units: [{
+                    id: savedUnit.id,
+                    name: 'Main Unit',
+                    subUnits: [],
+                    isOccupied: false,
+                  }],
+                }
+              : p
+          ),
+        }));
+
+        console.log('Main Unit created with UUID:', unitId);
+      } catch (error) {
+        console.error('Error creating Main Unit in Supabase:', error);
+        return;
+      }
+    } else {
+      // Use existing unit
+      unitId = property.units[0].id;
+    }
+
+    // Now add the subunit to Supabase
+    try {
+      console.log('Creating subunit in Supabase for unit:', unitId);
+      const savedSubUnit = await createSubUnitInDb({
+        unit_id: unitId,
+        name: subUnitData.name,
+        type: subUnitData.type,
+        rent_price: subUnitData.rentPrice,
+        area: subUnitData.area,
+        availability_date: subUnitData.availabilityDate,
+        photos: subUnitData.photos,
+        amenities: subUnitData.amenities,
+        shared_spaces: subUnitData.sharedSpaces,
+        tenant_id: subUnitData.tenantId,
+        tenant_name: subUnitData.tenantName,
+      });
+
+      if (savedSubUnit) {
+        // Add to local state with Supabase UUID
+        set((state) => ({
+          properties: state.properties.map((p) =>
+            p.id === propertyId
+              ? {
                   ...p,
                   units: p.units.map((u) =>
                     u.id === unitId
                       ? {
                           ...u,
-                          subUnits: u.subUnits.map((su) =>
-                            su.id === subUnitId ? { ...su, id: savedSubUnit.id } : su
-                          ),
+                          subUnits: [...u.subUnits, {
+                            id: savedSubUnit.id,
+                            name: savedSubUnit.name,
+                            type: savedSubUnit.type,
+                            rentPrice: savedSubUnit.rent_price,
+                            area: savedSubUnit.area,
+                            availabilityDate: savedSubUnit.availability_date,
+                            photos: savedSubUnit.photos,
+                            amenities: savedSubUnit.amenities,
+                            sharedSpaces: savedSubUnit.shared_spaces,
+                            tenantId: savedSubUnit.tenant_id,
+                            tenantName: savedSubUnit.tenant_name,
+                          }],
                         }
                       : u
                   ),
-                };
-              }
-              return p;
-            }),
-          }));
-        }
-      } catch (error) {
-        console.error('Error saving room to Supabase:', error);
-        // Note: If unit doesn't exist in Supabase yet, this will fail
-        // The local state is still updated, so the UI works
+                }
+              : p
+          ),
+        }));
+
+        console.log('Subunit created successfully with UUID:', savedSubUnit.id);
       }
-    } else if (unitId) {
-      console.log('Skipping Supabase save: unitId is not a valid UUID (local-only room)');
+    } catch (error) {
+      console.error('Error saving subunit to Supabase:', error);
+      throw error;
     }
   },
 }));

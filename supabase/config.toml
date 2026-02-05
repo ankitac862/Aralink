@@ -1,0 +1,31 @@
+# Supabase Configuration
+# This file configures the Supabase Edge Functions
+
+[api]
+enabled = true
+
+[functions.generate-lease-pdf]
+verify_jwt = true
+
+[functions.send-lease]
+verify_jwt = true
+
+# Environment variables for Edge Functions
+# Set these in your Supabase Dashboard under Project Settings > Edge Functions > Secrets
+#
+# Required:
+# - SUPABASE_URL (auto-injected)
+# - SUPABASE_SERVICE_ROLE_KEY (auto-injected)
+#
+# Optional (for XFA generation):
+# - XFA_ENGINE_URL: URL of XFA-capable PDF service (e.g., Adobe PDF Services)
+# - XFA_ENGINE_API_KEY: API key for XFA engine
+#
+# Optional (for standard PDF generation):
+# - PDF_GENERATOR_URL: URL of HTML-to-PDF service
+# - PDF_GENERATOR_API_KEY: API key for PDF generator
+#
+# Optional (for email notifications):
+# - EMAIL_SERVICE_URL: URL of email service (e.g., Resend, SendGrid)
+# - EMAIL_API_KEY: API key for email service
+# - FROM_EMAIL: Sender email address

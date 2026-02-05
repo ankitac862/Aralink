@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -13,111 +15,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/hooks/use-auth';
+import { 
+  DbTransaction, 
+  fetchTransactions, 
+  getTransactionAggregates, 
+  TransactionAggregates,
+} from '@/lib/supabase';
 
 type TransactionType = 'income' | 'expense';
 type TransactionCategory = 'all' | 'rent' | 'garage' | 'parking' | 'utility' | 'maintenance' | 'other';
 type TransactionStatus = 'paid' | 'pending' | 'overdue';
 
-interface Transaction {
-  id: string;
-  title: string;
-  category: TransactionCategory;
-  type: TransactionType;
-  amount: number;
-  date: string;
-  time: string;
-  status: TransactionStatus;
-  icon: string;
-  iconBgColor: string;
-  iconColor: string;
-}
-
 // Group transactions by date section
 interface TransactionSection {
   title: string;
-  data: Transaction[];
+  data: DbTransaction[];
 }
-
-const MOCK_TRANSACTIONS: Transaction[] = [
-  {
-    id: '1',
-    title: 'Unit 4B Rent',
-    category: 'rent',
-    type: 'income',
-    amount: 1200.00,
-    date: '2023-10-24',
-    time: '10:42 AM',
-    status: 'paid',
-    icon: 'office-building',
-    iconBgColor: '#EFF6FF',
-    iconColor: '#2563EB',
-  },
-  {
-    id: '2',
-    title: 'Garage Space A2',
-    category: 'garage',
-    type: 'income',
-    amount: 150.00,
-    date: '2023-10-24',
-    time: '09:15 AM',
-    status: 'paid',
-    icon: 'car',
-    iconBgColor: '#F3E8FF',
-    iconColor: '#9333EA',
-  },
-  {
-    id: '3',
-    title: 'Guest Parking',
-    category: 'parking',
-    type: 'income',
-    amount: 25.00,
-    date: '2023-10-23',
-    time: '4:20 PM',
-    status: 'paid',
-    icon: 'parking',
-    iconBgColor: '#FFF7ED',
-    iconColor: '#EA580C',
-  },
-  {
-    id: '4',
-    title: 'Unit 2A Rent',
-    category: 'rent',
-    type: 'income',
-    amount: 1100.00,
-    date: '2023-10-23',
-    time: '',
-    status: 'pending',
-    icon: 'clock-outline',
-    iconBgColor: '#F3F4F6',
-    iconColor: '#6B7280',
-  },
-  {
-    id: '5',
-    title: 'Plumbing Repair',
-    category: 'maintenance',
-    type: 'expense',
-    amount: 350.00,
-    date: '2023-10-22',
-    time: '2:00 PM',
-    status: 'paid',
-    icon: 'wrench',
-    iconBgColor: '#FEF2F2',
-    iconColor: '#DC2626',
-  },
-  {
-    id: '6',
-    title: 'Electricity Bill',
-    category: 'utility',
-    type: 'expense',
-    amount: 180.00,
-    date: '2023-10-21',
-    time: '11:30 AM',
-    status: 'paid',
-    icon: 'flash',
-    iconBgColor: '#FEF9C3',
-    iconColor: '#CA8A04',
-  },
-];
 
 const CATEGORIES: { key: TransactionCategory; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -133,9 +47,14 @@ export default function AccountingScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory>('all');
+  const [transactions, setTransactions] = useState<DbTransaction[]>([]);
+  const [aggregates, setAggregates] = useState<TransactionAggregates>({ totalIncome: 0, totalExpense: 0, chartData: [] });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -145,8 +64,43 @@ export default function AccountingScreen() {
   const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
   const primaryColor = '#137fec';
 
+  // Load transactions on mount
+  useEffect(() => {
+    loadTransactions();
+  }, [user]);
+
+  const loadTransactions = async (isRefresh = false) => {
+    if (!user) return;
+    
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      // Get current month date range
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
+
+      const [transactionsData, aggregatesData] = await Promise.all([
+        fetchTransactions(user.id),
+        getTransactionAggregates(user.id, startOfMonth, endOfMonth),
+      ]);
+
+      setTransactions(transactionsData);
+      setAggregates(aggregatesData);
+    } catch (error) {
+      console.error('Error loading transactions:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
   // Filter transactions by type and category
-  const filteredTransactions = MOCK_TRANSACTIONS.filter(t => {
+  const filteredTransactions = transactions.filter(t => {
     const typeMatch = t.type === transactionType;
     const categoryMatch = selectedCategory === 'all' || t.category === selectedCategory;
     return typeMatch && categoryMatch;
@@ -179,11 +133,39 @@ export default function AccountingScreen() {
     return acc;
   }, [] as TransactionSection[]);
 
-  // Calculate total
+  // Calculate total for filtered transactions
   const totalAmount = filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
 
-  const renderTransaction = (transaction: Transaction) => {
+  // Map category to icon
+  const getCategoryIcon = (category: string): string => {
+    const iconMap: Record<string, string> = {
+      rent: 'office-building',
+      garage: 'car',
+      parking: 'parking',
+      utility: 'flash',
+      maintenance: 'wrench',
+      other: 'cash',
+    };
+    return iconMap[category] || 'cash';
+  };
+
+  // Map category to colors
+  const getCategoryColors = (category: string): { bgColor: string; color: string } => {
+    const colorMap: Record<string, { bgColor: string; color: string }> = {
+      rent: { bgColor: '#EFF6FF', color: '#2563EB' },
+      garage: { bgColor: '#F3E8FF', color: '#9333EA' },
+      parking: { bgColor: '#FFF7ED', color: '#EA580C' },
+      utility: { bgColor: '#FEF9C3', color: '#CA8A04' },
+      maintenance: { bgColor: '#FEF2F2', color: '#DC2626' },
+      other: { bgColor: '#F0FDF4', color: '#16A34A' },
+    };
+    return colorMap[category] || { bgColor: '#F3F4F6', color: '#6B7280' };
+  };
+
+  const renderTransaction = (transaction: DbTransaction) => {
     const isPending = transaction.status === 'pending';
+    const colors = getCategoryColors(transaction.category);
+    const icon = getCategoryIcon(transaction.category);
     
     return (
       <TouchableOpacity
@@ -192,49 +174,49 @@ export default function AccountingScreen() {
           styles.transactionCard,
           { 
             backgroundColor: cardBgColor,
+            borderColor: isDark ? '#374151' : '#e5e7eb',
             opacity: isPending ? 0.6 : 1,
           },
         ]}
-        onPress={() => {/* Navigate to transaction detail */}}
+        onPress={() => router.push(`/transaction-detail?id=${transaction.id}`)}
       >
         <View 
           style={[
             styles.transactionIcon,
-            { backgroundColor: isDark ? `${transaction.iconColor}20` : transaction.iconBgColor },
+            { backgroundColor: isDark ? `${colors.color}20` : colors.bgColor },
           ]}
         >
           <MaterialCommunityIcons 
-            name={transaction.icon as any} 
+            name={icon as any} 
             size={24} 
-            color={transaction.iconColor} 
+            color={colors.color} 
           />
         </View>
         
-        <View style={styles.transactionInfo}>
+        <View style={styles.transactionContent}>
           <ThemedText style={[styles.transactionTitle, { color: textColor }]}>
-            {transaction.title}
+            {transaction.description || `${transaction.category.charAt(0).toUpperCase() + transaction.category.slice(1)} Payment`}
           </ThemedText>
           <ThemedText style={[styles.transactionMeta, { color: secondaryTextColor }]}>
             {transaction.category.charAt(0).toUpperCase() + transaction.category.slice(1)}
-            {transaction.time && ` • ${transaction.time}`}
-            {isPending && ' • Pending'}
+            {transaction.service_type && ` • ${transaction.service_type}`}
           </ThemedText>
         </View>
         
-        <View style={styles.transactionAmountContainer}>
+        <View style={styles.transactionRight}>
           <ThemedText 
             style={[
               styles.transactionAmount,
               { 
                 color: isPending 
                   ? secondaryTextColor 
-                  : transactionType === 'income' 
+                  : transaction.type === 'income' 
                     ? '#16A34A' 
                     : '#DC2626',
               },
             ]}
           >
-            {transactionType === 'income' ? '+' : '-'}${transaction.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {transaction.type === 'income' ? '+' : '-'}${transaction.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </ThemedText>
           <View style={styles.statusContainer}>
             <View 
@@ -278,6 +260,13 @@ export default function AccountingScreen() {
       <ScrollView 
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => loadTransactions(true)}
+            tintColor={primaryColor}
+          />
+        }
       >
         {/* Income/Expense Toggle */}
         <View style={styles.toggleContainer}>
@@ -323,63 +312,79 @@ export default function AccountingScreen() {
           </View>
         </View>
 
-        {/* Summary Card */}
-        <View style={styles.summaryContainer}>
+        {/* Summary Card with 7-Day Chart */}
+        <View style={styles.combinedContainer}>
           <View style={[styles.summaryCard, { backgroundColor: cardBgColor, borderColor }]}>
-            <View style={styles.summaryHeader}>
-              <View style={styles.summaryInfo}>
-                <ThemedText style={[styles.summaryMonth, { color: secondaryTextColor }]}>
-                  October 2023
-                </ThemedText>
-                <ThemedText style={[styles.summaryLabel, { color: textColor }]}>
-                  Total {transactionType === 'income' ? 'Income' : 'Expenses'}
-                </ThemedText>
-                <ThemedText style={[styles.summaryAmount, { color: primaryColor }]}>
-                  ${totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </ThemedText>
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={primaryColor} />
               </View>
-              <View 
-                style={[
-                  styles.summaryIconWrapper,
-                  { backgroundColor: transactionType === 'income' ? '#DCFCE7' : '#FEE2E2' },
-                ]}
-              >
-                <MaterialCommunityIcons 
-                  name={transactionType === 'income' ? 'trending-up' : 'trending-down'} 
-                  size={24} 
-                  color={transactionType === 'income' ? '#16A34A' : '#DC2626'} 
-                />
-              </View>
-            </View>
-            
-            {/* Mini Chart */}
-            <View style={[styles.chartContainer, { backgroundColor: `${primaryColor}08` }]}>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.4, backgroundColor: `${primaryColor}30` }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.6, backgroundColor: `${primaryColor}40` }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.8, backgroundColor: `${primaryColor}60` }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.5, backgroundColor: primaryColor }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.7, backgroundColor: `${primaryColor}50` }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.45, backgroundColor: `${primaryColor}30` }]} />
-              </View>
-              <View style={styles.chartBarWrapper}>
-                <View style={[styles.chartBar, { flex: 0.3, backgroundColor: `${primaryColor}20` }]} />
-              </View>
-            </View>
+            ) : (
+              <>
+                <View style={styles.summaryHeader}>
+                  <View style={styles.summaryInfo}>
+                    <ThemedText style={[styles.summaryMonth, { color: secondaryTextColor }]}>
+                      {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </ThemedText>
+                    <ThemedText style={[styles.summaryLabel, { color: textColor }]}>
+                      Total {transactionType === 'income' ? 'Income' : 'Expenses'}
+                    </ThemedText>
+                    <View style={styles.summaryAmountContainer}>
+                      <ThemedText 
+                        style={[styles.summaryAmount, { color: primaryColor }]}
+                      >
+                        ${(transactionType === 'income' ? aggregates.totalIncome : aggregates.totalExpense).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </ThemedText>
+                    </View>
+                  </View>
+                  <View 
+                    style={[
+                      styles.summaryIconWrapper,
+                      { backgroundColor: transactionType === 'income' ? '#DCFCE7' : '#FEE2E2' },
+                    ]}
+                  >
+                    <MaterialCommunityIcons 
+                      name={transactionType === 'income' ? 'trending-up' : 'trending-down'} 
+                      size={24} 
+                      color={transactionType === 'income' ? '#16A34A' : '#DC2626'} 
+                    />
+                  </View>
+                </View>
+
+                {/* Divider */}
+                <View style={[styles.summaryDivider, { backgroundColor: borderColor }]} />
+                
+                {/* Mini Chart - Last 7 days */}
+                <View style={[styles.chartContainer, { backgroundColor: `${primaryColor}08` }]}>
+                  {aggregates.chartData && aggregates.chartData.length > 0 ? (
+                    aggregates.chartData.map((day, index) => {
+                      const maxAmount = Math.max(...aggregates.chartData.map(d => transactionType === 'income' ? d.income : d.expense));
+                      const amount = transactionType === 'income' ? day.income : day.expense;
+                      const flexValue = maxAmount > 0 ? Math.max(amount / maxAmount, 0.1) : 0.1;
+                      
+                      return (
+                        <View key={index} style={styles.chartBarWrapper}>
+                          <View style={[styles.chartBar, { flex: flexValue, backgroundColor: primaryColor }]} />
+                        </View>
+                      );
+                    })
+                  ) : (
+                    // Show placeholder bars when no data
+                    Array.from({ length: 7 }).map((_, i) => {
+                      const heights = [0.35, 0.55, 0.4, 0.65, 0.5, 0.85, 0.45];
+                      return (
+                        <View key={i} style={styles.chartBarWrapper}>
+                          <View style={[styles.chartBar, { flex: heights[i], backgroundColor: `${primaryColor}20` }]} />
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              </>
+            )}
           </View>
         </View>
 
-        {/* Category Filters */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
@@ -414,7 +419,14 @@ export default function AccountingScreen() {
 
         {/* Transaction List */}
         <View style={styles.transactionsContainer}>
-          {groupedTransactions.length === 0 ? (
+          {loading ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator size="large" color={primaryColor} />
+              <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                Loading transactions...
+              </ThemedText>
+            </View>
+          ) : groupedTransactions.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialCommunityIcons 
                 name="receipt-text-outline" 
@@ -422,8 +434,17 @@ export default function AccountingScreen() {
                 color={secondaryTextColor} 
               />
               <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
-                No transactions found
+                No {transactionType} transactions found
               </ThemedText>
+              <TouchableOpacity
+                style={[styles.addFirstButton, { backgroundColor: primaryColor }]}
+                onPress={() => router.push('/add-transaction')}
+              >
+                <MaterialCommunityIcons name="plus" size={20} color="#ffffff" />
+                <ThemedText style={styles.addFirstButtonText}>
+                  Add Your First Transaction
+                </ThemedText>
+              </TouchableOpacity>
             </View>
           ) : (
             groupedTransactions.map((section) => (
@@ -512,11 +533,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 8,
   },
+  summaryDivider: {
+    height: 1,
+    marginVertical: 12,
+    marginHorizontal: -20,
+  },
+  combinedContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
   summaryCard: {
-    borderRadius: 12,
+    borderRadius: 24,
     padding: 20,
     borderWidth: 1,
-    gap: 16,
+    gap: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -524,51 +560,71 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   summaryInfo: {
-    gap: 4,
+    gap: 3,
+    flex: 1,
+    minWidth: 0,
+    marginRight: 12,
   },
   summaryMonth: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   summaryLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  summaryAmountContainer: {
+    flexWrap: 'wrap',
+    marginTop: 3,
   },
   summaryAmount: {
     fontSize: 32,
     fontWeight: '800',
     letterSpacing: -1,
-    marginTop: 4,
+    lineHeight: 38,
+    flexShrink: 1,
   },
   summaryIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
   },
   chartContainer: {
-    height: 56,
+    minHeight: 96,
     borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    justifyContent: 'space-evenly',
+    justifyContent: 'space-between',
     paddingHorizontal: 12,
-    paddingBottom: 4,
-    overflow: 'hidden',
+    paddingVertical: 16,
+    paddingBottom: 12,
+    overflow: 'visible',
+    gap: 4,
   },
   chartBarWrapper: {
     flex: 1,
-    height: '100%',
+    height: 96,
     justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingHorizontal: 2,
+    paddingHorizontal: 1.5,
+    minWidth: 0,
   },
   chartBar: {
     width: '100%',
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-    minHeight: 4,
+    maxWidth: '100%',
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+    minHeight: 3,
   },
   categoriesContainer: {
     paddingVertical: 8,
@@ -580,10 +636,15 @@ const styles = StyleSheet.create({
   categoryPill: {
     height: 36,
     paddingHorizontal: 16,
-    borderRadius: 18,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
   },
   categoryText: {
     fontSize: 14,
@@ -593,55 +654,71 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   section: {
-    marginTop: 16,
+    marginTop: 20,
+    paddingHorizontal: 16,
   },
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 12,
   },
   sectionTransactions: {
-    gap: 12,
+    gap: 0,
   },
   transactionCard: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 20,
     gap: 16,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 2,
   },
   transactionIcon: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  transactionInfo: {
+  transactionContent: {
     flex: 1,
+    minWidth: 0,
   },
   transactionTitle: {
     fontSize: 16,
     fontWeight: '600',
+    lineHeight: 20,
   },
   transactionMeta: {
     fontSize: 12,
-    marginTop: 2,
+    marginTop: 4,
+    fontWeight: '500',
   },
-  transactionAmountContainer: {
+  transactionRight: {
     alignItems: 'flex-end',
+    minWidth: 0,
+    flexShrink: 0,
   },
   transactionAmount: {
     fontSize: 16,
     fontWeight: '700',
+    lineHeight: 20,
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 2,
+    marginTop: 4,
   },
   statusDot: {
     width: 6,
@@ -650,6 +727,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 12,
+    fontWeight: '500',
   },
   emptyState: {
     alignItems: 'center',
@@ -658,6 +736,69 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   emptyText: {
+    fontSize: 14,
+  },
+  loadingContainer: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addFirstButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 16,
+  },
+  addFirstButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  timeSeriesContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  timeSeriesCard: {
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  timeSeriesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingBottom: 8,
+  },
+  timeSeriesTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  chartTypeToggle: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  chartTypeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  chartTypeText: {
+    fontWeight: '600',
+  },
+  chartLoadingContainer: {
+    height: 280,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chartEmptyState: {
+    height: 280,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chartEmptyText: {
     fontSize: 14,
   },
 });

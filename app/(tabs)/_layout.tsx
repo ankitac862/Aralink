@@ -152,16 +152,6 @@ export default function TabLayout() {
             }}
           />
         )}
-
-        {/* Hide maintenance from tabs (only accessible via navigation) */}
-        <Tabs.Screen
-          name="maintenance"
-          options={{
-            href: null, // Hide from tabs
-          }}
-        />
-
-        {/* Hidden screens - not shown in tabs */}
       </Tabs>
     </View>
   );

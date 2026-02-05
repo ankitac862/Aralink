@@ -89,6 +89,7 @@ export interface UserProfile {
   email: string;
   full_name: string;
   user_type: 'landlord' | 'tenant' | 'manager';
+  account_status?: 'active' | 'pending' | 'invited' | 'suspended';
   phone?: string;
   avatar_url?: string;
   is_social_login: boolean;
@@ -482,6 +483,8 @@ export async function fetchProperties(userId: string): Promise<DbProperty[]> {
 // Fetch a single property with units and subunits
 export async function fetchPropertyById(propertyId: string): Promise<DbProperty | null> {
   try {
+    console.log('🔍 fetchPropertyById called with ID:', propertyId);
+    
     const { data, error } = await supabase
       .from('properties')
       .select('*')
@@ -489,13 +492,16 @@ export async function fetchPropertyById(propertyId: string): Promise<DbProperty 
       .single();
 
     if (error) {
-      console.error('Error fetching property:', error);
+      console.error('❌ Error fetching property:', error);
+      console.error('❌ Property ID that failed:', propertyId);
       return null;
     }
 
+    console.log('✅ Property found:', data ? `${data.address1}, ${data.city}` : 'null');
     return data;
   } catch (error) {
-    console.error('Error fetching property:', error);
+    console.error('❌ Exception fetching property:', error);
+    console.error('❌ Property ID that failed:', propertyId);
     return null;
   }
 }
@@ -906,14 +912,609 @@ export async function deleteTenantFromDb(tenantId: string): Promise<boolean> {
 }
 
 // =====================================================
+// TENANT-LANDLORD CONNECTION FUNCTIONS
+// =====================================================
+
+export interface TenantResolutionResult {
+  tenantId: string;
+  existed: boolean;
+  invited: boolean;
+  accountStatus?: string;
+  userType?: string;
+}
+
+export interface DbTenantPropertyLink {
+  id: string;
+  tenant_id: string;
+  property_id: string;
+  unit_id?: string | null;
+  sub_unit_id?: string | null;
+  status: 'active' | 'pending_invite' | 'inactive' | 'removed';
+  created_via: 'landlord_invite' | 'lease_creation' | 'application_approval';
+  created_by_user_id: string;
+  link_start_date?: string | null;
+  link_end_date?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbApplication {
+  id: string;
+  user_id: string;
+  property_id: string | null;
+  unit_id?: string | null;
+  applicant_name: string;
+  applicant_email: string;
+  applicant_phone?: string | null;
+  status: 'draft' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'lease_ready' | 'lease_signed';
+  form_data?: Record<string, any>;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbInvite {
+  id: string;
+  token_hash: string;
+  property_id: string;
+  landlord_id: string;
+  tenant_id?: string | null;
+  tenant_email: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  expires_at: string;
+  used_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InviteDetails {
+  inviteStatus: string;
+  expiresAt?: string;
+  property?: {
+    id: string;
+    address1: string;
+    address2?: string | null;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
+  landlord?: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+  };
+}
+
+export async function resolveTenantByEmail(
+  email: string,
+  fullName?: string
+): Promise<TenantResolutionResult | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke('resolve-tenant', {
+      body: { email, fullName },
+    });
+
+    if (error) {
+      console.error('Error resolving tenant via edge function:', error);
+      return null;
+    }
+
+    return data as TenantResolutionResult;
+  } catch (error) {
+    console.error('Error resolving tenant:', error);
+    return null;
+  }
+}
+
+export async function addTenantToProperty(params: {
+  landlordUserId: string;
+  propertyId: string;
+  tenantEmail: string;
+  tenantName?: string;
+  unitId?: string;
+  subUnitId?: string;
+  linkStartDate?: string;
+}): Promise<DbTenantPropertyLink | null> {
+  try {
+    const property = await fetchPropertyById(params.propertyId);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenant = await resolveTenantByEmail(params.tenantEmail, params.tenantName);
+    if (!tenant?.tenantId) {
+      return null;
+    }
+
+    // Always set status to active for landlord-added tenants
+    const status = 'active';
+
+    // First, ensure tenant record exists in tenants table with active status
+    const { data: existingTenant } = await supabase
+      .from('tenants')
+      .select('id, user_id, landlord_id')
+      .eq('user_id', tenant.tenantId)
+      .maybeSingle();
+
+    if (existingTenant) {
+      // Update existing tenant to active
+      await supabase
+        .from('tenants')
+        .update({
+          status: 'active',
+          landlord_id: params.landlordUserId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingTenant.id);
+      console.log('✅ Updated tenant status to active in tenants table');
+    } else {
+      // Create new tenant record
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name, phone')
+        .eq('id', tenant.tenantId)
+        .maybeSingle();
+
+      await supabase
+        .from('tenants')
+        .insert({
+          user_id: tenant.tenantId,
+          landlord_id: params.landlordUserId,
+          email: profile?.email || params.tenantEmail,
+          first_name: profile?.full_name?.split(' ')[0] || params.tenantName?.split(' ')[0] || '',
+          last_name: profile?.full_name?.split(' ').slice(1).join(' ') || params.tenantName?.split(' ').slice(1).join(' ') || '',
+          phone: profile?.phone || '',
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      console.log('✅ Created new tenant record with active status');
+    }
+
+    const { data, error } = await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenant.tenantId,
+          landlord_id: params.landlordUserId,
+          property_id: params.propertyId,
+          unit_id: params.unitId || null,
+          sub_unit_id: params.subUnitId || null,
+          status,
+          created_via: 'landlord_invite',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: params.linkStartDate || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      )
+      .select()
+      .single();
+
+    console.log('✅ Tenant property link created:', {
+      status: status,
+      landlord_id: params.landlordUserId,
+      tenant_id: tenant.tenantId,
+      link_data: data
+    });
+
+    if (error) {
+      console.error('Error creating tenant-property link:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error adding tenant to property:', error);
+    return null;
+  }
+}
+
+export async function createLeaseWithTenant(params: {
+  landlordUserId: string;
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  tenantEmail: string;
+  tenantName?: string;
+  applicationId?: string;
+  formData?: OntarioLeaseFormData;
+  status?: LeaseStatus;
+  effectiveDate?: string;
+  expiryDate?: string;
+}): Promise<DbLease | null> {
+  try {
+    const property = await fetchPropertyById(params.propertyId);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenant = await resolveTenantByEmail(params.tenantEmail, params.tenantName);
+    if (!tenant?.tenantId) {
+      return null;
+    }
+
+    await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenant.tenantId,
+          property_id: params.propertyId,
+          unit_id: params.unitId || null,
+          sub_unit_id: params.subUnitId || null,
+          status: 'active',
+          created_via: 'lease_creation',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: params.effectiveDate || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      );
+
+    // Set tenant to active when creating lease
+    await supabase
+      .from('tenants')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', tenant.tenantId);
+    
+    console.log('✅ Tenant set to active upon lease creation');
+
+    const { data, error } = await supabase
+      .from('leases')
+      .insert({
+        user_id: params.landlordUserId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        tenant_id: tenant.tenantId,
+        application_id: params.applicationId || null,
+        status: params.status || 'generated',
+        form_data: params.formData || null,
+        effective_date: params.effectiveDate || null,
+        expiry_date: params.expiryDate || null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating lease:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error creating lease with tenant:', error);
+    return null;
+  }
+}
+
+export async function submitPropertyApplication(params: {
+  tenantUserId: string;
+  propertyId: string;
+  unitId?: string;
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone?: string;
+  formData?: Record<string, any>;
+}): Promise<DbApplication | null> {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .insert({
+        user_id: params.tenantUserId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        applicant_name: params.applicantName,
+        applicant_email: params.applicantEmail,
+        applicant_phone: params.applicantPhone || null,
+        status: 'submitted',
+        form_data: params.formData || null,
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error submitting application:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    return null;
+  }
+}
+
+export async function approvePropertyApplication(params: {
+  applicationId: string;
+  landlordUserId: string;
+  unitId?: string;
+  subUnitId?: string;
+}): Promise<{ application: DbApplication; link: DbTenantPropertyLink } | null> {
+  try {
+    const { data: application, error: appError } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('id', params.applicationId)
+      .single();
+
+    if (appError || !application) {
+      console.error('Error fetching application:', appError);
+      return null;
+    }
+
+    if (!application.property_id) {
+      console.error('Application missing property id.');
+      return null;
+    }
+
+    const property = await fetchPropertyById(application.property_id);
+    if (!property || property.user_id !== params.landlordUserId) {
+      console.error('Property not found or not owned by landlord.');
+      return null;
+    }
+
+    const tenantId = application.user_id;
+    const { data: link, error: linkError } = await supabase
+      .from('tenant_property_links')
+      .upsert(
+        {
+          tenant_id: tenantId,
+          property_id: application.property_id,
+          unit_id: params.unitId || application.unit_id || null,
+          sub_unit_id: params.subUnitId || null,
+          status: 'active',
+          created_via: 'application_approval',
+          created_by_user_id: params.landlordUserId,
+          link_start_date: new Date().toISOString().split('T')[0],
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'tenant_id,property_id,unit_id,sub_unit_id' }
+      )
+      .select()
+      .single();
+
+    if (linkError || !link) {
+      console.error('Error creating tenant-property link:', linkError);
+      return null;
+    }
+
+    const { data: updatedApp, error: updateError } = await supabase
+      .from('applications')
+      .update({
+        status: 'approved',
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.applicationId)
+      .select()
+      .single();
+
+    if (updateError || !updatedApp) {
+      console.error('Error updating application status:', updateError);
+      return null;
+    }
+
+    return { application: updatedApp, link };
+  } catch (error) {
+    console.error('Error approving application:', error);
+    return null;
+  }
+}
+
+export async function inviteTenantToProperty(params: {
+  propertyId: string;
+  tenantEmail: string;
+  tenantName?: string;
+  unitId?: string;
+  subUnitId?: string;
+  expiresInHours?: number;
+}): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { error: 'Supabase credentials are missing in env.' };
+    }
+
+    if (!accessToken) {
+      return { error: 'No auth session found. Please sign in again.' };
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/invite-tenant`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+
+    const rawText = await response.text();
+    if (!response.ok) {
+      let message = rawText || `Invite failed with status ${response.status}`;
+      try {
+        const parsed = JSON.parse(rawText);
+        message = parsed?.error || parsed?.message || message;
+      } catch {
+        // keep raw text
+      }
+      console.error('Error inviting tenant:', { message, status: response.status, rawText });
+      return { error: `${message} (status ${response.status})` };
+    }
+
+    const data = rawText ? JSON.parse(rawText) : {};
+    return { 
+      inviteId: data?.inviteId, 
+      token: data?.token,
+      notificationQueued: data?.notificationQueued,
+      emailQueued: data?.emailQueued,
+    };
+  } catch (error) {
+    console.error('Error inviting tenant:', error);
+    return null;
+  }
+}
+
+// Invite applicant to property (similar to tenant invite but for applicants)
+export async function inviteApplicantToProperty(params: {
+  propertyId: string;
+  applicantEmail: string;
+  applicantName?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  unitId?: string;
+  subUnitId?: string;
+}): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
+  try {
+    console.log('🚀 inviteApplicantToProperty called with params:', JSON.stringify(params, null, 2));
+    
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { error: 'Supabase credentials are missing in env.' };
+    }
+
+    if (!accessToken) {
+      return { error: 'No auth session found. Please sign in again.' };
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/invite-applicant`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+
+    const rawText = await response.text();
+    console.log('📥 Raw response text:', rawText);
+    
+    if (!response.ok) {
+      let message = rawText || `Invite failed with status ${response.status}`;
+      try {
+        const parsed = JSON.parse(rawText);
+        message = parsed?.error || parsed?.message || message;
+      } catch {
+        // keep raw text
+      }
+      console.error('❌ Error inviting applicant:', { message, status: response.status, rawText });
+      return { error: `${message} (status ${response.status})` };
+    }
+
+    const data = rawText ? JSON.parse(rawText) : {};
+    console.log('✅ Parsed applicant invite response:', JSON.stringify(data, null, 2));
+    
+    return { 
+      inviteId: data?.inviteId, 
+      token: data?.token,
+      notificationQueued: data?.notificationQueued,
+      emailQueued: data?.emailQueued,
+    };
+  } catch (error) {
+    console.error('❌ Unexpected error inviting applicant:', error);
+    return null;
+  }
+}
+
+export async function getInviteDetails(params: {
+  token: string;
+  tenantEmail?: string;
+}): Promise<InviteDetails | null> {
+  try {
+    const searchParams = new URLSearchParams({ token: params.token });
+    if (params.tenantEmail) {
+      searchParams.append('tenant_email', params.tenantEmail);
+    }
+    const { data, error } = await supabase.functions.invoke(
+      `get-invite?${searchParams.toString()}`,
+      { method: 'GET' }
+    );
+
+    if (error) {
+      console.error('Error fetching invite details:', error);
+      return null;
+    }
+
+    return data as InviteDetails;
+  } catch (error) {
+    console.error('Error fetching invite details:', error);
+    return null;
+  }
+}
+
+export async function acceptInvite(token: string): Promise<{ inviteStatus: string } | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      `accept-invite?token=${encodeURIComponent(token)}`
+    );
+
+    if (error) {
+      console.error('Error accepting invite:', error);
+      return null;
+    }
+
+    return { inviteStatus: data?.inviteStatus };
+  } catch (error) {
+    console.error('Error accepting invite:', error);
+    return null;
+  }
+}
+
+export async function declineInvite(token: string): Promise<{ inviteStatus: string } | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      `decline-invite?token=${encodeURIComponent(token)}`
+    );
+
+    if (error) {
+      console.error('Error declining invite:', error);
+      return null;
+    }
+
+    return { inviteStatus: data?.inviteStatus };
+  } catch (error) {
+    console.error('Error declining invite:', error);
+    return null;
+  }
+}
+
+// =====================================================
 // TRANSACTION API FUNCTIONS (for Accounting)
 // =====================================================
 
+// Database Transaction type
+// Flexible structure based on property type:
+// - Single Unit Property: property_id + subunit_id (rooms)
+// - Multi-Unit Property: property_id + unit_id + subunit_id (if room exists)
+// - Parking/Commercial: property_id only
+// - With Tenant: tenant_id
+// - With Lease: lease_id
 export interface DbTransaction {
   id: string;
   user_id: string;
-  property_id?: string;
-  unit_id?: string;
+  property_id?: string;        // Always present if attached to property
+  unit_id?: string;            // Present for multi-unit properties
+  subunit_id?: string;         // Present for rooms/sub-units
+  tenant_id?: string;          // If transaction is tied to a tenant
+  lease_id?: string;           // If transaction is tied to a lease
   type: 'income' | 'expense';
   category: 'rent' | 'garage' | 'parking' | 'utility' | 'maintenance' | 'other';
   amount: number;
@@ -950,22 +1551,80 @@ export async function fetchTransactions(userId: string): Promise<DbTransaction[]
   }
 }
 
-// Create a new transaction
-export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 'created_at' | 'updated_at'>): Promise<DbTransaction | null> {
+// Fetch a single transaction by ID
+export async function fetchTransactionById(transactionId: string): Promise<DbTransaction | null> {
   try {
     const { data, error } = await supabase
       .from('transactions')
-      .insert({
-        ...transaction,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
+      .select('*')
+      .eq('id', transactionId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST205') {
+        console.warn('⚠️ transactions table not found.');
+        return null;
+      }
+      console.error('Error fetching transaction:', error);
+      return null;
+    }
+
+    return data || null;
+  } catch (error) {
+    console.error('Error fetching transaction:', error);
+    return null;
+  }
+}
+
+// Create a new transaction
+export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 'created_at' | 'updated_at'>): Promise<DbTransaction | null> {
+  try {
+    // Only include subunit_id if it's provided and not empty
+    const dataToInsert: any = {
+      user_id: transaction.user_id,
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount,
+      date: transaction.date,
+      status: transaction.status || 'paid',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Add optional fields only if they exist
+    if (transaction.property_id) dataToInsert.property_id = transaction.property_id;
+    if (transaction.unit_id) dataToInsert.unit_id = transaction.unit_id;
+    // Skip subunit_id for now since subunits table might be empty
+    // if (transaction.subunit_id) dataToInsert.subunit_id = transaction.subunit_id;
+    if (transaction.tenant_id) dataToInsert.tenant_id = transaction.tenant_id;
+    if (transaction.lease_id) dataToInsert.lease_id = transaction.lease_id;
+    if (transaction.description) dataToInsert.description = transaction.description;
+    if (transaction.service_type) dataToInsert.service_type = transaction.service_type;
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert(dataToInsert)
       .select()
       .single();
 
     if (error) {
       console.error('Error creating transaction:', error);
       return null;
+    }
+
+    // If this transaction is for a tenant, update their profile with latest data
+    if (transaction.tenant_id && transaction.property_id) {
+      try {
+        await updateTenantProfileWithTransaction(
+          transaction.tenant_id,
+          transaction.property_id,
+          transaction.unit_id,
+          transaction.subunit_id
+        );
+      } catch (updateError) {
+        console.warn('Warning: Could not update tenant profile:', updateError);
+        // Don't fail the transaction creation if profile update fails
+      }
     }
 
     return data;
@@ -1017,5 +1676,1837 @@ export async function deleteTransactionFromDb(transactionId: string): Promise<bo
   } catch (error) {
     console.error('Error deleting transaction:', error);
     return false;
+  }
+}
+
+// Find active lease for a property/unit/subunit
+export async function findActiveLease(
+  propertyId: string,
+  unitId?: string,
+  subunitId?: string
+): Promise<DbLease | null> {
+  try {
+    let query = supabase
+      .from('leases')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('status', 'signed') // Only signed leases are active
+      .gte('expiry_date', new Date().toISOString()); // Not expired
+
+    if (unitId) {
+      query = query.eq('unit_id', unitId);
+    }
+
+    // Note: subunit matching would need to be in form_data JSONB
+    // For now, we match by property/unit
+    
+    const { data, error } = await query.limit(1).single();
+
+    if (error) {
+      if (error.code !== 'PGRST116') { // Not found is OK
+        console.error('Error finding active lease:', error);
+      }
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error finding active lease:', error);
+    return null;
+  }
+}
+
+// Aggregate transactions for accounting dashboard
+export interface TransactionAggregates {
+  totalIncome: number;
+  totalExpense: number;
+  chartData: Array<{ date: string; income: number; expense: number }>;
+}
+
+export async function getTransactionAggregates(
+  userId: string, 
+  startDate?: string, 
+  endDate?: string
+): Promise<TransactionAggregates> {
+  try {
+    let query = supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (startDate) {
+      query = query.gte('date', startDate);
+    }
+    if (endDate) {
+      query = query.lte('date', endDate);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      if (error.code === 'PGRST205') {
+        console.warn('⚠️ transactions table not found.');
+      } else {
+        console.error('Error fetching transaction aggregates:', error);
+      }
+      return { totalIncome: 0, totalExpense: 0, chartData: [] };
+    }
+
+    const transactions = data || [];
+
+    // Calculate totals (only from paid transactions)
+    const paidTransactions = transactions.filter(t => t.status === 'paid');
+    const totalIncome = paidTransactions
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const totalExpense = paidTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    // Group all transactions by date for chart (last 7 days)
+    const chartDataMap = new Map<string, { income: number; expense: number }>();
+    
+    transactions.forEach(t => {
+      const date = t.date.split('T')[0]; // Get YYYY-MM-DD
+      const existing = chartDataMap.get(date) || { income: 0, expense: 0 };
+      
+      if (t.type === 'income') {
+        existing.income += t.amount;
+      } else {
+        existing.expense += t.amount;
+      }
+      
+      chartDataMap.set(date, existing);
+    });
+
+    const chartData = Array.from(chartDataMap.entries())
+      .map(([date, amounts]) => ({ date, ...amounts }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-7); // Last 7 days
+
+    return { totalIncome, totalExpense, chartData };
+  } catch (error) {
+    console.error('Error calculating transaction aggregates:', error);
+    return { totalIncome: 0, totalExpense: 0, chartData: [] };
+  }
+}
+
+// Fetch transactions for a specific tenant (ledger)
+export async function fetchTenantTransactions(tenantId: string): Promise<DbTransaction[]> {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('date', { ascending: false });
+
+    if (error) {
+      if (error.code === 'PGRST205') {
+        console.warn('⚠️ transactions table not found.');
+        return [];
+      }
+      if (error.code === '42703') {
+        console.warn('⚠️ tenant_id column not found in transactions table. Run ADD_TENANT_ID_MIGRATION.sql');
+        return [];
+      }
+      console.error('Error fetching tenant transactions:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching tenant transactions:', error);
+    return [];
+  }
+}
+
+// Get lease status for a tenant (returns 'active', 'inactive', or 'pending')
+export async function getTenantLeaseStatus(tenantId: string): Promise<'active' | 'inactive' | 'pending'> {
+  try {
+    const leases = await fetchLeasesByTenant(tenantId);
+    
+    if (leases.length === 0) {
+      return 'inactive';
+    }
+
+    // Check for signed and active lease
+    const now = new Date();
+    const activeLease = leases.find(lease => 
+      lease.status === 'signed' && 
+      (!lease.expiry_date || new Date(lease.expiry_date) > now)
+    );
+
+    if (activeLease) {
+      return 'active';
+    }
+
+    // Check for pending leases (sent but not signed)
+    const pendingLease = leases.find(lease => 
+      lease.status === 'sent' || lease.status === 'generated' || lease.status === 'uploaded'
+    );
+
+    if (pendingLease) {
+      return 'pending';
+    }
+
+    return 'inactive';
+  } catch (error) {
+    console.error('Error getting tenant lease status:', error);
+    return 'inactive';
+  }
+}
+
+// Dashboard metrics interface
+export interface DashboardMetrics {
+  activeLeases: number;
+  totalRentableUnits: number;
+  rentedUnits: number;
+  occupancyPercentage: number;
+}
+
+// Get dashboard metrics for landlord
+export async function getDashboardMetrics(userId: string): Promise<DashboardMetrics> {
+  try {
+    // Fetch all leases and properties
+    const [leases, propertiesData] = await Promise.all([
+      fetchLeases(userId),
+      supabase.from('properties').select('*, units(*, sub_units(*))').eq('user_id', userId)
+    ]);
+
+    // Count active leases
+    const now = new Date();
+    const activeLeases = leases.filter(lease => 
+      lease.status === 'signed' && 
+      (!lease.expiry_date || new Date(lease.expiry_date) > now)
+    ).length;
+
+    // Count rentable units
+    let totalRentableUnits = 0;
+    let rentedUnits = 0;
+
+    if (propertiesData.data) {
+      for (const property of propertiesData.data) {
+        if (!property.units || property.units.length === 0) {
+          // Property with no units = 1 rentable unit
+          totalRentableUnits += 1;
+          // Check if property has active lease
+          const hasLease = leases.some(l => 
+            l.property_id === property.id && 
+            l.status === 'signed' &&
+            (!l.expiry_date || new Date(l.expiry_date) > now)
+          );
+          if (hasLease) rentedUnits += 1;
+        } else {
+          // Property has units
+          for (const unit of property.units) {
+            if (!unit.sub_units || unit.sub_units.length === 0) {
+              // Unit with no subunits = 1 rentable unit
+              totalRentableUnits += 1;
+              const hasLease = leases.some(l => 
+                l.unit_id === unit.id && 
+                l.status === 'signed' &&
+                (!l.expiry_date || new Date(l.expiry_date) > now)
+              );
+              if (hasLease) rentedUnits += 1;
+            } else {
+              // Unit has subunits - count each subunit
+              totalRentableUnits += unit.sub_units.length;
+              // Count rented subunits (would need to check lease form_data for subunit matching)
+              // For now, approximate by checking unit-level leases
+              const unitLeases = leases.filter(l => 
+                l.unit_id === unit.id && 
+                l.status === 'signed' &&
+                (!l.expiry_date || new Date(l.expiry_date) > now)
+              );
+              rentedUnits += Math.min(unitLeases.length, unit.sub_units.length);
+            }
+          }
+        }
+      }
+    }
+
+    const occupancyPercentage = totalRentableUnits > 0 
+      ? Math.round((rentedUnits / totalRentableUnits) * 100) 
+      : 0;
+
+    return {
+      activeLeases,
+      totalRentableUnits,
+      rentedUnits,
+      occupancyPercentage,
+    };
+  } catch (error) {
+    console.error('Error getting dashboard metrics:', error);
+    return {
+      activeLeases: 0,
+      totalRentableUnits: 0,
+      rentedUnits: 0,
+      occupancyPercentage: 0,
+    };
+  }
+}
+
+// Rent collection summary interface
+export interface RentCollectionSummary {
+  totalExpected: number;
+  paid: number;
+  pending: number;
+  overdue: number;
+}
+
+// Get rent collection summary for current month
+export async function getRentCollectionSummary(userId: string): Promise<RentCollectionSummary> {
+  try {
+    // Get current month date range
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
+
+    // Fetch rent transactions for current month
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'income')
+      .eq('category', 'rent')
+      .gte('date', startOfMonth)
+      .lte('date', endOfMonth);
+
+    if (error) {
+      console.error('Error fetching rent collection:', error);
+      return { totalExpected: 0, paid: 0, pending: 0, overdue: 0 };
+    }
+
+    const transactions = data || [];
+    
+    const paid = transactions
+      .filter(t => t.status === 'paid')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const pending = transactions
+      .filter(t => t.status === 'pending')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const overdue = transactions
+      .filter(t => t.status === 'overdue')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const totalExpected = paid + pending + overdue;
+
+    return { totalExpected, paid, pending, overdue };
+  } catch (error) {
+    console.error('Error getting rent collection summary:', error);
+    return { totalExpected: 0, paid: 0, pending: 0, overdue: 0 };
+  }
+}
+
+// =====================================================
+// LEASE API FUNCTIONS
+// =====================================================
+
+export type LeaseStatus = 'draft' | 'generated' | 'uploaded' | 'sent' | 'signed';
+
+// Ontario Lease Form Data Structure (maps to standard lease sections)
+export interface OntarioLeaseFormData {
+  // Section 1: Parties
+  landlordName: string;
+  landlordAddress?: string;
+  tenantNames: string[];
+  
+  // Section 2: Rental Unit
+  unitAddress: {
+    unit?: string;
+    streetNumber: string;
+    streetName: string;
+    city: string;
+    province: string;
+    postalCode: string;
+  };
+  parkingDescription?: string;
+  isCondo: boolean;
+  
+  // Section 3: Contact Information
+  landlordNoticeAddress: string;
+  allowEmailNotices: boolean;
+  landlordEmail?: string;
+  emergencyContactPhone: string;
+  
+  // Section 4: Term
+  tenancyStartDate: string; // ISO date
+  tenancyEndDate?: string; // ISO date (for fixed term)
+  tenancyType: 'fixed' | 'month_to_month';
+  paymentFrequency: 'monthly' | 'weekly' | 'daily';
+  
+  // Section 5: Rent
+  rentPaymentDay: number; // Day of month (1-31)
+  baseRent: number;
+  parkingRent?: number;
+  otherServicesRent?: number;
+  otherServicesDescription?: string;
+  rentPayableTo: string;
+  paymentMethod: 'etransfer' | 'cheque' | 'cash' | 'other';
+  chequeBounceCharge?: number;
+  partialRentAmount?: number;
+  partialRentFromDate?: string;
+  partialRentToDate?: string;
+  
+  // Section 6: Services and Utilities
+  utilities?: {
+    electricity: 'landlord' | 'tenant';
+    heat: 'landlord' | 'tenant';
+    water: 'landlord' | 'tenant';
+    gas?: boolean;
+    airConditioning?: boolean;
+    additionalStorage?: boolean;
+    laundry?: 'none' | 'included' | 'payPerUse';
+    guestParking?: 'none' | 'included' | 'payPerUse';
+  };
+  servicesDescription?: string;
+  utilitiesDescription?: string;
+  
+  // Section 7: Rent Discounts
+  hasRentDiscount?: boolean;
+  rentDiscountDescription?: string;
+  
+  // Section 8: Rent Deposit
+  requiresRentDeposit?: boolean;
+  rentDepositAmount?: number;
+  
+  // Section 9: Key Deposit
+  requiresKeyDeposit?: boolean;
+  keyDepositAmount?: number;
+  keyDepositDescription?: string;
+  
+  // Section 10: Smoking
+  smokingRules?: 'none' | 'prohibited' | 'allowed' | 'designated';
+  smokingRulesDescription?: string;
+  
+  // Section 11: Tenant's Insurance
+  requiresTenantInsurance?: boolean;
+  
+  // Section 12-15: Additional Terms
+  additionalTerms?: string;
+  specialConditions?: string;
+  
+  // Section 16-17: Signatures
+  signatureDate?: string;
+}
+
+// Lease document metadata
+export interface DbLeaseDocument {
+  id: string;
+  lease_id: string;
+  file_url: string;
+  storage_key: string;
+  filename: string;
+  mime_type: string;
+  file_size: number;
+  version: number;
+  is_current: boolean;
+  uploaded_by: string;
+  created_at: string;
+}
+
+// Main Lease entity
+export interface DbLease {
+  id: string;
+  user_id: string; // Landlord/PM who created
+  property_id: string;
+  unit_id?: string; // Optional - for multi-unit properties
+  tenant_id?: string; // Tenant assigned to this lease
+  application_id?: string; // Link to application if created from approved application
+  
+  status: LeaseStatus;
+  
+  // Ontario lease form data (stored as JSONB)
+  form_data?: OntarioLeaseFormData;
+  
+  // Document metadata
+  document_url?: string;
+  document_storage_key?: string;
+  
+  // Dates
+  effective_date?: string;
+  expiry_date?: string;
+  signed_date?: string;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+// Fetch all leases for a user
+export async function fetchLeases(userId: string): Promise<DbLease[]> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (error.code === 'PGRST205') {
+        console.warn('⚠️ leases table not found. Using local data.');
+        return [];
+      }
+      console.error('Error fetching leases:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching leases:', error);
+    return [];
+  }
+}
+
+// Fetch leases by property
+export async function fetchLeasesByProperty(propertyId: string): Promise<DbLease[]> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching leases by property:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching leases by property:', error);
+    return [];
+  }
+}
+
+// Fetch leases by tenant
+export async function fetchLeasesByTenant(tenantId: string): Promise<DbLease[]> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching leases by tenant:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching leases by tenant:', error);
+    return [];
+  }
+}
+
+// Fetch a single lease by ID
+export async function fetchLeaseById(leaseId: string): Promise<DbLease | null> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .select('*')
+      .eq('id', leaseId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching lease:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error fetching lease:', error);
+    return null;
+  }
+}
+
+// Create a new lease (draft)
+export async function createLease(lease: Omit<DbLease, 'id' | 'created_at' | 'updated_at'>): Promise<DbLease | null> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .insert({
+        ...lease,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating lease:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error creating lease:', error);
+    return null;
+  }
+}
+
+// Update a lease
+export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>): Promise<DbLease | null> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaseId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating lease:', error);
+      return null;
+    }
+
+    // Auto-update tenant status based on lease status
+    if (data && updates.status && data.tenant_id) {
+      const tenantStatus = ['active', 'signed'].includes(updates.status) ? 'active' : 'inactive';
+      
+      console.log(`🔄 Auto-updating tenant status to '${tenantStatus}' based on lease status: ${updates.status}`);
+      
+      // Update tenant status in tenants table
+      await supabase
+        .from('tenants')
+        .update({ 
+          status: tenantStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', data.tenant_id);
+      
+      // Update tenant_property_links status
+      await supabase
+        .from('tenant_property_links')
+        .update({ 
+          status: tenantStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('tenant_id', data.tenant_id)
+        .eq('property_id', data.property_id);
+      
+      console.log(`✅ Tenant status updated to: ${tenantStatus}`);
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error updating lease:', error);
+    return null;
+  }
+}
+
+// Delete a lease
+export async function deleteLeaseFromDb(leaseId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('leases')
+      .delete()
+      .eq('id', leaseId);
+
+    if (error) {
+      console.error('Error deleting lease:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting lease:', error);
+    return false;
+  }
+}
+
+// Upload lease document (PDF)
+export async function uploadLeaseDocument(
+  uri: string,
+  leaseId: string,
+  userId: string
+): Promise<UploadResult> {
+  try {
+    const bucket = 'lease-documents';
+    const timestamp = Date.now();
+    const fileName = `leases/${userId}/${leaseId}/${timestamp}-lease.pdf`;
+
+    // For web, fetch the blob
+    if (Platform.OS === 'web') {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, blob, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
+
+      if (error) {
+        console.error('Error uploading lease document:', error);
+        return { success: false, error: error.message };
+      }
+
+      const { data: urlData } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(data.path);
+
+      return { success: true, url: urlData.publicUrl };
+    }
+
+    // For native, read as base64
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        resolve(dataUrl.split(',')[1]);
+      };
+      reader.readAsDataURL(blob);
+    });
+
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(fileName, bytes, {
+        contentType: 'application/pdf',
+        upsert: true,
+      });
+
+    if (error) {
+      console.error('Error uploading lease document:', error);
+      return { success: false, error: error.message };
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(bucket)
+      .getPublicUrl(data.path);
+
+    return { success: true, url: urlData.publicUrl };
+  } catch (error) {
+    console.error('Error uploading lease document:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Upload failed' 
+    };
+  }
+}
+
+// Send lease to tenant (update status and potentially trigger notification)
+export async function sendLeaseToTenant(leaseId: string, tenantId: string): Promise<DbLease | null> {
+  try {
+    const { data, error } = await supabase
+      .from('leases')
+      .update({
+        status: 'sent',
+        tenant_id: tenantId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaseId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error sending lease to tenant:', error);
+      return null;
+    }
+
+    // TODO: Trigger notification to tenant (in-app, push, email)
+    // This would typically be handled by a Supabase Edge Function or backend service
+
+    return data;
+  } catch (error) {
+    console.error('Error sending lease to tenant:', error);
+    return null;
+  }
+}
+
+// Fetch lease documents for a lease
+export async function fetchLeaseDocuments(leaseId: string): Promise<DbLeaseDocument[]> {
+  try {
+    const { data, error } = await supabase
+      .from('lease_documents')
+      .select('*')
+      .eq('lease_id', leaseId)
+      .order('version', { ascending: false });
+
+    if (error) {
+      if (error.code === 'PGRST205') {
+        return [];
+      }
+      console.error('Error fetching lease documents:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching lease documents:', error);
+    return [];
+  }
+}
+
+// =====================================================
+// TENANT-PROPERTY RELATIONSHIP & TRANSACTION ANALYTICS
+// =====================================================
+
+// Interface for tenant with associated property/lease data
+export interface TenantPropertyAssociation {
+  tenantId: string;
+  tenantName?: string;
+  tenantEmail?: string;
+  propertyId: string;
+  propertyAddress?: string;
+  unitId?: string;
+  unitName?: string;
+  subunitId?: string;
+  subunitName?: string;
+  leaseId?: string;
+  leaseStatus?: LeaseStatus;
+  leaseStartDate?: string;
+  leaseEndDate?: string;
+  totalTransactions: number;
+  totalRentPaid: number;
+  pendingAmount: number;
+  overdueAmount: number;
+  lastPaymentDate?: string;
+}
+
+/**
+ * Get tenant-property association for a specific property/unit/subunit
+ * Looks up which tenant rented this space and their transaction history
+ * NOTE: Requires tenant_id column in transactions table (see ADD_TENANT_ID_MIGRATION.sql)
+ */
+export async function getTenantPropertyAssociation(
+  propertyId: string,
+  unitId?: string,
+  subunitId?: string
+): Promise<TenantPropertyAssociation | null> {
+  try {
+    // Find active lease for this property/unit/subunit
+    let leaseQuery = supabase
+      .from('leases')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('status', 'signed')
+      .gte('expiry_date', new Date().toISOString());
+
+    if (unitId) {
+      leaseQuery = leaseQuery.eq('unit_id', unitId);
+    }
+
+    const { data: leases, error: leaseError } = await leaseQuery;
+
+    if (leaseError || !leases || leases.length === 0) {
+      if (leaseError?.code === '42703') {
+        console.warn('⚠️ Column not found in leases table. Run ADD_TENANT_ID_MIGRATION.sql');
+      }
+      return null;
+    }
+
+    const lease = leases[0];
+    const tenantId = lease.tenant_id;
+
+    if (!tenantId) {
+      return null;
+    }
+
+    // Get tenant details
+    const tenant = await fetchTenantById(tenantId);
+    const property = await fetchPropertyById(propertyId);
+    
+    let unit = null;
+    if (unitId) {
+      unit = await supabase
+        .from('units')
+        .select('*')
+        .eq('id', unitId)
+        .single()
+        .then(res => res.data || null);
+    }
+
+    // Get all transactions for this tenant
+    const transactions = await fetchTenantTransactions(tenantId);
+    
+    // Filter for this property and unit if specified
+    const relevantTransactions = transactions.filter(t => 
+      t.property_id === propertyId && 
+      (!unitId || t.unit_id === unitId) &&
+      (!subunitId || t.subunit_id === subunitId)
+    );
+
+    const totalRentPaid = relevantTransactions
+      .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const pendingAmount = relevantTransactions
+      .filter(t => t.type === 'income' && t.status === 'pending')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const overdueAmount = relevantTransactions
+      .filter(t => t.type === 'income' && t.status === 'overdue')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const lastPayment = relevantTransactions
+      .filter(t => t.status === 'paid')
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+    return {
+      tenantId,
+      tenantName: tenant ? `${tenant.first_name} ${tenant.last_name}` : undefined,
+      tenantEmail: tenant?.email,
+      propertyId,
+      propertyAddress: property ? `${property.address1}, ${property.city}` : undefined,
+      unitId,
+      unitName: unit?.name,
+      subunitId,
+      leaseId: lease.id,
+      leaseStatus: lease.status as LeaseStatus,
+      leaseStartDate: lease.effective_date,
+      leaseEndDate: lease.expiry_date,
+      totalTransactions: relevantTransactions.length,
+      totalRentPaid,
+      pendingAmount,
+      overdueAmount,
+      lastPaymentDate: lastPayment?.date,
+    };
+  } catch (error) {
+    console.error('Error getting tenant-property association:', error);
+    return null;
+  }
+}
+
+/**
+ * Update tenant profile with latest transaction data for a property
+ * Called when a new transaction is added for a tenant
+ */
+export async function updateTenantProfileWithTransaction(
+  tenantId: string,
+  propertyId: string,
+  unitId?: string,
+  subunitId?: string
+): Promise<DbTenant | null> {
+  try {
+    // Get the tenant-property association data
+    const association = await getTenantPropertyAssociation(propertyId, unitId, subunitId);
+    
+    if (!association) {
+      return null;
+    }
+
+    // Update tenant profile with the latest data
+    const updatedTenant = await updateTenantInDb(tenantId, {
+      property_id: propertyId,
+      unit_id: unitId,
+      unit_name: association.unitName,
+      status: association.leaseStatus === 'signed' ? 'active' : 'inactive',
+      rent_amount: association.totalRentPaid, // Store total paid so far
+    });
+
+    return updatedTenant;
+  } catch (error) {
+    console.error('Error updating tenant profile with transaction:', error);
+    return null;
+  }
+}
+
+/**
+ * Get time-series transaction data for accounting graphs
+ * Returns aggregated data grouped by date and category
+ */
+export interface TimeSeriesTransactionData {
+  date: string;
+  category: 'rent' | 'garage' | 'parking' | 'utility' | 'maintenance' | 'other' | 'total';
+  income: number;
+  expense: number;
+  netCashFlow: number;
+}
+
+export async function getTimeSeriesTransactionData(
+  userId: string,
+  startDate: string,
+  endDate: string,
+  groupBy: 'day' | 'week' | 'month' = 'day'
+): Promise<TimeSeriesTransactionData[]> {
+  try {
+    // Fetch all transactions in the date range
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .eq('status', 'paid'); // Only count paid transactions
+
+    if (error) {
+      console.error('Error fetching time series transactions:', error);
+      return [];
+    }
+
+    const transactions = data || [];
+
+    // Group transactions by date and category
+    const groupedData = new Map<string, Map<string, { income: number; expense: number }>>();
+
+    transactions.forEach(t => {
+      // Determine the group key based on groupBy parameter
+      const date = new Date(t.date);
+      let groupKey = '';
+
+      if (groupBy === 'day') {
+        groupKey = t.date.split('T')[0]; // YYYY-MM-DD
+      } else if (groupBy === 'week') {
+        // Get start of week (Monday)
+        const firstDay = new Date(date);
+        const day = firstDay.getDay();
+        const diff = firstDay.getDate() - day + (day === 0 ? -6 : 1);
+        const weekStart = new Date(firstDay.setDate(diff));
+        groupKey = weekStart.toISOString().split('T')[0];
+      } else if (groupBy === 'month') {
+        groupKey = t.date.substring(0, 7); // YYYY-MM
+      }
+
+      // Initialize category data if needed
+      if (!groupedData.has(groupKey)) {
+        groupedData.set(groupKey, new Map());
+      }
+
+      const categoryMap = groupedData.get(groupKey)!;
+      const category = t.category || 'other';
+
+      if (!categoryMap.has(category)) {
+        categoryMap.set(category, { income: 0, expense: 0 });
+      }
+
+      const amounts = categoryMap.get(category)!;
+      if (t.type === 'income') {
+        amounts.income += t.amount;
+      } else {
+        amounts.expense += t.amount;
+      }
+
+      // Also add to 'total' category
+      if (!categoryMap.has('total')) {
+        categoryMap.set('total', { income: 0, expense: 0 });
+      }
+
+      const totals = categoryMap.get('total')!;
+      if (t.type === 'income') {
+        totals.income += t.amount;
+      } else {
+        totals.expense += t.amount;
+      }
+    });
+
+    // Convert to array and sort by date
+    const result: TimeSeriesTransactionData[] = [];
+
+    groupedData.forEach((categoryMap, date) => {
+      categoryMap.forEach((amounts, category) => {
+        result.push({
+          date,
+          category: category as any,
+          income: amounts.income,
+          expense: amounts.expense,
+          netCashFlow: amounts.income - amounts.expense,
+        });
+      });
+    });
+
+    return result.sort((a, b) => a.date.localeCompare(b.date));
+  } catch (error) {
+    console.error('Error getting time series transaction data:', error);
+    return [];
+  }
+}
+
+/**
+ * Get transaction summary by category for pie/donut charts
+ */
+export interface TransactionCategorySummary {
+  category: 'rent' | 'garage' | 'parking' | 'utility' | 'maintenance' | 'other';
+  type: 'income' | 'expense';
+  amount: number;
+  percentage: number;
+  transactionCount: number;
+}
+
+export async function getTransactionCategorySummary(
+  userId: string,
+  startDate: string,
+  endDate: string,
+  type?: 'income' | 'expense'
+): Promise<TransactionCategorySummary[]> {
+  try {
+    // Fetch transactions
+    let query = supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'paid')
+      .gte('date', startDate)
+      .lte('date', endDate);
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error fetching category summary:', error);
+      return [];
+    }
+
+    const transactions = data || [];
+
+    // Group by category and type
+    const categoryMap = new Map<string, { income: number; expense: number; count: number }>();
+
+    transactions.forEach(t => {
+      const category = t.category || 'other';
+      const key = `${category}`;
+
+      if (!categoryMap.has(key)) {
+        categoryMap.set(key, { income: 0, expense: 0, count: 0 });
+      }
+
+      const existing = categoryMap.get(key)!;
+      if (t.type === 'income') {
+        existing.income += t.amount;
+      } else {
+        existing.expense += t.amount;
+      }
+      existing.count += 1;
+    });
+
+    // Calculate totals for percentage
+    const incomeTotals = new Map<string, number>();
+    const expenseTotals = new Map<string, number>();
+    const counts = new Map<string, number>();
+
+    categoryMap.forEach((data, category) => {
+      incomeTotals.set(category, data.income);
+      expenseTotals.set(category, data.expense);
+      counts.set(category, data.count);
+    });
+
+    const totalIncome = Array.from(incomeTotals.values()).reduce((sum, v) => sum + v, 0);
+    const totalExpense = Array.from(expenseTotals.values()).reduce((sum, v) => sum + v, 0);
+
+    // Build result
+    const result: TransactionCategorySummary[] = [];
+
+    categoryMap.forEach((data, category) => {
+      if (data.income > 0) {
+        result.push({
+          category: category as any,
+          type: 'income',
+          amount: data.income,
+          percentage: totalIncome > 0 ? Math.round((data.income / totalIncome) * 100) : 0,
+          transactionCount: counts.get(category) || 0,
+        });
+      }
+
+      if (data.expense > 0) {
+        result.push({
+          category: category as any,
+          type: 'expense',
+          amount: data.expense,
+          percentage: totalExpense > 0 ? Math.round((data.expense / totalExpense) * 100) : 0,
+          transactionCount: counts.get(category) || 0,
+        });
+      }
+    });
+
+    return result;
+  } catch (error) {
+    console.error('Error getting category summary:', error);
+    return [];
+  }
+}
+
+// Fetch tenant notifications (for announcements section)
+export async function fetchTenantNotifications(userId: string) {
+  try {
+    console.log('📡 Fetching notifications for user:', userId);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('❌ Error fetching notifications:', error);
+      return [];
+    }
+
+    console.log('✅ Notifications fetched:', data?.length || 0);
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error fetching tenant notifications:', error);
+    return [];
+  }
+}
+
+// Fetch landlord notifications (same as tenant but for clarity)
+export async function fetchLandlordNotifications(userId: string) {
+  try {
+    console.log('📡 Fetching landlord notifications for user:', userId);
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error('❌ Error fetching notifications:', error);
+      return [];
+    }
+
+    console.log('✅ Landlord notifications fetched:', data?.length || 0);
+    return data || [];
+  } catch (error) {
+    console.error('❌ Error fetching landlord notifications:', error);
+    return [];
+  }
+}
+
+// Mark a single notification as read
+export async function markNotificationAsRead(notificationId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', notificationId);
+
+    if (error) {
+      console.error('Error marking notification as read:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    return false;
+  }
+}
+
+// Mark all notifications as read for a user
+export async function markAllNotificationsAsRead(userId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      console.error('Error marking all notifications as read:', error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error marking all notifications as read:', error);
+    return false;
+  }
+}
+
+// Get unread notification count
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  try {
+    const { count, error } = await supabase
+      .from('notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+
+    if (error) {
+      console.error('Error getting unread count:', error);
+      return 0;
+    }
+
+    return count || 0;
+  } catch (error) {
+    console.error('Error getting unread count:', error);
+    return 0;
+  }
+}
+
+
+// Fetch pending invites for tenant (to auto-select property when starting application)
+export async function fetchPendingInvites(userId: string) {
+  try {
+    // Get user's email first
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .single();
+
+    const userEmail = profile?.email;
+
+    // Fetch pending invites from invites table (has unit_id and sub_unit_id columns)
+    const { data: invites, error: invitesError } = await supabase
+      .from('invites')
+      .select('*')
+      .or(`tenant_id.eq.${userId}${userEmail ? `,tenant_email.eq.${userEmail}` : ''}`)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (invitesError) {
+      console.error('Error fetching invites:', invitesError);
+      // Fallback to notification-based approach
+      return await fetchPendingInvitesFromNotifications(userId);
+    }
+
+    if (!invites || invites.length === 0) {
+      return [];
+    }
+
+    // Get property details for each invite
+    const invitesWithDetails = await Promise.all(
+      invites.map(async (invite) => {
+        // Fetch property details
+        const { data: property, error: propError } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('id', invite.property_id)
+          .single();
+
+        if (propError || !property) {
+          return null;
+        }
+
+        // Fetch unit details if unit_id exists in invite
+        let unit = null;
+        if (invite.unit_id) {
+          const { data: unitData } = await supabase
+            .from('units')
+            .select('*')
+            .eq('id', invite.unit_id)
+            .single();
+          unit = unitData;
+        }
+
+        // Fetch subunit details if sub_unit_id exists in invite
+        let subUnit = null;
+        if (invite.sub_unit_id) {
+          const { data: subUnitData } = await supabase
+            .from('sub_units')
+            .select('*')
+            .eq('id', invite.sub_unit_id)
+            .single();
+          subUnit = subUnitData;
+        }
+
+        return {
+          id: invite.id,
+          property,
+          unit,
+          subUnit,
+          inviteData: {
+            propertyId: invite.property_id,
+            unitId: invite.unit_id,
+            subUnitId: invite.sub_unit_id,
+          },
+        };
+      })
+    );
+
+    return invitesWithDetails.filter(Boolean);
+  } catch (error) {
+    console.error('Error fetching pending invites:', error);
+    return [];
+  }
+}
+
+// Fallback: Fetch from notifications if invites table query fails
+async function fetchPendingInvitesFromNotifications(userId: string) {
+  try {
+    const { data: notifications, error: notifError } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'invite')
+      .eq('is_read', false)
+      .order('created_at', { ascending: false });
+
+    if (notifError || !notifications || notifications.length === 0) {
+      return [];
+    }
+
+    const invitesWithDetails = await Promise.all(
+      notifications.map(async (notif) => {
+        const data = notif.data as { propertyId?: string; unitId?: string; subUnitId?: string };
+        
+        if (!data.propertyId) {
+          return null;
+        }
+
+        const { data: property, error: propError } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('id', data.propertyId)
+          .single();
+
+        if (propError || !property) {
+          return null;
+        }
+
+        let unit = null;
+        if (data.unitId) {
+          const { data: unitData } = await supabase
+            .from('units')
+            .select('*')
+            .eq('id', data.unitId)
+            .single();
+          unit = unitData;
+        }
+
+        let subUnit = null;
+        if (data.subUnitId) {
+          const { data: subUnitData } = await supabase
+            .from('sub_units')
+            .select('*')
+            .eq('id', data.subUnitId)
+            .single();
+          subUnit = subUnitData;
+        }
+
+        return {
+          id: notif.id,
+          property,
+          unit,
+          subUnit,
+          notificationData: data,
+        };
+      })
+    );
+
+    return invitesWithDetails.filter(Boolean);
+  } catch (error) {
+    console.error('Error fetching from notifications:', error);
+    return [];
+  }
+}
+
+// Submit application to database
+export async function submitApplication(params: {
+  userId: string;
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone?: string;
+  formData: any;
+  inviteId?: string;
+}) {
+  try {
+    console.log('🗄️ submitApplication called with params:', {
+      userId: params.userId,
+      propertyId: params.propertyId,
+      unitId: params.unitId,
+      subUnitId: params.subUnitId,
+      unitIdType: typeof params.unitId,
+      subUnitIdType: typeof params.subUnitId,
+      hasUnitId: !!params.unitId,
+      hasSubUnitId: !!params.subUnitId,
+      inviteId: params.inviteId,
+    });
+
+    // First, get the property to find the landlord
+    const { data: property, error: propError } = await supabase
+      .from('properties')
+      .select('user_id, address1, city')
+      .eq('id', params.propertyId)
+      .single();
+
+    if (propError) {
+      console.error('Error fetching property:', propError);
+      return { success: false, error: 'Property not found' };
+    }
+
+    const landlordId = property.user_id;
+    const propertyAddress = `${property.address1}, ${property.city}`;
+
+    console.log('🗄️ About to insert application with:', {
+      unit_id: params.unitId || null,
+      sub_unit_id: params.subUnitId || null,
+      willBeNull: !params.unitId,
+    });
+
+    // Insert the application
+    const { data, error } = await supabase
+      .from('applications')
+      .insert({
+        user_id: params.userId,
+        property_id: params.propertyId,
+        unit_id: params.unitId || null,
+        sub_unit_id: params.subUnitId || null,
+        invite_id: params.inviteId || null,
+        applicant_name: params.applicantName,
+        applicant_email: params.applicantEmail,
+        applicant_phone: params.applicantPhone || null,
+        status: 'submitted',
+        form_data: params.formData,
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error submitting application:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('✅ Application inserted successfully:', {
+      id: data.id,
+      unit_id: data.unit_id,
+      sub_unit_id: data.sub_unit_id,
+    });
+
+    // Update applicant record status to 'applied'
+    if (params.inviteId) {
+      await supabase
+        .from('applicants')
+        .update({ 
+          status: 'applied',
+          application_id: data.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('invite_id', params.inviteId)
+        .eq('email', params.applicantEmail);
+    }
+
+    // Send notification to landlord
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: landlordId,
+          type: 'application',
+          title: 'New Application Received',
+          message: `${params.applicantName} has submitted an application for ${propertyAddress}`,
+          data: {
+            applicationId: data.id,
+            applicantName: params.applicantName,
+            applicantEmail: params.applicantEmail,
+            propertyId: params.propertyId,
+            propertyAddress: propertyAddress,
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Notification sent to landlord:', landlordId);
+    } catch (notifError) {
+      console.error('Error sending notification to landlord:', notifError);
+      // Don't fail the application submission if notification fails
+    }
+
+    console.log('✅ Application submitted successfully:', data.id);
+    return { success: true, applicationId: data.id };
+  } catch (error) {
+    console.error('Error submitting application:', error);
+    return { success: false, error: 'Failed to submit application' };
+  }
+}
+
+// Fetch applications for landlord
+export async function fetchLandlordApplications(landlordId: string) {
+  try {
+    // First, get all properties for this landlord
+    const { data: properties, error: propError } = await supabase
+      .from('properties')
+      .select('id')
+      .eq('user_id', landlordId);
+
+    if (propError) {
+      console.error('Error fetching properties:', propError);
+      return [];
+    }
+
+    if (!properties || properties.length === 0) {
+      return [];
+    }
+
+    const propertyIds = properties.map(p => p.id);
+
+    // Get applications for those properties
+    // Note: Applications are deleted when converted to tenant, so no filtering needed
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .in('property_id', propertyIds)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching applications:', error);
+      return [];
+    }
+
+    console.log('📋 Total applications fetched:', data?.length || 0);
+    if (data && data.length > 0) {
+      console.log('📋 Application IDs:', data.map(a => ({ id: a.id, email: a.applicant_email, name: a.applicant_name })));
+    }
+
+    // Fetch property details for each application
+    const applicationsWithAddress = await Promise.all(
+      (data || []).map(async (app) => {
+        const { data: property } = await supabase
+          .from('properties')
+          .select('address1, address2, city, state, zip_code')
+          .eq('id', app.property_id)
+          .single();
+
+        const propertyAddress = property
+          ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+              .filter(Boolean)
+              .join(', ')
+          : 'Unknown Property';
+
+        return {
+          ...app,
+          property_address: propertyAddress,
+        };
+      })
+    );
+
+    return applicationsWithAddress;
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    return [];
+  }
+}
+
+// Fetch applications by property
+export async function fetchApplicationsByProperty(propertyId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching applications:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching applications:', error);
+    return [];
+  }
+}
+
+// Approve application
+export async function approveApplication(applicationId: string, shouldAddTenant: 'now' | 'later') {
+  try {
+    console.log('✅ Approving application:', applicationId, 'Add tenant:', shouldAddTenant);
+
+    // Update application status
+    const { data: application, error: updateError } = await supabase
+      .from('applications')
+      .update({ 
+        status: 'approved',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', applicationId)
+      .select('*, property_id')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating application:', updateError);
+      return { success: false, error: 'Failed to approve application' };
+    }
+
+    // Get property details for notification
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', application.property_id)
+      .single();
+
+    const propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Send notification to tenant (applicant)
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: application.applicant_id,
+          type: 'application_approved',
+          title: 'Application Approved! 🎉',
+          message: `Your application for ${propertyAddress} has been approved!`,
+          data: {
+            applicationId: application.id,
+            propertyId: application.property_id,
+            propertyAddress: propertyAddress,
+            status: 'approved'
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Approval notification sent to applicant:', application.applicant_id);
+    } catch (notifError) {
+      console.error('Error sending approval notification:', notifError);
+    }
+
+    return { 
+      success: true, 
+      application,
+      shouldAddTenant 
+    };
+  } catch (error) {
+    console.error('Error approving application:', error);
+    return { success: false, error: 'Failed to approve application' };
+  }
+}
+
+// Reject application
+export async function rejectApplication(applicationId: string, reason?: string) {
+  try {
+    console.log('❌ Rejecting application:', applicationId);
+
+    // Update application status
+    const { data: application, error: updateError } = await supabase
+      .from('applications')
+      .update({ 
+        status: 'rejected',
+        rejection_reason: reason,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', applicationId)
+      .select('*, property_id')
+      .single();
+
+    if (updateError) {
+      console.error('Error updating application:', updateError);
+      return { success: false, error: 'Failed to reject application' };
+    }
+
+    // Get property details for notification
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', application.property_id)
+      .single();
+
+    const propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Send notification to tenant (applicant)
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          user_id: application.applicant_id,
+          type: 'application_rejected',
+          title: 'Application Update',
+          message: `Your application for ${propertyAddress} has been reviewed.`,
+          data: {
+            applicationId: application.id,
+            propertyId: application.property_id,
+            propertyAddress: propertyAddress,
+            status: 'rejected',
+            reason: reason
+          },
+          created_at: new Date().toISOString(),
+        });
+
+      console.log('✅ Rejection notification sent to applicant:', application.applicant_id);
+    } catch (notifError) {
+      console.error('Error sending rejection notification:', notifError);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error rejecting application:', error);
+    return { success: false, error: 'Failed to reject application' };
+  }
+}
+
+// Get application by ID
+export async function getApplicationById(applicationId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('id', applicationId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching application:', error);
+      return null;
+    }
+
+    // Get property details
+    const { data: property } = await supabase
+      .from('properties')
+      .select('address1, address2, city, state, zip_code')
+      .eq('id', data.property_id)
+      .single();
+
+    let propertyAddress = property
+      ? [property.address1, property.address2, property.city, property.state, property.zip_code]
+          .filter(Boolean)
+          .join(', ')
+      : 'Unknown Property';
+
+    // Add unit info if available
+    if (data.unit_id) {
+      const { data: unit } = await supabase
+        .from('units')
+        .select('name')
+        .eq('id', data.unit_id)
+        .single();
+      
+      if (unit?.name) {
+        propertyAddress += ` - Unit ${unit.name}`;
+      }
+    }
+
+    // Add sub-unit (room) info if available
+    if (data.sub_unit_id) {
+      const { data: subUnit } = await supabase
+        .from('sub_units')
+        .select('name')
+        .eq('id', data.sub_unit_id)
+        .single();
+      
+      if (subUnit?.name) {
+        propertyAddress += ` - Room ${subUnit.name}`;
+      }
+    }
+
+    return {
+      ...data,
+      property_address: propertyAddress,
+    };
+  } catch (error) {
+    console.error('Error fetching application:', error);
+    return null;
   }
 }

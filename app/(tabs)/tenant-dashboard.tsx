@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import {
+  Alert,
   FlatList,
   ListRenderItem,
   ScrollView,
@@ -9,10 +10,14 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useState } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
+import { fetchTenantNotifications } from '@/lib/supabase';
 
 interface Announcement {
   id: string;
@@ -20,6 +25,8 @@ interface Announcement {
   title: string;
   description: string;
   date: string;
+  type?: string;
+  data?: any;
 }
 
 interface QuickLink {
@@ -33,6 +40,11 @@ export default function TenantDashboardScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [tenantInfo, setTenantInfo] = useState<any>(null);
+  const [propertyInfo, setPropertyInfo] = useState<any>(null);
+  const [rentStatus, setRentStatus] = useState<any>(null);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -42,24 +54,163 @@ export default function TenantDashboardScreen() {
   const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
   const warningColor = '#F5A623';
 
-  const announcements: Announcement[] = [
-    {
-      id: '1',
-      icon: 'pool',
-      title: 'Pool Maintenance This Friday',
-      description:
-        'The community pool will be closed for scheduled maintenance this Friday, June 28th.',
-      date: 'June 24, 2024',
-    },
-    {
-      id: '2',
-      icon: 'bug',
-      title: 'Pest Control Notice',
-      description:
-        'Quarterly pest control service is scheduled for all units next Monday. Please prepare accordingly.',
-      date: 'June 22, 2024',
-    },
-  ];
+  // Load notifications when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user?.id) {
+        loadNotifications();
+        loadTenantData();
+      }
+    }, [user])
+  );
+
+  const loadTenantData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      
+      console.log('🏠 Loading tenant data for user:', user.id);
+      
+      // Get tenant profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name, email')
+        .eq('id', user.id)
+        .single();
+      
+      console.log('👤 Profile:', profile);
+      
+      // Get tenant property link
+      const { data: tenantLink, error: linkError } = await supabase
+        .from('tenant_property_links')
+        .select(`
+          *,
+          properties (
+            id,
+            name,
+            address1,
+            address2,
+            city,
+            state,
+            zip_code
+          ),
+          units (
+            id,
+            name
+          ),
+          sub_units (
+            id,
+            name
+          )
+        `)
+        .eq('tenant_id', user.id)
+        .eq('status', 'active')
+        .maybeSingle();
+      
+      console.log('🏠 Tenant link data:', tenantLink);
+      console.log('❌ Tenant link error:', linkError);
+      
+      if (tenantLink && tenantLink.properties) {
+        const prop = tenantLink.properties as any;
+        const fullAddress = [
+          prop.address1,
+          prop.address2,
+          prop.city,
+          prop.state,
+          prop.zip_code
+        ].filter(Boolean).join(', ');
+        
+        console.log('✅ Setting property info:', {
+          propertyId: tenantLink.property_id,
+          address: fullAddress,
+          unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
+        });
+        
+        setTenantInfo({
+          name: profile?.full_name || 'Tenant',
+          email: profile?.email,
+        });
+        
+        setPropertyInfo({
+          propertyId: tenantLink.property_id,
+          unitId: tenantLink.unit_id,
+          subUnitId: tenantLink.sub_unit_id,
+          name: prop.name,
+          address: fullAddress,
+          unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
+        });
+        
+        setRentStatus({
+          amount: tenantLink.rent_amount || 0,
+          dueDate: 'Monthly',
+          status: 'due_soon',
+        });
+      } else {
+        console.log('⚠️ No property link found for tenant:', user.id);
+      }
+    } catch (error) {
+      console.error('Error loading tenant data:', error);
+    }
+  };
+
+  const loadNotifications = async () => {
+    if (!user?.id) return;
+    
+    console.log('🔔 Loading notifications for user:', user.id);
+    const notifications = await fetchTenantNotifications(user.id);
+    console.log('🔔 Fetched notifications:', notifications.length);
+    
+    // Log each notification's data with detailed info
+    console.log('\n========== ALL NOTIFICATIONS ==========');
+    notifications.forEach((notif: any, index: number) => {
+      console.log(`\n📬 Notification ${index + 1}:`);
+      console.log('  ID:', notif.id);
+      console.log('  Type:', notif.type);
+      console.log('  Created:', notif.created_at);
+      console.log('  Property ID:', notif.data?.propertyId);
+      console.log('  Unit ID:', notif.data?.unitId);
+      console.log('  SubUnit ID:', notif.data?.subUnitId);
+      console.log('  Full data:', JSON.stringify(notif.data, null, 2));
+    });
+    console.log('\n========================================\n');
+    
+    // Convert notifications to announcements format with full data
+    const notificationAnnouncements: Announcement[] = notifications.map((notif: any) => ({
+      id: notif.id,
+      icon: notif.type === 'invite' ? 'email-outline' : 'bell',
+      title: notif.title,
+      description: notif.message,
+      date: new Date(notif.created_at).toLocaleDateString() + ' ' + new Date(notif.created_at).toLocaleTimeString(),
+      type: notif.type,
+      data: notif.data, // Store the full notification data
+    }));
+
+    console.log('🔔 Notification announcements:', notificationAnnouncements.length);
+
+    // Get base announcements
+    const baseAnnouncements = [
+      {
+        id: '1',
+        icon: 'pool',
+        title: 'Pool Maintenance This Friday',
+        description:
+          'The community pool will be closed for scheduled maintenance this Friday, June 28th.',
+        date: 'June 24, 2024',
+      },
+      {
+        id: '2',
+        icon: 'bug',
+        title: 'Pest Control Notice',
+        description:
+          'Quarterly pest control service is scheduled for all units next Monday. Please prepare accordingly.',
+        date: 'June 22, 2024',
+      },
+    ];
+
+    // Merge with static announcements
+    setAnnouncements([...notificationAnnouncements, ...baseAnnouncements]);
+  };
 
   const quickLinks: QuickLink[] = [
     { id: '1', icon: 'file-document-outline', label: 'View Lease', route: '/(tabs)/documents' },
@@ -68,40 +219,130 @@ export default function TenantDashboardScreen() {
     { id: '4', icon: 'gavel', label: 'Community Rules', route: '/(tabs)/explore' },
   ];
 
-  const renderAnnouncement: ListRenderItem<Announcement> = ({ item }) => (
-    <View
-      style={[
-        styles.announcementCard,
-        {
-          backgroundColor: cardBgColor,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: isDark ? 0.2 : 0.05,
-          shadowRadius: 4,
+  const renderAnnouncement: ListRenderItem<Announcement> = ({ item }) => {
+    const isInvite = item.type === 'invite';
+    const CardComponent = isInvite ? TouchableOpacity : View;
+    
+    const handleInviteClick = async () => {
+      if (!isInvite || !item.data) {
+        console.log('⚠️ Not an invite or no data:', { isInvite, hasData: !!item.data });
+        return;
+      }
+      
+      const notifData = item.data as any;
+      console.log('📨 CLICKED NOTIFICATION:');
+      console.log('  - Notification ID:', item.id);
+      console.log('  - Notification Date:', item.date);
+      console.log('  - Full data:', JSON.stringify(notifData, null, 2));
+      
+      // Extract property/unit/subunit IDs and address from notification
+      const propertyId = notifData.propertyId;
+      const propertyAddress = notifData.propertyAddress;
+      const unitId = notifData.unitId;
+      const subUnitId = notifData.subUnitId;
+      const inviteId = notifData.inviteId; // Get actual invite ID from notification data
+      
+      console.log('  - Extracted IDs:', { propertyId, unitId, subUnitId, inviteId });
+      console.log('  - Property Address from notification:', propertyAddress);
+      
+      if (!propertyId) {
+        console.error('❌ Missing propertyId in notification data');
+        Alert.alert('Error', 'This invite is missing property information.');
+        return;
+      }
+      
+      // Use address from notification if available, otherwise try to fetch
+      let fullAddress = propertyAddress;
+      
+      if (!fullAddress) {
+        console.log('⚠️ No address in notification, attempting to fetch property...');
+        const { fetchPropertyById } = await import('@/lib/supabase');
+        const property = await fetchPropertyById(propertyId);
+        
+        if (!property) {
+          console.error('❌ Property not found:', propertyId);
+          Alert.alert(
+            'Property Not Available',
+            'The property information for this invite could not be loaded. Please contact your landlord.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+        
+        fullAddress = [
+          property.address1,
+          property.address2,
+          property.city,
+          property.state,
+          property.zip_code
+        ].filter(Boolean).join(', ');
+      }
+      
+      console.log('✅ Using address:', fullAddress);
+      
+      // Navigate to tenant-lease-start with all the data
+      router.push({
+        pathname: '/tenant-lease-start',
+        params: {
+          propertyId,
+          address: fullAddress,
+          unitId: unitId || '',
+          subUnitId: subUnitId || '',
+          inviteId: inviteId || '', // Use actual invite ID from notification data
+          fromInvite: 'true',
         },
-      ]}>
-      <View
+      });
+      
+      // Mark notification as read
+      const { markNotificationAsRead } = await import('@/lib/supabase');
+      await markNotificationAsRead(item.id);
+    };
+    
+    return (
+      <CardComponent
         style={[
-          styles.announcementIconContainer,
-          { backgroundColor: `${primaryColor}33` },
-        ]}>
-        <MaterialCommunityIcons name={item.icon as any} size={24} color={primaryColor} />
-      </View>
-      <View style={styles.announcementContent}>
-        <ThemedText style={[styles.announcementTitle, { color: textPrimaryColor }]}>
-          {item.title}
-        </ThemedText>
-        <ThemedText
-          style={[styles.announcementDescription, { color: textSecondaryColor }]}>
-          {item.description}
-        </ThemedText>
-        <ThemedText
-          style={[styles.announcementDate, { color: textSecondaryColor, opacity: 0.7 }]}>
-          {item.date}
-        </ThemedText>
-      </View>
-    </View>
-  );
+          styles.announcementCard,
+          {
+            backgroundColor: cardBgColor,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: isDark ? 0.2 : 0.05,
+            shadowRadius: 4,
+          },
+        ]}
+        onPress={isInvite ? handleInviteClick : undefined}>
+        <View
+          style={[
+            styles.announcementIconContainer,
+            { backgroundColor: `${primaryColor}33` },
+          ]}>
+          <MaterialCommunityIcons name={item.icon as any} size={24} color={primaryColor} />
+        </View>
+        <View style={styles.announcementContent}>
+          <ThemedText style={[styles.announcementTitle, { color: textPrimaryColor }]}>
+            {item.title}
+          </ThemedText>
+          <ThemedText
+            style={[styles.announcementDescription, { color: textSecondaryColor }]}>
+            {item.description}
+          </ThemedText>
+          {isInvite && item.data?.propertyId && (
+            <ThemedText
+              style={[styles.announcementDate, { color: primaryColor, fontSize: 10, marginTop: 4 }]}>
+              Property ID: {item.data.propertyId.substring(0, 8)}...
+            </ThemedText>
+          )}
+          <ThemedText
+            style={[styles.announcementDate, { color: textSecondaryColor, opacity: 0.7 }]}>
+            {item.date}
+          </ThemedText>
+        </View>
+        {isInvite && (
+          <MaterialCommunityIcons name="chevron-right" size={20} color={textSecondaryColor} />
+        )}
+      </CardComponent>
+    );
+  };
 
   const renderQuickLink: ListRenderItem<QuickLink> = ({ item }) => (
     <TouchableOpacity
@@ -140,7 +381,7 @@ export default function TenantDashboardScreen() {
             </View>
             <View>
               <ThemedText style={[styles.greeting, { color: textPrimaryColor }]}>
-                Hello, John
+                Hello, {tenantInfo?.name?.split(' ')[0] || 'Tenant'}
               </ThemedText>
             </View>
           </TouchableOpacity>
@@ -173,11 +414,13 @@ export default function TenantDashboardScreen() {
               YOUR HOME
             </ThemedText>
             <ThemedText style={[styles.propertyAddress, { color: textPrimaryColor }]}>
-              123 Main Street, Apt 4B
+              {propertyInfo?.address || 'No property assigned'}
             </ThemedText>
-            <ThemedText style={[styles.propertyCity, { color: textSecondaryColor }]}>
-              Springfield, IL 62704
-            </ThemedText>
+            {propertyInfo?.unitName && (
+              <ThemedText style={[styles.propertyCity, { color: textSecondaryColor }]}>
+                Unit: {propertyInfo.unitName}
+              </ThemedText>
+            )}
           </View>
         </TouchableOpacity>
 
@@ -206,25 +449,54 @@ export default function TenantDashboardScreen() {
           </View>
           <View style={styles.rentStatusContent}>
             <ThemedText style={[styles.rentAmount, { color: textSecondaryColor }]}>
-              $1,200.00 due on July 1st
+              ${rentStatus?.amount?.toFixed(2) || '0.00'} {rentStatus?.dueDate || 'Monthly'}
             </ThemedText>
             <TouchableOpacity
               style={[styles.payButton, { backgroundColor: primaryColor }]}
-              onPress={() => router.push('/(tabs)/index')}>
+              onPress={() => router.push('/dashboard')}>
               <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* Lease Application Button */}
+        {/* Start Application Button */}
         <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
           onPress={() => router.push('/tenant-lease-start')}>
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
           </View>
-          <ThemedText style={styles.maintenanceButtonText}>Apply for a Lease</ThemedText>
+          <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
         </TouchableOpacity>
+
+        {/* Generate Lease Button - Show only if tenant has property assigned */}
+        {propertyInfo && (
+          <TouchableOpacity
+            style={[styles.maintenanceButton, { backgroundColor: '#10b981', marginBottom: 12 }]}
+            onPress={() => {
+              if (!propertyInfo) {
+                Alert.alert('No Property', 'You need to be assigned to a property first.');
+                return;
+              }
+              
+              // Navigate to lease wizard with tenant's property details
+              router.push({
+                pathname: '/lease-wizard',
+                params: {
+                  propertyId: propertyInfo.propertyId,
+                  unitId: propertyInfo.unitId,
+                  roomId: propertyInfo.subUnitId,
+                  tenantId: user?.id,
+                  tenantName: tenantInfo?.name,
+                },
+              });
+            }}>
+            <View style={styles.maintenanceButtonIcon}>
+              <MaterialCommunityIcons name="file-sign" size={20} color="#fff" />
+            </View>
+            <ThemedText style={styles.maintenanceButtonText}>Generate Lease Agreement</ThemedText>
+          </TouchableOpacity>
+        )}
 
         {/* Maintenance Request Button */}
         <TouchableOpacity
