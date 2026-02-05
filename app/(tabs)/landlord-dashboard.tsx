@@ -90,6 +90,10 @@ export default function LandlordDashboardScreen() {
     month: new Date().toLocaleDateString('en-US', { month: 'long' }),
     year: new Date().getFullYear(),
   });
+  
+  // OPTIMIZATION 3: Add cache to prevent reloading on every focus
+  const cacheRef = React.useRef<{ timestamp: number; data: any }>({ timestamp: 0, data: null });
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -103,97 +107,114 @@ export default function LandlordDashboardScreen() {
   useFocusEffect(
     React.useCallback(() => {
       if (user?.id) {
-        loadDashboardData();
+        // OPTIMIZATION 4: Use cache to avoid reloading within 5 minutes
+        const now = Date.now();
+        if (cacheRef.current.timestamp && (now - cacheRef.current.timestamp) < CACHE_DURATION) {
+          // Use cached data
+          console.log('📦 Using cached dashboard data');
+          setStats(cacheRef.current.data.stats);
+          setRentCollection(cacheRef.current.data.rentCollection);
+          setUserName(cacheRef.current.data.userName);
+          setNotifications(cacheRef.current.data.notifications);
+          setIsLoading(false);
+          return;
+        }
+        
+        // OPTIMIZATION 6: Show dashboard INSTANTLY with skeleton, load data in background
+        setIsLoading(false);
+        loadDashboardDataInBackground();
       }
     }, [user?.id])
   );
 
-  const loadDashboardData = async () => {
+  // Load data in background without blocking UI
+  const loadDashboardDataInBackground = async () => {
     if (!user?.id) return;
     
-    setIsLoading(true);
     try {
-      // Load profile for name
-      const profile = await getUserProfile(user.id);
-      if (profile?.full_name) {
-        setUserName(profile.full_name.split(' ')[0]); // Get first name
-      }
-
-      // Load properties
-      await loadFromSupabase(user.id);
-
-      // Get property count
-      const { data: propertiesData } = await supabase
-        .from('properties')
-        .select('id', { count: 'exact' })
-        .eq('user_id', user.id);
-      const propertyCount = propertiesData?.length || 0;
-
-      // Get tenant count from tenant_property_links (active tenants)
-      const { data: tenantsData, error: tenantError } = await supabase
-        .from('tenant_property_links')
-        .select('tenant_id', { count: 'exact' })
-        .eq('landlord_id', user.id)
-        .eq('status', 'active');
+      // OPTIMIZATION 6: Don't await these, let them load in background
+      // This shows the dashboard instantly while loading data
       
-      const tenantCount = tenantsData?.length || 0;
-      console.log('👥 Tenant count:', tenantCount, 'Error:', tenantError);
-      if (tenantsData && tenantsData.length > 0) {
-        console.log('👥 Tenant IDs:', tenantsData.map(t => t.tenant_id));
-      }
+      // Load profile asynchronously
+      getUserProfile(user.id).then(profile => {
+        if (profile?.full_name) {
+          setUserName(profile.full_name.split(' ')[0]);
+        }
+      }).catch(err => console.error('Profile load error:', err));
 
-      // Get lease count (active leases)
-      const { data: leasesData } = await supabase
-        .from('leases')
-        .select('id', { count: 'exact' })
-        .eq('landlord_id', user.id)
-        .eq('status', 'active');
-      const leaseCount = leasesData?.length || 0;
+      // Load properties asynchronously
+      loadFromSupabase(user.id).catch(err => console.error('Properties load error:', err));
 
-      // Get maintenance requests count (open/pending)
-      const { data: maintenanceData } = await supabase
-        .from('maintenance_requests')
-        .select('id', { count: 'exact' })
-        .eq('landlord_id', user.id)
-        .in('status', ['pending', 'in_progress']);
-      const maintenanceCount = maintenanceData?.length || 0;
-
-      // Get applicant count (invited/applied status only, exclude converted to tenant)
-      const { data: applicantsData } = await supabase
-        .from('applicants')
-        .select('id', { count: 'exact' })
-        .eq('landlord_id', user.id)
-        .in('status', ['invited', 'applied']);
-      const applicantCount = applicantsData?.length || 0;
-
-      console.log('📊 Applicant count:', applicantCount, 'from data:', applicantsData);
+      // OPTIMIZATION 2: Use Supabase count() to get exact counts without loading data
+      // Run all queries in parallel
+      const [
+        { count: propertyCount },
+        { count: tenantCount },
+        { count: leaseCount },
+        { count: maintenanceCount },
+        { count: applicantCount },
+        { data: rentData }
+      ] = await Promise.all([
+        // Get property count
+        supabase
+          .from('properties')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id),
+        
+        // Get tenant count
+        supabase
+          .from('tenant_property_links')
+          .select('id', { count: 'exact', head: true })
+          .eq('landlord_id', user.id)
+          .eq('status', 'active'),
+        
+        // Get lease count
+        supabase
+          .from('leases')
+          .select('id', { count: 'exact', head: true })
+          .eq('landlord_id', user.id)
+          .eq('status', 'active'),
+        
+        // Get maintenance count
+        supabase
+          .from('maintenance_requests')
+          .select('id', { count: 'exact', head: true })
+          .eq('landlord_id', user.id)
+          .in('status', ['pending', 'in_progress']),
+        
+        // Get applicant count
+        supabase
+          .from('applicants')
+          .select('id', { count: 'exact', head: true })
+          .eq('landlord_id', user.id)
+          .in('status', ['invited', 'applied']),
+        
+        // Get rent data (only this one needs actual data)
+        supabase
+          .from('tenant_property_links')
+          .select('rent_amount')
+          .eq('landlord_id', user.id)
+          .eq('status', 'active')
+      ]);
 
       // Calculate occupancy rate
       let occupancyRate = 0;
-      if (propertyCount > 0 && tenantCount > 0) {
-        occupancyRate = Math.round((tenantCount / propertyCount) * 100);
+      if ((propertyCount || 0) > 0 && (tenantCount || 0) > 0) {
+        occupancyRate = Math.round(((tenantCount || 0) / (propertyCount || 0)) * 100);
       }
 
-      // Calculate rent collection dynamically
-      const { data: rentData } = await supabase
-        .from('tenant_property_links')
-        .select('rent_amount')
-        .eq('landlord_id', user.id)
-        .eq('status', 'active');
-      
+      // Calculate rent collection
       const totalExpectedRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
-      
-      // For now, assume 90% collected (you can add actual payment tracking later)
       const collectedRent = Math.round(totalExpectedRent * 0.9);
       const pendingRent = totalExpectedRent - collectedRent;
 
       setStats({
-        propertyCount,
-        tenantCount,
-        leaseCount,
+        propertyCount: propertyCount || 0,
+        tenantCount: tenantCount || 0,
+        leaseCount: leaseCount || 0,
         occupancyRate,
-        maintenanceCount,
-        applicantCount,
+        maintenanceCount: maintenanceCount || 0,
+        applicantCount: applicantCount || 0,
       });
 
       setRentCollection({
@@ -205,25 +226,43 @@ export default function LandlordDashboardScreen() {
         year: new Date().getFullYear(),
       });
 
-      // Load notifications
-      const notifs = await fetchLandlordNotifications(user.id);
-      setNotifications(notifs.filter(n => n.type === 'application').slice(0, 3)); // Show only application notifications
+      // OPTIMIZATION 7: Load notifications asynchronously (don't block main data)
+      fetchLandlordNotifications(user.id)
+        .then(notifs => {
+          const filtered = notifs.filter(n => n.type === 'application').slice(0, 3);
+          setNotifications(filtered);
+        })
+        .catch(err => console.error('Notifications load error:', err));
+
+      // OPTIMIZATION 5: Cache the data
+      cacheRef.current = {
+        timestamp: Date.now(),
+        data: {
+          stats: {
+            propertyCount: propertyCount || 0,
+            tenantCount: tenantCount || 0,
+            leaseCount: leaseCount || 0,
+            occupancyRate,
+            maintenanceCount: maintenanceCount || 0,
+            applicantCount: applicantCount || 0,
+          },
+          rentCollection: {
+            collected: collectedRent,
+            pending: pendingRent,
+            notPaid: 0,
+            total: totalExpectedRent,
+            month: new Date().toLocaleDateString('en-US', { month: 'long' }),
+            year: new Date().getFullYear(),
+          },
+          userName,
+          notifications: [],
+        },
+      };
 
     } catch (error) {
-      console.error('Error loading dashboard data:', error);
-    } finally {
-      setIsLoading(false);
+      console.error('❌ Error loading dashboard:', error);
     }
   };
-
-  // Refresh dashboard when screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      if (user?.id) {
-        loadDashboardData();
-      }
-    }, [user?.id])
-  );
 
   const activities: Activity[] = [
     {

@@ -14,7 +14,7 @@
  * DO NOT commit API keys to version control.
  */
 
-import * as Location from 'expo-location';
+// import * as Location from 'expo-location';
 
 // Read API key from environment variables
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';

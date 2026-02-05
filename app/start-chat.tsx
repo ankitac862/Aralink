@@ -1,0 +1,377 @@
+import React, { useEffect, useState } from 'react';
+import {
+  StyleSheet,
+  View,
+  TouchableOpacity,
+  FlatList,
+  ActivityIndicator,
+  SearchBase,
+  TextInput,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTenantStore } from '@/store/tenantStore';
+import { usePropertyStore } from '@/store/propertyStore';
+import messageService from '@/services/messageService';
+import { useAuthStore } from '@/store/authStore';
+
+interface TenantListItem {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  propertyId: string;
+  propertyName?: string;
+  phone?: string;
+}
+
+export default function StartChatScreen() {
+  const colorScheme = useColorScheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  const [tenants, setTenants] = useState<TenantListItem[]>([]);
+  const [filteredTenants, setFilteredTenants] = useState<TenantListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchText, setSearchText] = useState('');
+  const [messagingId, setMessagingId] = useState<string | null>(null);
+
+  const { tenants: allTenants } = useTenantStore();
+  const { getPropertyById } = usePropertyStore();
+  const { user } = useAuthStore();
+
+  const isDark = colorScheme === 'dark';
+  const bgColor = isDark ? '#101922' : '#F4F6F8';
+  const cardBgColor = isDark ? '#192734' : '#ffffff';
+  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
+  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
+  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const inputBgColor = isDark ? '#0f1620' : '#f5f5f5';
+  const primaryColor = '#4A90E2';
+
+  useEffect(() => {
+    loadTenants();
+  }, []);
+
+  useEffect(() => {
+    if (searchText.trim() === '') {
+      setFilteredTenants(tenants);
+    } else {
+      const filtered = tenants.filter((tenant) => {
+        const fullName = `${tenant.firstName} ${tenant.lastName}`.toLowerCase();
+        const search = searchText.toLowerCase();
+        return (
+          fullName.includes(search) ||
+          tenant.email.toLowerCase().includes(search) ||
+          tenant.propertyName?.toLowerCase().includes(search)
+        );
+      });
+      setFilteredTenants(filtered);
+    }
+  }, [searchText, tenants]);
+
+  const loadTenants = () => {
+    try {
+      setLoading(true);
+      const tenantList: TenantListItem[] = allTenants.map((tenant) => {
+        const property = getPropertyById(tenant.propertyId);
+        return {
+          id: tenant.id,
+          firstName: tenant.firstName,
+          lastName: tenant.lastName,
+          email: tenant.email,
+          phone: tenant.phone,
+          propertyId: tenant.propertyId,
+          propertyName: property?.name || property?.streetAddress || 'Unknown Property',
+        };
+      });
+      setTenants(tenantList);
+      setFilteredTenants(tenantList);
+    } catch (error) {
+      console.error('Error loading tenants:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStartChat = async (tenant: TenantListItem) => {
+    if (!user) {
+      return;
+    }
+
+    try {
+      setMessagingId(tenant.id);
+
+      const conversation = await messageService.getOrCreateConversation(
+        tenant.propertyId,
+        tenant.id,
+        user.id,
+        `${tenant.firstName} ${tenant.lastName}`,
+        user.name || 'You'
+      );
+
+      setMessagingId(null);
+      router.push(`/chat/${conversation.id}`);
+    } catch (error) {
+      setMessagingId(null);
+      console.error('Error starting chat:', error);
+    }
+  };
+
+  const renderTenant = ({ item }: { item: TenantListItem }) => {
+    const isLoading = messagingId === item.id;
+
+    return (
+      <TouchableOpacity
+        onPress={() => handleStartChat(item)}
+        disabled={isLoading}
+        style={[
+          styles.tenantCard,
+          { backgroundColor: cardBgColor, opacity: isLoading ? 0.6 : 1 },
+        ]}>
+        <View style={[styles.avatar, { backgroundColor: primaryColor + '20' }]}>
+          <MaterialCommunityIcons name="account" size={32} color={primaryColor} />
+        </View>
+
+        <View style={styles.tenantContent}>
+          <ThemedText style={[styles.tenantName, { color: textPrimaryColor }]}>
+            {item.firstName} {item.lastName}
+          </ThemedText>
+          <ThemedText style={[styles.tenantEmail, { color: textSecondaryColor }]}>
+            {item.email}
+          </ThemedText>
+          <ThemedText style={[styles.tenantProperty, { color: textSecondaryColor }]}>
+            {item.propertyName}
+          </ThemedText>
+        </View>
+
+        {isLoading ? (
+          <ActivityIndicator size="small" color={primaryColor} />
+        ) : (
+          <MaterialCommunityIcons
+            name="chevron-right"
+            size={24}
+            color={textSecondaryColor}
+          />
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderEmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <MaterialCommunityIcons
+        name="account-multiple-outline"
+        size={64}
+        color={textSecondaryColor}
+      />
+      <ThemedText style={[styles.emptyText, { color: textSecondaryColor }]}>
+        {searchText ? 'No tenants found' : 'No tenants available'}
+      </ThemedText>
+      {!searchText && (
+        <ThemedText style={[styles.emptySubtext, { color: textSecondaryColor }]}>
+          Add tenants to start messaging
+        </ThemedText>
+      )}
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
+        <View
+          style={[
+            styles.header,
+            {
+              paddingTop: insets.top + 12,
+              borderBottomColor: borderColor,
+            },
+          ]}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <MaterialCommunityIcons
+              name="arrow-left"
+              size={24}
+              color={textPrimaryColor}
+            />
+          </TouchableOpacity>
+          <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>
+            Start Chat
+          </ThemedText>
+          <View style={{ width: 24 }} />
+        </View>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+        </View>
+      </ThemedView>
+    );
+  }
+
+  return (
+    <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
+      {/* Header */}
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: insets.top + 12,
+            borderBottomColor: borderColor,
+            borderBottomWidth: 1,
+          },
+        ]}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <MaterialCommunityIcons
+            name="arrow-left"
+            size={24}
+            color={textPrimaryColor}
+          />
+        </TouchableOpacity>
+        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>
+          Start Chat
+        </ThemedText>
+        <View style={{ width: 24 }} />
+      </View>
+
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <MaterialCommunityIcons
+          name="magnify"
+          size={20}
+          color={textSecondaryColor}
+          style={styles.searchIcon}
+        />
+        <TextInput
+          style={[
+            styles.searchInput,
+            {
+              color: textPrimaryColor,
+              backgroundColor: inputBgColor,
+              borderColor: borderColor,
+            },
+          ]}
+          placeholder="Search tenants..."
+          placeholderTextColor={textSecondaryColor}
+          value={searchText}
+          onChangeText={setSearchText}
+        />
+        {searchText.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchText('')}>
+            <MaterialCommunityIcons
+              name="close-circle"
+              size={20}
+              color={textSecondaryColor}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Tenants List */}
+      {filteredTenants.length > 0 ? (
+        <FlatList
+          data={filteredTenants}
+          renderItem={renderTenant}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+        />
+      ) : (
+        renderEmptyState()
+      )}
+    </ThemedView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  searchIcon: {
+    marginRight: 4,
+  },
+  searchInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  listContent: {
+    padding: 12,
+  },
+  tenantCard: {
+    flexDirection: 'row',
+    padding: 12,
+    marginBottom: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tenantContent: {
+    flex: 1,
+  },
+  tenantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  tenantEmail: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  tenantProperty: {
+    fontSize: 12,
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    fontWeight: '400',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+});
