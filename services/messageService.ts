@@ -41,7 +41,7 @@ class MessageService {
 
   async getOrCreateConversation(
     propertyId: string,
-    tenantId: string,
+    tenantRecordId: string, // Tenant record ID from the tenants table
     landlordId: string,
     tenantName: string,
     landlordName: string,
@@ -49,17 +49,36 @@ class MessageService {
     managerName?: string
   ): Promise<Conversation> {
     try {
-      // Try to find existing conversation
+      console.log('🔍 getOrCreateConversation - Looking for conversation:', {
+        propertyId,
+        tenantRecordId,
+        landlordId,
+      });
+
+      // Try to find existing conversation by tenant record
       const { data: existing, error: fetchError } = await supabase
         .from('conversations')
         .select('*')
         .eq('property_id', propertyId)
-        .eq('tenant_id', tenantId)
-        .eq('landlord_id', landlordId)
-        .single();
+        .eq('tenant_record_id', tenantRecordId)
+        .eq('landlord_id', landlordId);
+      
+      console.log('🔍 Query result:', { existing, error: fetchError });
 
-      if (existing && !fetchError) {
-        return existing;
+      if (existing && !fetchError && Array.isArray(existing) && existing.length > 0) {
+        return existing[0]; // Return first matching conversation
+      }
+
+      // Get tenant's user_id if they have an account
+      let tenantUserId: string | null = null;
+      const { data: tenantRecord } = await supabase
+        .from('tenants')
+        .select('user_id')
+        .eq('id', tenantRecordId)
+        .single();
+      
+      if (tenantRecord?.user_id) {
+        tenantUserId = tenantRecord.user_id;
       }
 
       // Create new conversation
@@ -67,7 +86,8 @@ class MessageService {
         .from('conversations')
         .insert({
           property_id: propertyId,
-          tenant_id: tenantId,
+          tenant_record_id: tenantRecordId,
+          tenant_id: tenantUserId, // Will be null if tenant hasn't signed up
           landlord_id: landlordId,
           manager_id: managerId,
           tenant_name: tenantName,
