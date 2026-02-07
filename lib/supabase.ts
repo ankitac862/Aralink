@@ -1320,6 +1320,8 @@ export async function inviteTenantToProperty(params: {
   unitId?: string;
   subUnitId?: string;
   expiresInHours?: number;
+  autoActivate?: boolean; // Set to true to immediately activate the tenant (for approved applicants)
+  rentAmount?: number; // Monthly rent amount
 }): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
   try {
     const { data: sessionData } = await supabase.auth.getSession();
