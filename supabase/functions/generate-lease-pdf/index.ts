@@ -1098,12 +1098,21 @@ async function storePdf(
       };
     }
     
-    // Get public URL
-    const { data: urlData } = supabase.storage
+    // Get signed URL (valid for 1 year) - Required for private buckets
+    const { data: urlData, error: urlError } = await supabase.storage
       .from('lease-documents')
-      .getPublicUrl(storagePath);
+      .createSignedUrl(storagePath, 31536000); // 1 year in seconds
     
-    const documentUrl = urlData.publicUrl;
+    if (urlError) {
+      console.error('Error creating signed URL:', urlError);
+      return {
+        success: false,
+        code: 'SIGNED_URL_FAILED',
+        error: `Failed to create signed URL: ${urlError.message}`,
+      };
+    }
+    
+    const documentUrl = urlData.signedUrl;
     
     // Update lease record with document URL
     const { error: updateError } = await supabase

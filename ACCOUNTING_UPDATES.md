@@ -195,5 +195,5 @@ CREATE TABLE IF NOT EXISTS transactions (
 - Add recurring transaction templates
 - Add transaction categories customization
 - Add receipt photo attachment
-- Add multi-currency support
+
 `

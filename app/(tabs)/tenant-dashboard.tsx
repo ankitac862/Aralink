@@ -65,7 +65,10 @@ export default function TenantDashboardScreen() {
   );
 
   const loadTenantData = async () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      console.log('⚠️ No user ID available');
+      return;
+    }
     
     try {
       const { supabase } = await import('@/lib/supabase');
@@ -73,16 +76,28 @@ export default function TenantDashboardScreen() {
       console.log('🏠 Loading tenant data for user:', user.id);
       
       // Get tenant profile
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('full_name, email')
         .eq('id', user.id)
         .single();
       
       console.log('👤 Profile:', profile);
+      if (profileError) console.log('❌ Profile error:', profileError);
       
-      // Get tenant property link
-      const { data: tenantLink, error: linkError } = await supabase
+      // First, check if there are ANY tenant property links for this user
+      const { data: allLinks, error: allLinksError } = await supabase
+        .from('tenant_property_links')
+        .select('id, status, property_id, unit_id, sub_unit_id')
+        .eq('tenant_id', user.id);
+      
+      console.log('🔍 All tenant_property_links for user:', allLinks);
+      console.log('🔍 Count:', allLinks?.length || 0);
+      if (allLinksError) console.log('❌ All links error:', allLinksError);
+      
+      // Get tenant property link with full details
+      // Try active first, then fall back to any status
+      let { data: tenantLink, error: linkError } = await supabase
         .from('tenant_property_links')
         .select(`
           *,
@@ -106,30 +121,75 @@ export default function TenantDashboardScreen() {
         `)
         .eq('tenant_id', user.id)
         .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
       
-      console.log('🏠 Tenant link data:', tenantLink);
-      console.log('❌ Tenant link error:', linkError);
+      console.log('🏠 Active tenant link data:', tenantLink);
+      if (linkError) console.log('❌ Tenant link error:', linkError);
+      
+      // If no active link found, try to get any link (including pending_invite)
+      if (!tenantLink && allLinks && allLinks.length > 0) {
+        console.log('⚠️ No active link found, trying to get any status...');
+        const { data: anyLink, error: anyLinkError } = await supabase
+          .from('tenant_property_links')
+          .select(`
+            *,
+            properties (
+              id,
+              name,
+              address1,
+              address2,
+              city,
+              state,
+              zip_code
+            ),
+            units (
+              id,
+              name
+            ),
+            sub_units (
+              id,
+              name
+            )
+          `)
+          .eq('tenant_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        tenantLink = anyLink;
+        console.log('🏠 Any status tenant link data:', tenantLink);
+        if (anyLinkError) console.log('❌ Any status link error:', anyLinkError);
+      }
+      
+      // Set tenant info regardless of property link
+      setTenantInfo({
+        name: profile?.full_name || 'Tenant',
+        email: profile?.email,
+      });
       
       if (tenantLink && tenantLink.properties) {
         const prop = tenantLink.properties as any;
-        const fullAddress = [
+        
+        // Build address with fallback to property name
+        let displayAddress = prop.name || 'Property';
+        const addressParts = [
           prop.address1,
-          prop.address2,
           prop.city,
           prop.state,
           prop.zip_code
-        ].filter(Boolean).join(', ');
+        ].filter(Boolean);
+        
+        if (addressParts.length > 0) {
+          displayAddress = addressParts.join(', ');
+        }
         
         console.log('✅ Setting property info:', {
           propertyId: tenantLink.property_id,
-          address: fullAddress,
+          address: displayAddress,
           unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
-        });
-        
-        setTenantInfo({
-          name: profile?.full_name || 'Tenant',
-          email: profile?.email,
+          status: tenantLink.status,
         });
         
         setPropertyInfo({
@@ -137,20 +197,25 @@ export default function TenantDashboardScreen() {
           unitId: tenantLink.unit_id,
           subUnitId: tenantLink.sub_unit_id,
           name: prop.name,
-          address: fullAddress,
+          address: displayAddress,
           unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
         });
         
         setRentStatus({
           amount: tenantLink.rent_amount || 0,
           dueDate: 'Monthly',
-          status: 'due_soon',
+          status: tenantLink.status === 'active' ? 'due_soon' : 'pending',
         });
       } else {
         console.log('⚠️ No property link found for tenant:', user.id);
+        console.log('⚠️ Available links count:', allLinks?.length || 0);
+        if (allLinks && allLinks.length > 0) {
+          console.log('⚠️ But links exist! Check RLS policies or data structure');
+        }
       }
     } catch (error) {
-      console.error('Error loading tenant data:', error);
+      console.error('❌ Error loading tenant data:', error);
+      Alert.alert('Error', 'Failed to load tenant data. Please try again.');
     }
   };
 

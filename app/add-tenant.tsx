@@ -447,13 +447,27 @@ export default function AddTenantScreen() {
           }
         }
 
+        console.log('🔧 Calling inviteTenantToProperty with params:', {
+          propertyId: formData.propertyId,
+          tenantEmail: formData.email.trim(),
+          tenantName: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
+          unitId: formData.unitId || undefined,
+          subUnitId: formData.subUnitId || undefined,
+          autoActivate: true,
+          rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
+        });
+
         const inviteResult = await inviteTenantToProperty({
           propertyId: formData.propertyId,
           tenantEmail: formData.email.trim(),
           tenantName: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
           unitId: formData.unitId || undefined,
           subUnitId: formData.subUnitId || undefined,
+          autoActivate: true, // Always auto-activate when landlord manually adds tenant
+          rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
         });
+
+        console.log('🔧 inviteTenantToProperty result:', inviteResult);
 
         if (!inviteResult) {
           Alert.alert('Error', 'Failed to send invite. Please try again.');
@@ -493,10 +507,10 @@ export default function AddTenantScreen() {
         await usePropertyStore.getState().loadFromSupabase(user?.id!, true);
         console.log('🔄 Property store force refreshed after tenant addition');
 
-        // Show success message based on how tenant was notified
-        const successMessage = inviteResult.notificationQueued 
-          ? 'In-app notification sent to tenant. They can now view and apply for this property.'
-          : 'Email invitation sent to tenant. They will receive instructions to apply for this property.';
+        // Show success message - tenant is always auto-activated when added via this form
+        const successMessage = inviteResult.notificationQueued
+          ? 'Tenant has been assigned to the property. They can now view their property details in the app.'
+          : 'Tenant has been assigned to the property and will receive an email confirmation.';
         
         Alert.alert('Success', successMessage, [
           {
