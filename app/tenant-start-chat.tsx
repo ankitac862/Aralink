@@ -48,10 +48,29 @@ export default function TenantStartChatScreen() {
   const loadLandlords = async () => {
     try {
       setLoading(true);
-      if (!user?.email) return;
+      if (!user?.id) return;
 
-      // Find all properties where this tenant is assigned
-      // Then get the landlords of those properties
+      console.log('🔍 Loading landlords for tenant:', user.id, user.email);
+
+      // Method 1: Try tenant_property_links first (newer method)
+      const { data: propertyLinks, error: linksError } = await supabase
+        .from('tenant_property_links')
+        .select(`
+          property_id,
+          properties (
+            id,
+            user_id,
+            name
+          )
+        `)
+        .eq('tenant_id', user.id)
+        .eq('status', 'active');
+
+      if (linksError) {
+        console.error('Error fetching tenant_property_links:', linksError);
+      }
+
+      // Method 2: Also try tenants table (older method)
       const { data: tenantRecords, error: tenantError } = await supabase
         .from('tenants')
         .select('id, property_id')
@@ -59,24 +78,38 @@ export default function TenantStartChatScreen() {
 
       if (tenantError) {
         console.error('Error fetching tenant records:', tenantError);
+      }
+
+      // Combine property IDs from both sources
+      const propertyIds = new Set<string>();
+      
+      if (propertyLinks && propertyLinks.length > 0) {
+        console.log('✅ Found properties via tenant_property_links:', propertyLinks.length);
+        propertyLinks.forEach(link => {
+          if (link.property_id) propertyIds.add(link.property_id);
+        });
+      }
+
+      if (tenantRecords && tenantRecords.length > 0) {
+        console.log('✅ Found properties via tenants table:', tenantRecords.length);
+        tenantRecords.forEach(record => {
+          if (record.property_id) propertyIds.add(record.property_id);
+        });
+      }
+
+      if (propertyIds.size === 0) {
+        console.log('⚠️ No properties found for this tenant');
         setLoading(false);
         return;
       }
 
-      if (!tenantRecords || tenantRecords.length === 0) {
-        console.log('No tenant records found for this email');
-        setLoading(false);
-        return;
-      }
-
-      // Get unique property IDs
-      const propertyIds = [...new Set(tenantRecords.map((t) => t.property_id))];
+      console.log('📍 Total unique properties:', propertyIds.size);
 
       // Get landlords for these properties
       const { data: properties, error: propError } = await supabase
         .from('properties')
-        .select('landlord_id')
-        .in('id', propertyIds);
+        .select('id, user_id, name')
+        .in('id', Array.from(propertyIds));
 
       if (propError) {
         console.error('Error fetching properties:', propError);
@@ -84,18 +117,40 @@ export default function TenantStartChatScreen() {
         return;
       }
 
-      // Get unique landlord IDs and fetch their profiles
-      const landlordIds = [...new Set(properties?.map((p) => p.landlord_id) || [])];
+      console.log('🏠 Properties data:', properties);
+      console.log('🏠 Properties with user_id:', properties?.filter(p => p.user_id));
 
+      // Get unique landlord IDs
+      const landlordIds = [...new Set(properties?.map((p) => p.user_id).filter(Boolean) || [])];
+
+      if (landlordIds.length === 0) {
+        console.log('⚠️ No landlords found for properties - properties may not have user_id set');
+        console.log('Properties without user_id:', properties?.filter(p => !p.user_id));
+        setLoading(false);
+        return;
+      }
+
+      console.log('👤 Fetching profiles for landlords:', landlordIds.length, landlordIds);
+
+      // Fetch their profiles
       const { data: profiles, error: profileError } = await supabase
         .from('profiles')
         .select('id, email, full_name')
         .in('id', landlordIds);
 
+      console.log('📋 Profiles query result:', { profiles, profileError });
+
       if (profileError) {
-        console.error('Error fetching profiles:', profileError);
+        console.error('❌ Error fetching profiles:', profileError);
         setLoading(false);
         return;
+      }
+
+      if (!profiles || profiles.length === 0) {
+        console.error('❌ No profiles returned! This is likely an RLS issue.');
+        console.error('Tried to fetch profiles for IDs:', landlordIds);
+        console.error('Current user:', user.id);
+        console.error('Check if profiles table RLS allows tenants to read landlord profiles');
       }
 
       const landlordList = (profiles || []).map((p) => ({
@@ -104,9 +159,10 @@ export default function TenantStartChatScreen() {
         name: p.full_name || 'Landlord',
       }));
 
+      console.log('✅ Found landlords:', landlordList.length);
       setLandlords(landlordList);
     } catch (error) {
-      console.error('Error loading landlords:', error);
+      console.error('❌ Error loading landlords:', error);
     } finally {
       setLoading(false);
     }
@@ -118,23 +174,66 @@ export default function TenantStartChatScreen() {
     try {
       console.log('💬 Tenant starting chat with landlord:', {
         tenantId: user.id,
+        tenantEmail: user.email,
         landlordId: landlord.id,
       });
 
       setMessagingId(landlord.id);
 
-      // Get the first tenant record for this email to use as tenant_record_id
-      const { data: tenantRecords } = await supabase
+      // First, try to find tenant record in tenants table
+      let { data: tenantRecords } = await supabase
         .from('tenants')
         .select('id, property_id')
         .eq('email', user.email)
         .limit(1);
 
+      // If no tenant record exists, try to find via tenant_property_links
       if (!tenantRecords || tenantRecords.length === 0) {
-        throw new Error('Tenant record not found');
+        console.log('⚠️ No tenant record in tenants table, checking tenant_property_links...');
+        
+        // Get property link
+        const { data: propertyLinks } = await supabase
+          .from('tenant_property_links')
+          .select('property_id')
+          .eq('tenant_id', user.id)
+          .eq('status', 'active')
+          .limit(1);
+
+        if (!propertyLinks || propertyLinks.length === 0) {
+          throw new Error('No property assignment found');
+        }
+
+        // Create a tenant record for messaging purposes
+        const propertyLink = propertyLinks[0];
+        const { data: newTenant, error: createError } = await supabase
+          .from('tenants')
+          .insert({
+            email: user.email,
+            user_id: user.id,
+            property_id: propertyLink.property_id,
+            first_name: user.name?.split(' ')[0] || 'Tenant',
+            last_name: user.name?.split(' ').slice(1).join(' ') || '',
+            phone: '',
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('Error creating tenant record:', createError);
+          throw createError;
+        }
+
+        console.log('✅ Created tenant record for messaging:', newTenant.id);
+        tenantRecords = [newTenant];
       }
 
       const tenantRecord = tenantRecords[0];
+
+      console.log('📧 Creating conversation with:', {
+        propertyId: tenantRecord.property_id,
+        tenantRecordId: tenantRecord.id,
+        landlordId: landlord.id,
+      });
 
       const conversation = await messageService.getOrCreateConversation(
         tenantRecord.property_id,
@@ -154,7 +253,7 @@ export default function TenantStartChatScreen() {
       router.push(`/chat/${conversation.id}`);
     } catch (error) {
       setMessagingId(null);
-      console.error('Error starting chat:', error);
+      console.error('❌ Error starting chat:', error);
     }
   };
 
@@ -234,7 +333,11 @@ export default function TenantStartChatScreen() {
         },
       ]}>
       <View style={styles.header}>
-        <ThemedText style={styles.title}>Message Your Landlord</ThemedText>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
+        </TouchableOpacity>
+        <ThemedText style={[styles.title, { color: textPrimaryColor }]}>Message Your Landlord</ThemedText>
+        <View style={{ width: 24 }} />
       </View>
 
       <FlatList
@@ -254,10 +357,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    gap: 12,
+  },
+  backButton: {
+    padding: 4,
   },
   title: {
+    flex: 1,
     fontSize: 24,
     fontWeight: '600',
   },

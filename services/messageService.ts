@@ -167,10 +167,45 @@ class MessageService {
         .single();
 
       if (error) throw error;
+
+      // Send push notification asynchronously (don't wait for it)
+      if (data) {
+        this.sendPushNotification(data.id, conversationId, user.id, text).catch(err => {
+          console.error('Error sending push notification:', err);
+          // Don't throw - message was sent successfully even if notification failed
+        });
+      }
+
       return data;
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
+    }
+  }
+
+  async sendPushNotification(
+    messageId: string,
+    conversationId: string,
+    senderId: string,
+    text: string
+  ) {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-message-notification', {
+        body: {
+          messageId,
+          conversationId,
+          senderId,
+          text,
+        },
+      });
+
+      if (error) {
+        console.error('Error calling notification function:', error);
+      } else {
+        console.log('✅ Push notification sent:', data);
+      }
+    } catch (error) {
+      console.error('Error sending push notification:', error);
     }
   }
 

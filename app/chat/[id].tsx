@@ -80,7 +80,32 @@ export default function ChatScreen() {
       const sub = messageService.subscribeToMessages(
         conversationId as string,
         (newMessage) => {
-          setMessages((prev) => [...prev, newMessage]);
+          console.log('📨 New message received via subscription:', newMessage);
+          
+          // Prevent duplicates: Check if message already exists
+          setMessages((prev) => {
+            // Check if this message already exists (by ID or by matching content/sender/time)
+            const exists = prev.some(msg => 
+              msg.id === newMessage.id || 
+              (msg.text === newMessage.text && 
+               msg.sender_id === newMessage.sender_id &&
+               Math.abs(new Date(msg.created_at).getTime() - new Date(newMessage.created_at).getTime()) < 2000)
+            );
+            
+            if (exists) {
+              console.log('⚠️ Message already exists, skipping duplicate');
+              // Replace optimistic message with real one
+              return prev.map(msg => 
+                (msg.text === newMessage.text && msg.sender_id === newMessage.sender_id)
+                  ? newMessage 
+                  : msg
+              );
+            }
+            
+            console.log('✅ Adding new message to list');
+            return [...prev, newMessage];
+          });
+          
           flatListRef.current?.scrollToEnd({ animated: true });
 
           if (newMessage.sender_id !== userId && !newMessage.is_read) {
@@ -117,36 +142,19 @@ export default function ChatScreen() {
       const trimmedText = text.trim();
       setText('');
 
-      // OPTIMIZATION: Add message to UI immediately (optimistic update)
-      // Don't wait for database confirmation
-      const optimisticMessage: Message = {
-        id: Date.now().toString(), // Temporary ID
-        conversation_id: conversationId as string,
-        sender_id: userId || '',
-        text: trimmedText,
-        is_read: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      // Add to messages immediately
-      setMessages((prev) => [...prev, optimisticMessage]);
-      flatListRef.current?.scrollToEnd({ animated: true });
-
-      // Send to database in background
+      // Send to database WITHOUT optimistic update
+      // The real-time subscription will add it when confirmed
       const sentMessage = await messageService.sendMessage(
         conversationId as string,
         trimmedText
       );
 
-      // Replace temporary message with actual message from database
-      if (sentMessage) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === optimisticMessage.id ? sentMessage : msg
-          )
-        );
-      }
+      console.log('✅ Message sent:', sentMessage?.id);
+      
+      // Scroll to end
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (error) {
       console.error('Error sending message:', error);
       setText(text);

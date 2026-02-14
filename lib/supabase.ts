@@ -98,6 +98,44 @@ export interface UserProfile {
   updated_at: string;
 }
 
+// Maintenance Request types
+export interface MaintenanceAttachment {
+  uri: string;
+  type: string;
+  size?: number;
+}
+
+export interface MaintenanceActivity {
+  id: string;
+  timestamp: string;
+  message: string;
+  actor: 'tenant' | 'landlord' | 'system';
+}
+
+export interface DbMaintenanceRequest {
+  id: string;
+  tenant_id: string;
+  landlord_id: string;
+  property_id: string;
+  unit_id?: string;
+  sub_unit_id?: string;
+  category: 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general';
+  title: string;
+  description: string;
+  urgency: 'low' | 'medium' | 'high' | 'emergency';
+  availability: string;
+  permission_to_enter: boolean;
+  attachments: MaintenanceAttachment[];
+  status: 'new' | 'under_review' | 'in_progress' | 'waiting_vendor' | 'resolved' | 'cancelled';
+  assigned_vendor?: string;
+  resolution_notes?: string;
+  expense_id?: string;
+  activity: MaintenanceActivity[];
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string;
+}
+
 // Helper function to get user profile from database
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   try {
@@ -1019,8 +1057,21 @@ export async function addTenantToProperty(params: {
 }): Promise<DbTenantPropertyLink | null> {
   try {
     const property = await fetchPropertyById(params.propertyId);
-    if (!property || property.user_id !== params.landlordUserId) {
-      console.error('Property not found or not owned by landlord.');
+    if (!property) {
+      console.error('Property not found');
+      return null;
+    }
+
+    // If property doesn't have user_id set, set it to the landlord
+    if (!property.user_id) {
+      console.log('⚠️ Property has no user_id, setting to landlord:', params.landlordUserId);
+      await supabase
+        .from('properties')
+        .update({ user_id: params.landlordUserId })
+        .eq('id', params.propertyId);
+      console.log('✅ Property user_id updated');
+    } else if (property.user_id !== params.landlordUserId) {
+      console.error('Property is owned by different landlord');
       return null;
     }
 

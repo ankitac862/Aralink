@@ -29,29 +29,115 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
   const { requests, updateRequestStatus, assignVendor, addResolutionNotes } = useMaintenanceStore();
   const request = useMemo(() => requests.find((req) => req.id === id) ?? requests[0], [requests, id]);
 
-  const [notes, setNotes] = useState(request.resolutionNotes ?? '');
-  const [selectedVendor, setSelectedVendor] = useState<string | undefined>(request.vendor);
+  const [notes, setNotes] = useState(request?.resolutionNotes ?? '');
+  const [selectedVendor, setSelectedVendor] = useState<string | undefined>(request?.vendor);
   const [saving, setSaving] = useState(false);
 
-  const handleStatusChange = (status: string) => {
-    updateRequestStatus(request.id, status as any);
-    Alert.alert('Updated', `Status changed to ${status.replace('_', ' ')}.`);
-  };
-
-  const handleAssignVendor = (vendorId: string) => {
-    setSelectedVendor(vendorId);
-    const vendor = vendorOptions.find((v) => v.id === vendorId);
-    if (vendor) {
-      assignVendor(request.id, vendor.name);
+  const handleStatusChange = async (status: string) => {
+    const success = await updateRequestStatus(request.id, status as any);
+    if (success) {
+      Alert.alert('Updated', `Status changed to ${status.replace('_', ' ')}.`);
+    } else {
+      Alert.alert('Error', 'Failed to update status. Please try again.');
     }
   };
 
-  const handleSaveNotes = () => {
-    setSaving(true);
-    addResolutionNotes(request.id, notes);
-    setSaving(false);
-    Alert.alert('Notes Saved', 'Resolution notes updated.');
+  const handleAssignVendor = async (vendorId: string) => {
+    setSelectedVendor(vendorId);
+    const vendor = vendorOptions.find((v) => v.id === vendorId);
+    if (vendor) {
+      const success = await assignVendor(request.id, vendor.name);
+      if (!success) {
+        Alert.alert('Error', 'Failed to assign vendor. Please try again.');
+      }
+    }
   };
+
+  const handleSaveNotes = async () => {
+    setSaving(true);
+    const success = await addResolutionNotes(request.id, notes);
+    setSaving(false);
+    if (success) {
+      Alert.alert('Notes Saved', 'Resolution notes updated.');
+    } else {
+      Alert.alert('Error', 'Failed to save notes. Please try again.');
+    }
+  };
+
+  const handleAddExpense = () => {
+    // Navigate to add transaction/expense page with pre-filled data
+    router.push({
+      pathname: '/add-transaction',
+      params: {
+        type: 'expense',
+        category: 'maintenance',
+        description: `Maintenance: ${request.title}`,
+        maintenanceRequestId: request.id,
+        propertyId: request.property, // TODO: Get actual property ID
+      },
+    });
+  };
+
+  const handleAcceptRequest = async () => {
+    Alert.alert(
+      'Accept Request',
+      'Do you want to accept this maintenance request?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Accept',
+          onPress: async () => {
+            const success = await updateRequestStatus(request.id, 'in_progress');
+            if (success) {
+              Alert.alert('Request Accepted', 'The maintenance request has been accepted.');
+            } else {
+              Alert.alert('Error', 'Failed to accept request.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleRejectRequest = async () => {
+    Alert.alert(
+      'Reject Request',
+      'Are you sure you want to reject this maintenance request?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            const success = await updateRequestStatus(request.id, 'cancelled');
+            if (success) {
+              Alert.alert('Request Rejected', 'The maintenance request has been cancelled.');
+              router.back();
+            } else {
+              Alert.alert('Error', 'Failed to reject request.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  if (!request) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#0f172a" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Request Details</Text>
+          <View style={{ width: 24 }} />
+        </View>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>Request not found</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -64,6 +150,7 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* Request Information */}
         <View style={styles.card}>
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
@@ -78,6 +165,29 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
           <Text style={styles.description}>{request.description}</Text>
         </View>
 
+        {/* Action Buttons for New/Under Review Requests */}
+        {(request.status === 'new' || request.status === 'under_review') && (
+          <View style={styles.actionButtonsContainer}>
+            <TouchableOpacity style={styles.acceptButton} onPress={handleAcceptRequest}>
+              <MaterialCommunityIcons name="check-circle" size={20} color="#fff" />
+              <Text style={styles.acceptButtonText}>Accept Request</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rejectButton} onPress={handleRejectRequest}>
+              <MaterialCommunityIcons name="close-circle" size={20} color="#ef4444" />
+              <Text style={styles.rejectButtonText}>Reject</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Add Expense Button (only show if request is accepted/in progress) */}
+        {(request.status === 'in_progress' || request.status === 'waiting_vendor' || request.status === 'resolved') && (
+          <TouchableOpacity style={styles.expenseButton} onPress={handleAddExpense}>
+            <MaterialCommunityIcons name="receipt-text" size={20} color="#2563eb" />
+            <Text style={styles.expenseButtonText}>Add Expense / Upload Invoice</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Manage Status */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Manage Status</Text>
           <View style={styles.statusGrid}>
@@ -95,11 +205,13 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
           </View>
         </View>
 
+        {/* Assign Vendor */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Assign Vendor</Text>
           <VendorList vendors={vendorOptions} selectedVendor={selectedVendor} onSelect={handleAssignVendor} />
         </View>
 
+        {/* Resolution Notes */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Resolution Notes</Text>
           <TextInput
@@ -135,6 +247,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
   },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#64748b',
+    textAlign: 'center',
+  },
   content: {
     padding: 16,
     gap: 12,
@@ -166,6 +289,58 @@ const styles = StyleSheet.create({
   description: {
     color: '#475569',
     fontSize: 14,
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  acceptButton: {
+    flex: 1,
+    backgroundColor: '#16a34a',
+    borderRadius: 12,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  acceptButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  rejectButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
+    borderRadius: 12,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  rejectButtonText: {
+    color: '#ef4444',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  expenseButton: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  expenseButtonText: {
+    color: '#2563eb',
+    fontWeight: '700',
+    fontSize: 15,
   },
   sectionTitle: {
     fontSize: 16,
