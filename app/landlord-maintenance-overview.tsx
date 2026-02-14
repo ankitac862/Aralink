@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
+import { useAuth } from '@/hooks/use-auth';
 
 const FILTERS = [
   { label: 'New', value: 'new' },
@@ -15,13 +16,34 @@ const FILTERS = [
 ];
 
 export default function LandlordMaintenanceOverviewScreen() {
-  const { requests } = useMaintenanceStore();
+  const { requests, fetchRequests } = useMaintenanceStore();
+  const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('new');
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch landlord's maintenance requests when screen loads
+  useEffect(() => {
+    if (user?.id) {
+      console.log('📡 Fetching maintenance requests for landlord:', user.id);
+      fetchRequests(user.id, 'landlord');
+    }
+  }, [user]);
+
+  const handleRefresh = async () => {
+    if (user?.id) {
+      setRefreshing(true);
+      await fetchRequests(user.id, 'landlord');
+      setRefreshing(false);
+    }
+  };
 
   const filteredRequests = useMemo(() => {
+    console.log('🔍 Total requests in store:', requests.length);
+    console.log('🔍 Filtering by status:', statusFilter);
+    
     return requests.filter((req) => {
       const matchStatus = statusFilter ? req.status === statusFilter : true;
       const searchTerm = query.toLowerCase();
@@ -74,6 +96,7 @@ export default function LandlordMaintenanceOverviewScreen() {
         data={filteredRequests}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16, gap: 12 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.card}

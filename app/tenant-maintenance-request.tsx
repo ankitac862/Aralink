@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -7,6 +7,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
+import { useAuth } from '@/hooks/use-auth';
+import { supabase } from '@/lib/supabase';
 import { FormInput } from '@/components/maintenance/FormInput';
 import { CategoryDropdown } from '@/components/maintenance/CategoryDropdown';
 import { UploadButton, UploadedFile } from '@/components/maintenance/UploadButton';
@@ -33,6 +35,7 @@ export default function TenantMaintenanceRequestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { addRequest } = useMaintenanceStore();
+  const { user } = useAuth();
 
   const [category, setCategory] = useState('plumbing');
   const [title, setTitle] = useState('');
@@ -43,10 +46,152 @@ export default function TenantMaintenanceRequestScreen() {
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
   const [permissionToEnter, setPermissionToEnter] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Property data
+  const [propertyData, setPropertyData] = useState<{
+    propertyId: string;
+    landlordId: string;
+    unitId?: string;
+    subUnitId?: string;
+    propertyAddress: string;
+    unitName?: string;
+  } | null>(null);
+  const [loadingProperty, setLoadingProperty] = useState(true);
 
   const bgColor = colorScheme === 'dark' ? '#101922' : '#F4F6F8';
   const cardColor = colorScheme === 'dark' ? '#151f2b' : '#ffffff';
   const textColor = colorScheme === 'dark' ? '#F4F6F8' : '#111827';
+
+  // Load tenant's property data
+  useEffect(() => {
+    async function loadPropertyData() {
+      if (!user?.id) {
+        setLoadingProperty(false);
+        return;
+      }
+
+      try {
+        // First get tenant_property_links without joins to check what exists
+        const { data: allLinks } = await supabase
+          .from('tenant_property_links')
+          .select('*')
+          .eq('tenant_id', user.id);
+
+        console.log('🔍 All tenant links:', JSON.stringify(allLinks, null, 2));
+
+        // Try to get active link first
+        let tenantLink = allLinks?.find(link => link.status === 'active');
+        
+        // If no active link, get the most recent one
+        if (!tenantLink && allLinks && allLinks.length > 0) {
+          tenantLink = allLinks.sort((a, b) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )[0];
+        }
+
+        console.log('🎯 Selected tenant link:', JSON.stringify(tenantLink, null, 2));
+
+        if (!tenantLink) {
+          Alert.alert(
+            'No Property Found',
+            'You need to be associated with a property to submit maintenance requests. Please contact your landlord.',
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+          setLoadingProperty(false);
+          return;
+        }
+
+        // Now fetch the property details (and get landlord_id from property)
+        const { data: property, error: propError } = await supabase
+          .from('properties')
+          .select('id, name, address1, address2, city, state, zip_code, property_type, user_id')
+          .eq('id', tenantLink.property_id)
+          .single();
+
+        if (propError || !property) {
+          Alert.alert(
+            'Error',
+            'Could not load property details: ' + (propError?.message || 'Unknown error'),
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+          setLoadingProperty(false);
+          return;
+        }
+
+        // Build address
+        const addressParts = [
+          property.address1,
+          property.city,
+          property.state,
+          property.zip_code
+        ].filter(Boolean);
+
+        const displayAddress = addressParts.length > 0
+          ? addressParts.join(', ')
+          : (property.name || 'Property');
+
+        // Get unit/subunit name based on property type
+        let unitName: string | undefined;
+        
+        // For multi-unit properties: Check unit first, then subunit
+        if (property.property_type === 'multi_unit') {
+          if (tenantLink.unit_id) {
+            const { data: unit } = await supabase
+              .from('units')
+              .select('name')
+              .eq('id', tenantLink.unit_id)
+              .maybeSingle();
+            unitName = unit?.name;
+          }
+          
+          // If unit has subunit, use subunit name instead
+          if (tenantLink.sub_unit_id) {
+            const { data: subUnit } = await supabase
+              .from('sub_units')
+              .select('name')
+              .eq('id', tenantLink.sub_unit_id)
+              .maybeSingle();
+            if (subUnit?.name) {
+              unitName = subUnit.name;
+            }
+          }
+        } else {
+          // For single_unit, commercial, parking: only check subunit
+          if (tenantLink.sub_unit_id) {
+            const { data: subUnit } = await supabase
+              .from('sub_units')
+              .select('name')
+              .eq('id', tenantLink.sub_unit_id)
+              .maybeSingle();
+            unitName = subUnit?.name;
+          }
+        }
+
+        setPropertyData({
+          propertyId: tenantLink.property_id,
+          landlordId: tenantLink.landlord_id || property.user_id, // Use property owner as landlord
+          unitId: tenantLink.unit_id || undefined,
+          subUnitId: tenantLink.sub_unit_id || undefined,
+          propertyAddress: displayAddress,
+          unitName,
+        });
+
+        console.log('✅ Property data set:', {
+          propertyId: tenantLink.property_id,
+          landlordId: tenantLink.landlord_id || property.user_id,
+          hasLandlordIdFromLink: !!tenantLink.landlord_id,
+          hasLandlordIdFromProperty: !!property.user_id,
+        });
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        Alert.alert('Error', 'Failed to load property information: ' + errorMsg);
+      } finally {
+        setLoadingProperty(false);
+      }
+    }
+
+    loadPropertyData();
+  }, [user]);
 
   const formattedAvailability = useMemo(() => availabilityDate.toLocaleString(), [availabilityDate]);
 
@@ -67,28 +212,71 @@ export default function TenantMaintenanceRequestScreen() {
       Alert.alert('Missing Details', 'Please add a title and description.');
       return;
     }
+
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be logged in to submit a maintenance request.');
+      return;
+    }
+
+    if (!propertyData) {
+      Alert.alert('Error', 'Property information not available. Please try again.');
+      return;
+    }
+
+    console.log('🚀 Submitting maintenance request with data:', {
+      tenantId: user.id,
+      landlordId: propertyData.landlordId,
+      propertyId: propertyData.propertyId,
+      unitId: propertyData.unitId,
+      subUnitId: propertyData.subUnitId,
+    });
+    
     setSubmitting(true);
     try {
-      const id = addRequest({
-        tenantId: 'tenant-001',
-        tenantName: 'John Doe',
-        property: '123 Main St',
-        unit: 'Unit 4B',
+      const id = await addRequest({
+        tenantId: user.id,
+        landlordId: propertyData.landlordId,
+        propertyId: propertyData.propertyId,
+        unitId: propertyData.unitId,
+        subUnitId: propertyData.subUnitId,
+        tenantName: user.name || user.email || 'Tenant',
+        property: propertyData.propertyAddress,
+        unit: propertyData.unitName || 'N/A',
         category: category as any,
         title,
         description,
         urgency,
         availability: availabilityDate.toISOString(),
         permissionToEnter,
-        attachments,
+        attachments: attachments.map(a => ({ uri: a.uri, type: a.mimeType || 'application/octet-stream' })),
       });
+      
+      if (!id) {
+        const errorState = useMaintenanceStore.getState().error;
+        Alert.alert(
+          'Submission Failed', 
+          errorState || 'Could not submit request. Please ensure the maintenance_requests table exists in your database.'
+        );
+        return;
+      }
+      
       router.push({ pathname: '/tenant-maintenance-confirmation', params: { id } });
     } catch (error) {
-      Alert.alert('Error', 'Could not submit request. Please try again.');
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert('Error', 'Could not submit request: ' + errorMsg);
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (loadingProperty) {
+    return (
+      <View style={[styles.container, { backgroundColor: bgColor, justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#2196F3" />
+        <Text style={{ color: textColor, marginTop: 16, fontSize: 16 }}>Loading property information...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>

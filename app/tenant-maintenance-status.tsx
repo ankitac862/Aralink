@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/hooks/use-auth';
 
 const statusFilters = [
   { label: 'All', value: 'all' },
@@ -16,17 +17,35 @@ const statusFilters = [
 ];
 
 export default function TenantMaintenanceStatusScreen() {
-  const { requests } = useMaintenanceStore();
+  const { requests, fetchRequests, loading } = useMaintenanceStore();
+  const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const [filter, setFilter] = useState('all');
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch requests when screen loads
+  useEffect(() => {
+    if (user?.id) {
+      fetchRequests(user.id, 'tenant');
+    }
+  }, [user]);
+
+  const handleRefresh = async () => {
+    if (user?.id) {
+      setRefreshing(true);
+      await fetchRequests(user.id, 'tenant');
+      setRefreshing(false);
+    }
+  };
 
   const tenantRequests = useMemo(() => {
-    const list = requests.filter((req) => req.tenantId === 'tenant-001');
+    // Filter by the actual logged-in user's ID
+    const list = requests.filter((req) => req.tenantId === user?.id);
     if (filter === 'all') return list;
     return list.filter((req) => req.status === filter);
-  }, [requests, filter]);
+  }, [requests, filter, user]);
 
   const bgColor = colorScheme === 'dark' ? '#0f172a' : '#f8fafc';
   const cardColor = colorScheme === 'dark' ? '#142033' : '#ffffff';
@@ -62,7 +81,7 @@ export default function TenantMaintenanceStatusScreen() {
         data={tenantRequests}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16, gap: 12 }}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={() => {}} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         renderItem={({ item }) => (
           <TouchableOpacity
             style={[styles.card, { backgroundColor: cardColor }]}

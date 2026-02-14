@@ -185,10 +185,22 @@ export default function TenantDashboardScreen() {
           displayAddress = addressParts.join(', ');
         }
         
+        // Determine unit name based on property type
+        let unitName: string | undefined;
+        
+        // For multi-unit properties: check unit first, then subunit
+        if (prop.property_type === 'multi_unit') {
+          unitName = tenantLink.units?.name || tenantLink.sub_units?.name;
+        } else {
+          // For single_unit, commercial, parking: only check subunit
+          unitName = tenantLink.sub_units?.name;
+        }
+        
         console.log('✅ Setting property info:', {
           propertyId: tenantLink.property_id,
+          propertyType: prop.property_type,
           address: displayAddress,
-          unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
+          unitName,
           status: tenantLink.status,
         });
         
@@ -198,7 +210,7 @@ export default function TenantDashboardScreen() {
           subUnitId: tenantLink.sub_unit_id,
           name: prop.name,
           address: displayAddress,
-          unitName: tenantLink.units?.name || tenantLink.sub_units?.name,
+          unitName,
         });
         
         setRentStatus({
