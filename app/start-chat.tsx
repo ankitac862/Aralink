@@ -6,6 +6,7 @@ import {
   FlatList,
   ActivityIndicator,
   TextInput,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -21,6 +22,7 @@ import { useAuthStore } from '@/store/authStore';
 
 interface TenantListItem {
   id: string;
+  userId?: string; // Auth user ID if tenant has signed up
   firstName: string;
   lastName: string;
   email: string;
@@ -96,6 +98,7 @@ export default function StartChatScreen() {
         const property = getPropertyById(tenant.propertyId);
         return {
           id: tenant.id,
+          userId: (tenant as any).userId, // Get user_id if tenant has signed up
           firstName: tenant.firstName,
           lastName: tenant.lastName,
           email: tenant.email,
@@ -121,6 +124,7 @@ export default function StartChatScreen() {
     try {
       console.log('💬 handleStartChat - Starting conversation with tenant:', {
         tenantRecordId: tenant.id,
+        tenantUserId: tenant.userId,
         tenantName: `${tenant.firstName} ${tenant.lastName}`,
         propertyId: tenant.propertyId,
         landlordId: user.id,
@@ -128,9 +132,31 @@ export default function StartChatScreen() {
 
       setMessagingId(tenant.id);
 
+      // Get tenant's user_id - either from tenant record or lookup by email
+      let tenantUserId = tenant.userId;
+      
+      if (!tenantUserId) {
+        // Look up tenant by email in profiles table
+        const { supabase } = await import('@/lib/supabase');
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', tenant.email)
+          .maybeSingle();
+        
+        if (profile) {
+          tenantUserId = profile.id;
+          console.log('✅ Found tenant user_id from email:', tenantUserId);
+        } else {
+          Alert.alert('Error', 'Tenant has not signed up yet. They need to create an account first.');
+          setMessagingId(null);
+          return;
+        }
+      }
+
       const conversation = await messageService.getOrCreateConversation(
         tenant.propertyId,
-        tenant.id, // Pass the tenant RECORD ID (not user_id)
+        tenantUserId, // Pass tenant's auth user ID
         user.id,
         `${tenant.firstName} ${tenant.lastName}`,
         user.name || 'You'
@@ -138,7 +164,6 @@ export default function StartChatScreen() {
 
       console.log('💬 Got conversation:', {
         conversationId: conversation.id,
-        tenantRecordId: conversation.tenant_record_id,
       });
 
       setMessagingId(null);
@@ -146,6 +171,7 @@ export default function StartChatScreen() {
     } catch (error) {
       setMessagingId(null);
       console.error('Error starting chat:', error);
+      Alert.alert('Error', 'Could not start conversation. Please try again.');
     }
   };
 

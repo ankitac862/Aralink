@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -63,6 +63,14 @@ export default function AccountingScreen() {
   const textColor = isDark ? '#e0e6ed' : '#0d141b';
   const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
   const primaryColor = '#137fec';
+
+  // Reload transactions when screen comes into focus (e.g., after adding a transaction)
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('🔄 Accounting screen focused - reloading transactions');
+      loadTransactions();
+    }, [user])
+  );
 
   // Load transactions on mount
   useEffect(() => {
