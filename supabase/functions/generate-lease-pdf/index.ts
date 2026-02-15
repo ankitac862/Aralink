@@ -1,26 +1,17 @@
 /**
- * Supabase Edge Function: Generate Lease PDF
+ * Supabase Edge Function: Generate Ontario Standard Lease PDF
  * 
- * This function generates Ontario Standard Lease PDF (Form 2229E) using PDF.co:
- * 1. Uses PDF.co's /pdf/edit/add endpoint to fill form fields and add text overlays
- * 2. Creates editable signature fields (AcroForm) for Section 17
- * 3. Generates a 7-page legally compliant Ontario lease document
- * 
- * Environment Variables (set in Supabase Dashboard → Edge Functions → Secrets):
- * - PDFCO_API_KEY: Your PDF.co API key (required)
- * - LEASE_TEMPLATE_URL: URL to the base Ontario lease PDF template (required)
- * - SUPABASE_URL: Supabase project URL (auto-set)
- * - SUPABASE_SERVICE_ROLE_KEY: Service role key (auto-set)
+ * FINAL VERSION: Uses annotations to draw checkmarks (✓) as visual elements
+ * This ensures checkboxes are visible in ALL viewers (Safari, Chrome, downloaded PDFs)
  */
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
-// PDF.co API Configuration
 const PDFCO_API_KEY = Deno.env.get('PDFCO_API_KEY');
-const PDFCO_EDIT_ADD_ENDPOINT = 'https://api.pdf.co/v1/pdf/edit/add';
+const PDFCO_EDIT_ENDPOINT = 'https://api.pdf.co/v1/pdf/edit/add';
 
-// Enhanced Types matching your requirements
+// [Keep all the same interfaces...]
 interface Landlord {
   legalName: string;
 }
@@ -37,57 +28,63 @@ interface RentalUnit {
   city: string;
   province: string;
   postalCode: string;
-  parkingSpaces?: number;
+  parkingSpaces?: string;
   isCondo: boolean;
 }
 
 interface Contact {
-  noticeAddress: string;
+  unit?: string;
+  streetNumber: string;
+  streetName: string;
+  poBox?: string;
+  city: string;
+  province: string;
+  postalCode: string;
   emailConsent: boolean;
-  emails?: string[];
-  emergencyContactConsent: boolean;
-  emergencyContact?: string;
+  email?: string;
+  phoneNumber?: string;
 }
 
 interface Term {
-  startDate: string; // ISO date
+  startDate: string;
   type: 'fixed' | 'month_to_month' | 'other';
-  endDate?: string; // ISO date (for fixed term)
+  endDate?: string;
   otherDescription?: string;
 }
 
 interface Rent {
-  dueDay: number; // Day of month (1-31)
-  frequency: 'monthly' | 'weekly' | 'daily';
+  dueDay: number;
+  frequency: 'monthly' | 'weekly_daily';
   base: number;
   parking?: number;
-  otherServices?: number;
+  otherDescription?: string;
+  otherAmount?: number;
   total: number;
   payableTo: string;
-  paymentMethods: ('cash' | 'cheque' | 'debit' | 'credit' | 'e-transfer' | 'other')[];
+  paymentMethod: string;
   partial?: {
     amount: number;
-    fromDate: string;
-    toDate: string;
+    date: string;
+    startDate: string;
+    endDate: string;
   };
-  nsfFee?: number;
+  nsfCharge?: number;
 }
 
 interface Services {
-  gas?: boolean;
-  airConditioning?: boolean;
-  storage?: boolean;
-  laundry?: 'none' | 'included' | 'coin' | 'other';
-  guestParking?: 'none' | 'free' | 'paid' | 'other';
-  otherServices?: string;
-  utilityDetails?: string;
+  gas: boolean;
+  airConditioning: boolean;
+  storage: boolean;
+  laundry: 'none' | 'included' | 'coin' | 'pay_per_use';
+  guestParking: 'none' | 'included' | 'paid' | 'other';
+  other1: boolean;
+  other2: boolean;
 }
 
 interface Utilities {
   electricity: 'landlord' | 'tenant';
   heat: 'landlord' | 'tenant';
   water: 'landlord' | 'tenant';
-  utilityDetails?: string;
 }
 
 interface Discounts {
@@ -96,16 +93,15 @@ interface Discounts {
 }
 
 interface Deposits {
-  rentDepositRequired: boolean;
+  rentDeposit: boolean;
   rentDepositAmount?: number;
-  keyDepositRequired: boolean;
+  keyDeposit: boolean;
   keyDepositAmount?: number;
-  keyDepositDescription?: string;
 }
 
 interface Smoking {
   hasRules: boolean;
-  rulesDescription?: string;
+  description?: string;
 }
 
 interface Insurance {
@@ -113,58 +109,28 @@ interface Insurance {
 }
 
 interface AdditionalTerms {
-  hasAdditionalTerms: boolean;
-  description?: string;
+  hasTerms: boolean;
 }
 
 interface OntarioLeaseFormData {
-  // Up to 4 landlords
   landlords: Landlord[];
-  
-  // Up to 12 tenants (app sends 12, but PDF template has 4 rows)
   tenants: Tenant[];
-  
-  // Section 2: Rental Unit
   rentalUnit: RentalUnit;
-  
-  // Section 3: Contact Information
   contact: Contact;
-  
-  // Section 4: Term
   term: Term;
-  
-  // Section 5: Rent
   rent: Rent;
-  
-  // Section 6: Services
-  services?: Services;
-  
-  // Section 6: Utilities
-  utilities?: Utilities;
-  
-  // Section 7: Discounts
-  discounts?: Discounts;
-  
-  // Section 8: Rent Deposit
-  deposits?: Deposits;
-  
-  // Section 10: Smoking
-  smoking?: Smoking;
-  
-  // Section 11: Insurance
-  insurance?: Insurance;
-  
-  // Section 15: Additional Terms
-  additionalTerms?: AdditionalTerms;
-  
-  // Signature placeholders
-  signaturePlaceholders?: boolean;
+  services: Services;
+  utilities: Utilities;
+  discounts: Discounts;
+  deposits: Deposits;
+  smoking: Smoking;
+  insurance: Insurance;
+  additionalTerms: AdditionalTerms;
 }
 
 interface GeneratePdfRequest {
   leaseId: string;
   formData: OntarioLeaseFormData;
-  useXfa?: boolean;
 }
 
 interface GeneratePdfResponse {
@@ -172,1013 +138,518 @@ interface GeneratePdfResponse {
   documentUrl?: string;
   documentId?: string;
   version?: number;
-  engineUsed?: 'pdfco' | 'standard';
   error?: string;
   code?: string;
 }
 
-// Initialize Supabase client
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Template URL - set this in Edge Function secrets
 const TEMPLATE_URL = Deno.env.get('LEASE_TEMPLATE_URL') || '';
 
-/**
- * Helper function to format checkbox (☑ for checked, ☐ for unchecked)
- */
-function checkbox(checked: boolean): string {
-  return checked ? '☑' : '☐';
-}
-
-/**
- * Helper function to format date (YYYY-MM-DD to readable format)
- */
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return '';
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-CA'); // YYYY-MM-DD format
-  } catch {
-    return dateStr;
-  }
-}
-
-/**
- * Helper function to format currency
- */
 function formatCurrency(amount?: number): string {
-  if (amount === undefined || amount === null) return '$0.00';
-  return `$${amount.toFixed(2)}`;
+  if (!amount) return '';
+  return amount.toFixed(2);
 }
 
 /**
- * Generates Ontario Lease PDF using PDF.co
- * This function creates a legally compliant 7-page Ontario Standard Lease (Form 2229E)
+ * Build text fields AND checkbox annotations
+ * Annotations draw visual checkmarks that work in all viewers
  */
+function buildFieldsAndAnnotations(formData: OntarioLeaseFormData): { fields: any[], annotations: any[] } {
+  const fields: any[] = [];
+  const annotations: any[] = [];
+
+  // Helper to add checkmark annotation
+  // Note: Using X instead of ✓ to avoid box rendering issues
+  const addCheckmark = (x: number, y: number, page: string) => {
+    annotations.push({
+      x: x + 2,
+      y: y - 2,  // Adjusted Y to position inside checkbox
+      text: 'X',
+      fontSize: 9,
+      fontName: 'Helvetica-Bold',
+      color: '000000',
+      pages: page
+    });
+  };
+
+  console.log('🔧 Building fields and annotations from data');
+
+  // ==================== SECTION 1: LANDLORDS (Page 1) ====================
+  formData.landlords?.forEach((landlord, index) => {
+    if (index < 4) {
+      fields.push({
+        fieldName: `landlord_name${index + 1}`,
+        pages: '0',
+        text: landlord.legalName
+      });
+    }
+  });
+
+  // ==================== SECTION 1: TENANTS (Pages 1-2) ====================
+  formData.tenants?.forEach((tenant, index) => {
+    if (index < 14) {
+      fields.push({
+        fieldName: `tenant_lastname${index + 1}`,
+        pages: index < 9 ? '0' : '1',
+        text: tenant.lastName
+      });
+      fields.push({
+        fieldName: `tenant_firstname${index + 1}`,
+        pages: index < 9 ? '0' : '1',
+        text: tenant.firstName
+      });
+    }
+  });
+
+  // ==================== SECTION 2: RENTAL UNIT (Page 2) ====================
+  if (formData.rentalUnit) {
+    const unit = formData.rentalUnit;
+    
+    if (unit.unit) {
+      fields.push({ fieldName: 'rental_unit', pages: '1', text: unit.unit });
+    }
+    
+    fields.push({ fieldName: 'rental_street_number', pages: '1', text: unit.streetNumber });
+    fields.push({ fieldName: 'rental_city', pages: '1', text: `${unit.streetName}, ${unit.city}` });
+    fields.push({ fieldName: 'rental_postalcode', pages: '1', text: unit.postalCode });
+    
+    if (unit.parkingSpaces) {
+      fields.push({ fieldName: 'rental_parking', pages: '1', text: unit.parkingSpaces });
+    }
+    
+    // Condominium checkboxes - USE ANNOTATIONS
+    console.log(`✓ Condo: ${unit.isCondo} (using annotation)`);
+    if (unit.isCondo) {
+      addCheckmark(18, 370, '1'); // rental_condominium_yes
+    } else {
+      addCheckmark(68, 371, '1'); // rental_condominium_no
+    }
+  }
+
+  // ==================== SECTION 3: CONTACT INFORMATION (Page 2) ====================
+  if (formData.contact) {
+    const contact = formData.contact;
+    
+    if (contact.unit) {
+      fields.push({ fieldName: 'contact_unit', pages: '1', text: contact.unit });
+    }
+    
+    fields.push({ fieldName: 'contact_street_number', pages: '1', text: contact.streetNumber });
+    fields.push({ fieldName: 'contact_street_name', pages: '1', text: contact.streetName });
+    
+    if (contact.poBox) {
+      fields.push({ fieldName: 'contact_po_box', pages: '1', text: contact.poBox });
+    }
+    
+    fields.push({ fieldName: 'contact_city', pages: '1', text: contact.city });
+    fields.push({ fieldName: 'contact_province', pages: '1', text: contact.province });
+    fields.push({ fieldName: 'contact_postalcode', pages: '1', text: contact.postalCode });
+    
+    // Email consent - USE ANNOTATIONS
+    console.log(`✓ Email consent: ${contact.emailConsent} (using annotation)`);
+    if (contact.emailConsent) {
+      addCheckmark(20, 536, '1');
+    } else {
+      addCheckmark(68, 536, '1');
+    }
+    
+    if (contact.email) {
+      fields.push({ fieldName: 'contact_email', pages: '1', text: contact.email });
+    }
+    
+    if (contact.phoneNumber) {
+      fields.push({ fieldName: 'contact_number', pages: '1', text: contact.phoneNumber });
+    }
+  }
+
+  // ==================== SECTION 4: TERM (Page 3) ====================
+  if (formData.term) {
+    const term = formData.term;
+    
+    // Term type - USE ANNOTATIONS
+    console.log(`✓ Term: ${term.type} (using annotation)`);
+    if (term.type === 'fixed') {
+      addCheckmark(18, 56, '2');
+    } else if (term.type === 'month_to_month') {
+      addCheckmark(19, 82, '2');
+    } else if (term.type === 'other') {
+      addCheckmark(19, 103, '2');
+    }
+    
+    if (term.type === 'other' && term.otherDescription) {
+      fields.push({ fieldName: 'term_other_specify', pages: '2', text: term.otherDescription });
+    }
+  }
+
+  // ==================== SECTION 5: RENT (Page 3) ====================
+  if (formData.rent) {
+    const rent = formData.rent;
+    
+    fields.push({ fieldName: 'rent_date', pages: '2', text: rent.dueDay.toString() });
+    
+    // Rent frequency - USE ANNOTATIONS
+    console.log(`✓ Rent frequency: ${rent.frequency} (using annotation)`);
+    if (rent.frequency === 'monthly') {
+      addCheckmark(38, 209, '2');
+    } else {
+      addCheckmark(38, 228, '2');
+    }
+    
+    fields.push({ fieldName: 'rent_amount_base', pages: '2', text: formatCurrency(rent.base) });
+    
+    if (rent.parking) {
+      fields.push({ fieldName: 'rent_amount_parking', pages: '2', text: formatCurrency(rent.parking) });
+    }
+    
+    if (rent.otherDescription) {
+      fields.push({ fieldName: 'rent_other', pages: '2', text: rent.otherDescription });
+    }
+    
+    if (rent.otherAmount) {
+      fields.push({ fieldName: 'rent_amount_other', pages: '2', text: formatCurrency(rent.otherAmount) });
+    }
+    
+    fields.push({ fieldName: 'rent_amount_total', pages: '2', text: formatCurrency(rent.total) });
+    fields.push({ fieldName: 'rent_payable', pages: '2', text: rent.payableTo });
+    fields.push({ fieldName: 'rent_method', pages: '2', text: rent.paymentMethod });
+    
+    if (rent.partial) {
+      fields.push({ fieldName: 'partial_amount', pages: '2', text: formatCurrency(rent.partial.amount) });
+      fields.push({ fieldName: 'partial_date', pages: '2', text: rent.partial.date });
+      fields.push({ fieldName: 'partial_rent_start', pages: '2', text: rent.partial.startDate });
+      fields.push({ fieldName: 'partial_date_end', pages: '2', text: rent.partial.endDate });
+    }
+    
+    if (rent.nsfCharge) {
+      fields.push({ fieldName: 'nsf_charge', pages: '2', text: formatCurrency(rent.nsfCharge) });
+    }
+  }
+
+  // ==================== SECTION 6: SERVICES (Page 4) ====================
+  if (formData.services) {
+    const s = formData.services;
+    
+    console.log(`✓ Services: gas=${s.gas}, AC=${s.airConditioning}, storage=${s.storage} (using annotations)`);
+    
+    // Gas - USE ANNOTATIONS
+    if (s.gas) {
+      addCheckmark(332, 147, '3');
+    }
+    
+    // Air Conditioning - USE ANNOTATIONS
+    if (s.airConditioning) {
+      addCheckmark(332, 169, '3');
+    } else {
+      addCheckmark(373, 169, '3');
+    }
+    
+    // Storage - USE ANNOTATIONS
+    if (s.storage) {
+      addCheckmark(332, 190, '3');
+    } else {
+      addCheckmark(374, 189, '3');
+    }
+    
+    // Laundry - USE ANNOTATIONS
+    if (s.laundry !== 'none') {
+      addCheckmark(332, 211, '3'); // yes
+    } else {
+      addCheckmark(373, 211, '3'); // no
+    }
+    
+    if (s.laundry === 'included') {
+      addCheckmark(409, 211, '3'); // no charge
+    } else if (s.laundry === 'pay_per_use') {
+      addCheckmark(479, 211, '3'); // pay per use
+    }
+    
+    // Guest Parking - USE ANNOTATIONS
+    if (s.guestParking !== 'none') {
+      addCheckmark(331, 232, '3'); // yes
+    } else {
+      addCheckmark(373, 232, '3'); // no
+    }
+    
+    if (s.guestParking === 'included') {
+      addCheckmark(408, 232, '3');
+    } else if (s.guestParking === 'paid') {
+      addCheckmark(479, 231, '3');
+    }
+    
+    // Other services - USE ANNOTATIONS
+    if (s.other1) {
+      addCheckmark(331, 254, '3');
+    } else {
+      addCheckmark(374, 254, '3');
+    }
+    
+    if (s.other2) {
+      addCheckmark(332, 274, '3');
+    } else {
+      addCheckmark(373, 274, '3');
+    }
+  }
+
+  // ==================== UTILITIES (Page 4) ====================
+  if (formData.utilities) {
+    const u = formData.utilities;
+    
+    console.log(`✓ Utilities: elec=${u.electricity}, heat=${u.heat}, water=${u.water} (using annotations)`);
+    
+    // Electricity - USE ANNOTATIONS
+    if (u.electricity === 'landlord') {
+      addCheckmark(71, 630, '3');
+    } else {
+      addCheckmark(142, 629, '3');
+    }
+    
+    // Heat - USE ANNOTATIONS
+    if (u.heat === 'landlord') {
+      addCheckmark(71, 651, '3');
+    } else {
+      addCheckmark(142, 651, '3');
+    }
+    
+    // Water - USE ANNOTATIONS
+    if (u.water === 'landlord') {
+      addCheckmark(72, 672, '3');
+    } else {
+      addCheckmark(142, 672, '3');
+    }
+  }
+
+  // ==================== SECTION 7: RENT DISCOUNT (Page 5) ====================
+  if (formData.discounts) {
+    console.log(`✓ Discount: ${formData.discounts.hasDiscount} (using annotation)`);
+    
+    if (formData.discounts.hasDiscount) {
+      addCheckmark(19, 202, '4'); // yes
+    } else {
+      addCheckmark(19, 162, '4'); // no
+    }
+    
+    if (formData.discounts.description) {
+      fields.push({ fieldName: 'rent_discount_discription', pages: '4', text: formData.discounts.description });
+    }
+  }
+
+  // ==================== SECTION 8: DEPOSITS (Page 5) ====================
+  if (formData.deposits) {
+    console.log(`✓ Deposits: rent=${formData.deposits.rentDeposit}, key=${formData.deposits.keyDeposit} (using annotations)`);
+    
+    // Rent deposit - USE ANNOTATIONS
+    if (formData.deposits.rentDeposit) {
+      addCheckmark(19, 431, '4'); // yes
+    } else {
+      addCheckmark(20, 395, '4'); // no
+    }
+    
+    if (formData.deposits.rentDepositAmount) {
+      fields.push({ fieldName: 'rent_deposit_amount', pages: '4', text: formatCurrency(formData.deposits.rentDepositAmount) });
+    }
+    
+    // Key deposit - USE ANNOTATIONS
+    if (formData.deposits.keyDeposit) {
+      addCheckmark(20, 579, '4'); // yes
+    } else {
+      addCheckmark(20, 614, '4'); // no
+    }
+    
+    if (formData.deposits.keyDepositAmount) {
+      fields.push({ fieldName: 'key_deposit_amount', pages: '4', text: formatCurrency(formData.deposits.keyDepositAmount) });
+    }
+  }
+
+  // ==================== SECTION 10: SMOKING (Page 6) ====================
+  if (formData.smoking) {
+    console.log(`✓ Smoking: ${formData.smoking.hasRules} (using annotation)`);
+    
+    if (formData.smoking.hasRules) {
+      addCheckmark(19, 168, '5'); // yes
+    } else {
+      addCheckmark(20, 133, '5'); // no
+    }
+    
+    if (formData.smoking.description) {
+      fields.push({ fieldName: 'smoking_rule_description', pages: '5', text: formData.smoking.description });
+    }
+  }
+
+  // ==================== SECTION 11: INSURANCE (Page 6) ====================
+  if (formData.insurance) {
+    console.log(`✓ Insurance: ${formData.insurance.required} (using annotation)`);
+    
+    if (formData.insurance.required) {
+      addCheckmark(19, 410, '5'); // yes
+    } else {
+      addCheckmark(20, 375, '5'); // no
+    }
+  }
+
+  // ==================== SECTION 15: ADDITIONAL TERMS (Page 7) ====================
+  if (formData.additionalTerms) {
+    console.log(`✓ Additional terms: ${formData.additionalTerms.hasTerms} (using annotation)`);
+    
+    if (formData.additionalTerms.hasTerms) {
+      addCheckmark(20, 416, '6'); // yes
+    } else {
+      addCheckmark(20, 375, '6'); // no
+    }
+  }
+
+  console.log(`📊 Total: ${fields.length} text fields, ${annotations.length} checkbox annotations`);
+
+  return { fields, annotations };
+}
+
 async function generateLeaseWithPdfCo(
   formData: OntarioLeaseFormData,
   leaseId: string,
   userId: string
 ): Promise<GeneratePdfResponse> {
-  if (!PDFCO_API_KEY) {
+  if (!PDFCO_API_KEY || !TEMPLATE_URL) {
     return {
       success: false,
-      code: 'PDFCO_NOT_CONFIGURED',
-      error: 'PDF.co API key not configured. Please set PDFCO_API_KEY in environment variables.',
-    };
-  }
-
-  if (!TEMPLATE_URL) {
-    return {
-      success: false,
-      code: 'TEMPLATE_NOT_CONFIGURED',
-      error: 'Lease template URL not configured. Please set LEASE_TEMPLATE_URL in environment variables.',
+      code: 'CONFIG_ERROR',
+      error: 'PDF.co API key or template URL not configured',
     };
   }
 
   try {
-    console.log('Generating Ontario Lease PDF with PDF.co for lease:', leaseId);
+    console.log('🚀 Generating lease PDF:', leaseId);
     
-    // Build the text annotations and form fields
-    const annotations = buildPdfCoAnnotations(formData);
-    const formFields = buildSignatureFields(formData);
+    const { fields, annotations } = buildFieldsAndAnnotations(formData);
     
-    console.log(`Prepared ${annotations.length} annotations and ${formFields.length} signature fields`);
+    if (fields.length === 0 && annotations.length === 0) {
+      return {
+        success: false,
+        code: 'NO_FIELDS',
+        error: 'No fields or annotations generated',
+      };
+    }
     
-    // Call PDF.co API
-    const response = await fetch(PDFCO_EDIT_ADD_ENDPOINT, {
+    const payload = {
+      url: TEMPLATE_URL,
+      name: `ontario-lease-${leaseId}.pdf`,
+      async: false,
+      fields: fields,
+      annotations: annotations
+    };
+    
+    console.log('📤 Sending to PDF.co...');
+    console.log(`   Fields: ${fields.length}`);
+    console.log(`   Annotations: ${annotations.length}`);
+    
+    const response = await fetch(PDFCO_EDIT_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': PDFCO_API_KEY,
       },
-      body: JSON.stringify({
-        url: TEMPLATE_URL,
-        name: `ontario-lease-${leaseId}.pdf`,
-        annotations: annotations,
-        fields: formFields,
-        async: false,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('PDF.co API error:', response.status, errorText);
+      console.error('❌ PDF.co error:', errorText);
       return {
         success: false,
-        code: 'PDFCO_API_ERROR',
-        error: `PDF.co API error: ${response.status} - ${errorText}`,
+        code: 'PDFCO_ERROR',
+        error: errorText,
       };
     }
 
     const result = await response.json();
-    console.log('PDF.co response:', result);
-
+    
     if (!result.url) {
       return {
         success: false,
-        code: 'PDFCO_NO_URL',
-        error: 'PDF.co did not return a URL for the generated PDF',
+        code: 'NO_URL',
+        error: 'PDF.co did not return URL',
       };
     }
 
-    // Download the generated PDF
+    console.log('✅ PDF generated with annotations');
+    console.log('🔗 PDF URL:', result.url);
+
     const pdfResponse = await fetch(result.url);
-    if (!pdfResponse.ok) {
-      return {
-        success: false,
-        code: 'PDFCO_DOWNLOAD_FAILED',
-        error: 'Failed to download generated PDF from PDF.co',
-      };
-    }
-
     const pdfBuffer = await pdfResponse.arrayBuffer();
-    console.log('Downloaded PDF, size:', pdfBuffer.byteLength, 'bytes');
-
-    // Store the PDF in Supabase
-    return await storePdf(new Uint8Array(pdfBuffer), leaseId, userId, 'pdfco');
+    
+    return await storePdf(new Uint8Array(pdfBuffer), leaseId, userId);
 
   } catch (error) {
-    console.error('Error generating lease with PDF.co:', error);
+    console.error('❌ Error:', error);
     return {
       success: false,
-      code: 'GENERATION_FAILED',
-      error: `Failed to generate lease: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      code: 'ERROR',
+      error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
 }
 
-/**
- * Builds PDF.co text annotations for all lease sections
- * These are text overlays that will be added to the PDF template
- * 
- * PDF.co annotation format:
- * {
- *   "x": number,        // X position in points
- *   "y": number,        // Y position in points
- *   "text": string,     // Text content
- *   "fontName": string, // Font name (e.g., "Helvetica")
- *   "fontSize": number, // Font size in points
- *   "color": string,    // Color in hex format (e.g., "000000")
- *   "pages": string     // Page numbers (e.g., "0" for first page, "0,1,2" for multiple)
- * }
- */
-function buildPdfCoAnnotations(formData: OntarioLeaseFormData): any[] {
-  const annotations: any[] = [];
-  
-  // Ensure required arrays exist (handle undefined/null)
-  const landlords = formData.landlords || [];
-  const tenants = formData.tenants || [];
-  
-  // Ensure required objects exist with defaults
-  const rentalUnit = formData.rentalUnit || { 
-    streetNumber: '', 
-    streetName: '', 
-    city: '', 
-    province: 'ON', 
-    postalCode: '',
-    isCondo: false 
-  };
-  const contact = formData.contact || { 
-    noticeAddress: '', 
-    emailConsent: false,
-    emergencyContactConsent: false 
-  };
-  const term = formData.term || { 
-    startDate: '', 
-    type: 'month_to_month' as const
-  };
-  const rent = formData.rent || { 
-    dueDay: 1, 
-    frequency: 'monthly' as const, 
-    base: 0, 
-    total: 0,
-    payableTo: '',
-    paymentMethods: []
-  };
-  const utilities = formData.utilities;
-  const services = formData.services;
-  
-  // ==================== SECTION 1: PARTIES (Page 1) ====================
-  
-  // Landlords (up to 4) - Based on actual PDF positions
-  landlords.slice(0, 4).forEach((landlord, index) => {
-    annotations.push({
-      x: 150,  // After "Landlord's Legal Name" label at x:39.6
-      y: 340 + (index * 27),  // Start at 340, spacing of 27 points per landlord
-      text: landlord.legalName,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "0"
-    });
-  });
-  
-  // Tenants (up to 12) - Template has 4 labeled rows, but we fit 12 tenants
-  // Strategy: Use all 4 labeled rows, then continue below with same spacing
-  // PDF shows tenant fields at: Last Name (x:39.6), First Name (x:363.9)
-  // Y positions for labeled rows: 425.1, 452.1, 479.1, 506.1 (spacing of ~27 points)
-  tenants.slice(0, 12).forEach((tenant, index) => {
-    const yPos = 445 + (index * 27);  // Start at 445, spacing of 27 points
-    // This will use rows 1-4 (labeled) and continue to rows 5-12 (same format)
-    
-    // Last Name (left column)
-    annotations.push({
-      x: 150,  // After "Last Name" label at x:39.6
-      y: yPos,
-      text: tenant.lastName,
-      fontName: "Helvetica",
-      fontSize: 9,  // Slightly smaller to fit more
-      color: "000000",
-      pages: "0"
-    });
-    
-    // First Name (right column)
-    annotations.push({
-      x: 410,  // After "First Name" label at x:363.9
-      y: yPos,
-      text: tenant.firstName,
-      fontName: "Helvetica",
-      fontSize: 9,  // Slightly smaller to fit more
-      color: "000000",
-      pages: "0"
-    });
-  });
-  
-  // ==================== SECTION 2: RENTAL UNIT (Page 1) ====================
-  
-  // Unit number
-  if (rentalUnit.unit) {
-    annotations.push({
-      x: 100,
-      y: 350,
-      text: rentalUnit.unit,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "0"
-    });
-  }
-  
-  // Street address
-  annotations.push({
-    x: 150,
-    y: 350,
-    text: `${rentalUnit.streetNumber} ${rentalUnit.streetName}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "0"
-  });
-  
-  // City, Province, Postal Code
-  annotations.push({
-    x: 100,
-    y: 370,
-    text: `${rentalUnit.city}, ${rentalUnit.province} ${rentalUnit.postalCode}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "0"
-  });
-  
-  // Parking spaces
-  if (rentalUnit.parkingSpaces) {
-    annotations.push({
-      x: 100,
-      y: 390,
-      text: `${rentalUnit.parkingSpaces} parking space(s)`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "0"
-    });
-  }
-  
-  // Condo checkbox
-  annotations.push({
-    x: 100,
-    y: 410,
-    text: checkbox(rentalUnit.isCondo),
-    fontName: "Helvetica",
-    fontSize: 12,
-    color: "000000",
-    pages: "0"
-  });
-  
-  // ==================== SECTION 3: CONTACT (Page 1-2) ====================
-  
-  annotations.push({
-    x: 100,
-    y: 450,
-    text: contact.noticeAddress,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "0"
-  });
-  
-  // Email consent
-  annotations.push({
-    x: 100,
-    y: 470,
-    text: checkbox(contact.emailConsent),
-    fontName: "Helvetica",
-    fontSize: 12,
-    color: "000000",
-    pages: "0"
-  });
-  
-  // Email addresses
-  if (contact.emails && contact.emails.length > 0) {
-    annotations.push({
-      x: 150,
-      y: 470,
-      text: contact.emails.join(', '),
-      fontName: "Helvetica",
-      fontSize: 9,
-      color: "000000",
-      pages: "0"
-    });
-  }
-  
-  // Emergency contact
-  if (contact.emergencyContact) {
-    annotations.push({
-      x: 100,
-      y: 490,
-      text: contact.emergencyContact,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "0"
-    });
-  }
-  
-  // ==================== SECTION 4: TERM (Page 2) ====================
-  
-  annotations.push({
-    x: 100,
-    y: 100,
-    text: `Start Date: ${formatDate(term.startDate)}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // Term type checkboxes
-  annotations.push({
-    x: 100,
-    y: 120,
-    text: `${checkbox(term.type === 'fixed')} Fixed Term`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  annotations.push({
-    x: 200,
-    y: 120,
-    text: `${checkbox(term.type === 'month_to_month')} Month-to-Month`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  if (term.type === 'fixed' && term.endDate) {
-    annotations.push({
-      x: 100,
-      y: 140,
-      text: `End Date: ${formatDate(term.endDate)}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  if (term.type === 'other' && term.otherDescription) {
-    annotations.push({
-      x: 100,
-      y: 140,
-      text: term.otherDescription,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  // ==================== SECTION 5: RENT (Page 2-3) ====================
-  
-  annotations.push({
-    x: 100,
-    y: 200,
-    text: `Rent due on day ${rent.dueDay} of each ${rent.frequency === 'monthly' ? 'month' : rent.frequency === 'weekly' ? 'week' : 'day'}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // Base rent
-  annotations.push({
-    x: 100,
-    y: 220,
-    text: `Base Rent: ${formatCurrency(rent.base)}`,
-    fontName: "Helvetica-Bold",
-    fontSize: 11,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // Parking rent
-  if (rent.parking) {
-    annotations.push({
-      x: 100,
-      y: 240,
-      text: `Parking: ${formatCurrency(rent.parking)}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  // Other services
-  if (rent.otherServices) {
-    annotations.push({
-      x: 100,
-      y: 260,
-      text: `Other Services: ${formatCurrency(rent.otherServices)}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  // Total rent
-  annotations.push({
-    x: 100,
-    y: 280,
-    text: `TOTAL RENT: ${formatCurrency(rent.total)}`,
-    fontName: "Helvetica-Bold",
-    fontSize: 12,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // Payable to
-  annotations.push({
-    x: 100,
-    y: 300,
-    text: `Payable to: ${rent.payableTo}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // Payment methods
-  const paymentMethodsText = rent.paymentMethods.map(m => {
-    switch (m) {
-      case 'e-transfer': return 'E-Transfer';
-      case 'cheque': return 'Cheque';
-      case 'cash': return 'Cash';
-      case 'debit': return 'Debit';
-      case 'credit': return 'Credit Card';
-      default: return m;
-    }
-  }).join(', ');
-  
-  annotations.push({
-    x: 100,
-    y: 320,
-    text: `Payment Methods: ${paymentMethodsText}`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "1"
-  });
-  
-  // NSF fee
-  if (rent.nsfFee) {
-    annotations.push({
-      x: 100,
-      y: 340,
-      text: `NSF Fee: ${formatCurrency(rent.nsfFee)}`,
-      fontName: "Helvetica",
-      fontSize: 9,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  // Partial rent
-  if (rent.partial) {
-    annotations.push({
-      x: 100,
-      y: 360,
-      text: `Partial Rent: ${formatCurrency(rent.partial.amount)} (${formatDate(rent.partial.fromDate)} to ${formatDate(rent.partial.toDate)})`,
-      fontName: "Helvetica",
-      fontSize: 9,
-      color: "000000",
-      pages: "1"
-    });
-  }
-  
-  // ==================== SECTION 6: SERVICES & UTILITIES (Page 3-4) ====================
-  
-  if (utilities) {
-    annotations.push({
-      x: 100,
-      y: 100,
-      text: `Electricity: ${utilities.electricity === 'landlord' ? 'Landlord pays' : 'Tenant pays'}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "2"
-    });
-    
-    annotations.push({
-      x: 100,
-      y: 120,
-      text: `Heat: ${utilities.heat === 'landlord' ? 'Landlord pays' : 'Tenant pays'}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "2"
-    });
-    
-    annotations.push({
-      x: 100,
-      y: 140,
-      text: `Water: ${utilities.water === 'landlord' ? 'Landlord pays' : 'Tenant pays'}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "2"
-    });
-    
-    if (utilities.utilityDetails) {
-      annotations.push({
-        x: 100,
-        y: 160,
-        text: utilities.utilityDetails,
-        fontName: "Helvetica",
-        fontSize: 9,
-        color: "000000",
-        pages: "2"
-      });
-    }
-  }
-  
-  if (services) {
-    let serviceY = 200;
-    
-    if (services.gas) {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: `${checkbox(true)} Natural Gas`,
-        fontName: "Helvetica",
-        fontSize: 10,
-        color: "000000",
-        pages: "2"
-      });
-      serviceY += 20;
-    }
-    
-    if (services.airConditioning) {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: `${checkbox(true)} Air Conditioning`,
-        fontName: "Helvetica",
-        fontSize: 10,
-        color: "000000",
-        pages: "2"
-      });
-      serviceY += 20;
-    }
-    
-    if (services.storage) {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: `${checkbox(true)} Storage`,
-        fontName: "Helvetica",
-        fontSize: 10,
-        color: "000000",
-        pages: "2"
-      });
-      serviceY += 20;
-    }
-    
-    if (services.laundry && services.laundry !== 'none') {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: `Laundry: ${services.laundry}`,
-        fontName: "Helvetica",
-        fontSize: 10,
-        color: "000000",
-        pages: "2"
-      });
-      serviceY += 20;
-    }
-    
-    if (services.guestParking && services.guestParking !== 'none') {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: `Guest Parking: ${services.guestParking}`,
-        fontName: "Helvetica",
-        fontSize: 10,
-        color: "000000",
-        pages: "2"
-      });
-      serviceY += 20;
-    }
-    
-    if (services.otherServices) {
-      annotations.push({
-        x: 100,
-        y: serviceY,
-        text: services.otherServices,
-        fontName: "Helvetica",
-        fontSize: 9,
-        color: "000000",
-        pages: "2"
-      });
-    }
-  }
-  
-  // ==================== SECTION 7: DISCOUNTS (Page 4) ====================
-  
-  if (formData.discounts?.hasDiscount && formData.discounts.description) {
-    annotations.push({
-      x: 100,
-      y: 400,
-      text: `Rent Discount: ${formData.discounts.description}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "3"
-    });
-  }
-  
-  // ==================== SECTION 8: RENT DEPOSIT (Page 4) ====================
-  
-  if (formData.deposits?.rentDepositRequired && formData.deposits.rentDepositAmount) {
-    annotations.push({
-      x: 100,
-      y: 450,
-      text: `Rent Deposit: ${formatCurrency(formData.deposits.rentDepositAmount)}`,
-      fontName: "Helvetica-Bold",
-      fontSize: 10,
-      color: "000000",
-      pages: "3"
-    });
-  }
-  
-  // ==================== SECTION 9: KEY DEPOSIT (Page 4) ====================
-  
-  if (formData.deposits?.keyDepositRequired && formData.deposits.keyDepositAmount) {
-    annotations.push({
-      x: 100,
-      y: 500,
-      text: `Key Deposit: ${formatCurrency(formData.deposits.keyDepositAmount)}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "3"
-    });
-    
-    if (formData.deposits.keyDepositDescription) {
-      annotations.push({
-        x: 100,
-        y: 520,
-        text: formData.deposits.keyDepositDescription,
-        fontName: "Helvetica",
-        fontSize: 9,
-        color: "000000",
-        pages: "3"
-      });
-    }
-  }
-  
-  // ==================== SECTION 10: SMOKING (Page 5) ====================
-  
-  if (formData.smoking?.hasRules && formData.smoking.rulesDescription) {
-    annotations.push({
-      x: 100,
-      y: 100,
-      text: `Smoking Rules: ${formData.smoking.rulesDescription}`,
-      fontName: "Helvetica",
-      fontSize: 10,
-      color: "000000",
-      pages: "4"
-    });
-  }
-  
-  // ==================== SECTION 11: INSURANCE (Page 5) ====================
-  
-  annotations.push({
-    x: 100,
-    y: 150,
-    text: `${checkbox(formData.insurance?.required || false)} Tenant insurance required`,
-    fontName: "Helvetica",
-    fontSize: 10,
-    color: "000000",
-    pages: "4"
-  });
-  
-  // ==================== SECTION 15: ADDITIONAL TERMS (Page 6) ====================
-  
-  if (formData.additionalTerms?.hasAdditionalTerms && formData.additionalTerms.description) {
-    annotations.push({
-      x: 100,
-      y: 100,
-      text: formData.additionalTerms.description,
-      fontName: "Helvetica",
-      fontSize: 9,
-      color: "000000",
-      pages: "5"
-    });
-  }
-  
-  return annotations;
-}
-
-/**
- * Builds signature fields for Section 17
- * These are editable AcroForm fields that allow digital signing
- * 
- * PDF.co field format:
- * {
- *   "fieldType": "signature" | "text",
- *   "fieldName": string,
- *   "x": number,
- *   "y": number,
- *   "width": number,
- *   "height": number,
- *   "pages": string
- * }
- */
-function buildSignatureFields(formData: OntarioLeaseFormData): any[] {
-  const fields: any[] = [];
-  const signaturePage = "6"; // Section 17 on page 7 (0-indexed = 6)
-  
-  // Ensure required arrays exist (handle undefined/null)
-  const landlords = formData.landlords || [];
-  const tenants = formData.tenants || [];
-  
-  // Starting positions
-  const landlordStartY = 150;
-  const tenantStartY = 400;
-  const signatureWidth = 200;
-  const signatureHeight = 40;
-  const dateWidth = 100;
-  const dateHeight = 30;
-  const rowHeight = 60;
-  
-  // ==================== LANDLORD SIGNATURES (up to 4) ====================
-  
-  landlords.slice(0, 4).forEach((landlord, index) => {
-    const yPos = landlordStartY + (index * rowHeight);
-    
-    // Label (as text annotation - not editable)
-    fields.push({
-      fieldType: "text",
-      fieldName: `landlord_label_${index + 1}`,
-      x: 50,
-      y: yPos - 15,
-      width: 150,
-      height: 12,
-      pages: signaturePage,
-      text: `Landlord ${index + 1}: ${landlord.legalName}`,
-      fontSize: 9,
-      fontName: "Helvetica"
-    });
-    
-    // Signature field
-    fields.push({
-      fieldType: "signature",
-      fieldName: `landlord_sig_${index + 1}`,
-      x: 50,
-      y: yPos,
-      width: signatureWidth,
-      height: signatureHeight,
-      pages: signaturePage
-    });
-    
-    // Date field
-    fields.push({
-      fieldType: "text",
-      fieldName: `landlord_date_${index + 1}`,
-      x: 270,
-      y: yPos + 5,
-      width: dateWidth,
-      height: dateHeight,
-      pages: signaturePage
-    });
-    
-    // Date label
-    fields.push({
-      fieldType: "text",
-      fieldName: `landlord_date_label_${index + 1}`,
-      x: 270,
-      y: yPos - 15,
-      width: dateWidth,
-      height: 12,
-      pages: signaturePage,
-      text: "Date",
-      fontSize: 9,
-      fontName: "Helvetica"
-    });
-  });
-  
-  // ==================== TENANT SIGNATURES (up to 12) ====================
-  
-  tenants.slice(0, 12).forEach((tenant, index) => {
-    // Layout: 2 columns × 6 rows to fit 12 tenants
-    const col = index % 2; // 2 columns
-    const row = Math.floor(index / 2); // 6 rows
-    const xPos = 50 + (col * 280);
-    const yPos = tenantStartY + (row * 60);  // 60 points per row to fit 6 rows
-    
-    // Label
-    fields.push({
-      fieldType: "text",
-      fieldName: `tenant_label_${index + 1}`,
-      x: xPos,
-      y: yPos - 15,
-      width: 150,
-      height: 12,
-      pages: signaturePage,
-      text: `Tenant ${index + 1}: ${tenant.firstName} ${tenant.lastName}`,
-      fontSize: 8,  // Smaller font to fit more
-      fontName: "Helvetica"
-    });
-    
-    // Signature field (smaller to fit 12)
-    fields.push({
-      fieldType: "signature",
-      fieldName: `tenant_sig_${index + 1}`,
-      x: xPos,
-      y: yPos,
-      width: 150,
-      height: 35,
-      pages: signaturePage
-    });
-    
-    // Date field
-    fields.push({
-      fieldType: "text",
-      fieldName: `tenant_date_${index + 1}`,
-      x: xPos + 160,
-      y: yPos + 5,
-      width: 80,
-      height: 25,
-      pages: signaturePage
-    });
-    
-    // Date label
-    fields.push({
-      fieldType: "text",
-      fieldName: `tenant_date_label_${index + 1}`,
-      x: xPos + 160,
-      y: yPos - 15,
-      width: 80,
-      height: 12,
-      pages: signaturePage,
-      text: "Date",
-      fontSize: 8,  // Smaller font to fit more
-      fontName: "Helvetica"
-    });
-  });
-  
-  return fields;
-}
-
-/**
- * Stores the PDF in Supabase storage
- */
 async function storePdf(
   pdfBuffer: Uint8Array,
   leaseId: string,
-  userId: string,
-  engineUsed: 'pdfco' | 'standard'
+  userId: string
 ): Promise<GeneratePdfResponse> {
   try {
     const filename = `lease-${leaseId}-${Date.now()}.pdf`;
     const storagePath = `leases/${userId}/${filename}`;
     
-    // Upload to Supabase storage
+    console.log('💾 Uploading to Supabase Storage...');
+    
     const { data: uploadData, error: uploadError } = await supabase.storage
       .from('lease-documents')
       .upload(storagePath, pdfBuffer, {
         contentType: 'application/pdf',
+        cacheControl: '3600',
         upsert: true,
       });
     
     if (uploadError) {
-      console.error('Storage upload error:', uploadError);
-      return {
-        success: false,
-        code: 'STORAGE_UPLOAD_FAILED',
-        error: `Failed to upload PDF to storage: ${uploadError.message}`,
-      };
+      console.error('❌ Upload error:', uploadError);
+      throw uploadError;
     }
     
-    // Get signed URL (valid for 1 year) - Required for private buckets
+    console.log('✅ Uploaded successfully');
+    
     const { data: urlData, error: urlError } = await supabase.storage
       .from('lease-documents')
-      .createSignedUrl(storagePath, 31536000); // 1 year in seconds
+      .createSignedUrl(storagePath, 31536000);
     
-    if (urlError) {
-      console.error('Error creating signed URL:', urlError);
-      return {
-        success: false,
-        code: 'SIGNED_URL_FAILED',
-        error: `Failed to create signed URL: ${urlError.message}`,
-      };
-    }
+    if (urlError) throw urlError;
     
-    const documentUrl = urlData.signedUrl;
+    console.log('🔗 Supabase URL:', urlData.signedUrl);
     
-    // Update lease record with document URL
-    const { error: updateError } = await supabase
+    await supabase
       .from('leases')
       .update({
-        document_url: documentUrl,
+        document_url: urlData.signedUrl,
         document_storage_key: storagePath,
         status: 'generated',
         updated_at: new Date().toISOString(),
       })
       .eq('id', leaseId);
     
-    if (updateError) {
-      console.error('Lease record update error:', updateError);
-      // Don't fail the whole operation if just the record update fails
-    }
-    
-    // Create document version record (optional - if lease_documents table exists)
-    try {
-      const { data: versionData, error: versionError } = await supabase
-        .from('lease_documents')
-        .insert({
-          lease_id: leaseId,
-          file_url: documentUrl,
-          storage_key: storagePath,
-          filename: filename,
-          mime_type: 'application/pdf',
-          file_size: pdfBuffer.length,
-          version: 1,
-          is_current: true,
-          engine_used: engineUsed,
-          uploaded_by: userId,
-        })
-        .select('id, version')
-        .single();
-      
-      if (!versionError && versionData) {
-        console.log('Document version created:', versionData);
-      }
-    } catch (versionErr) {
-      // Ignore if lease_documents table doesn't exist
-      console.log('Could not create document version (table may not exist):', versionErr);
-    }
-    
     return {
       success: true,
-      documentUrl: documentUrl,
+      documentUrl: urlData.signedUrl,
       documentId: uploadData.path,
       version: 1,
-      engineUsed: engineUsed,
     };
   } catch (error) {
-    console.error('Error storing PDF:', error);
+    console.error('❌ Storage error:', error);
     return {
       success: false,
-      code: 'STORAGE_FAILED',
-      error: `Failed to store PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      code: 'STORAGE_ERROR',
+      error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
 }
 
-/**
- * Main handler
- */
 serve(async (req) => {
-  // Handle CORS
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
@@ -1190,11 +661,10 @@ serve(async (req) => {
   }
   
   try {
-    // Get user from auth token
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing authorization header' }),
+        JSON.stringify({ success: false, error: 'Missing auth' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -1209,18 +679,17 @@ serve(async (req) => {
       );
     }
     
-    // Parse request
-    const requestData: GeneratePdfRequest = await req.json();
-    const { leaseId, formData } = requestData;
+    const { leaseId, formData }: GeneratePdfRequest = await req.json();
     
     if (!leaseId || !formData) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing leaseId or formData' }),
+        JSON.stringify({ success: false, error: 'Missing data' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
     
-    // Generate PDF using PDF.co
+    console.log('📨 Request received - leaseId:', leaseId);
+    
     const result = await generateLeaseWithPdfCo(formData, leaseId, user.id);
     
     return new Response(JSON.stringify(result), {
@@ -1231,7 +700,7 @@ serve(async (req) => {
       status: result.success ? 200 : 500,
     });
   } catch (error) {
-    console.error('Edge function error:', error);
+    console.error('❌ Handler error:', error);
     return new Response(
       JSON.stringify({
         success: false,

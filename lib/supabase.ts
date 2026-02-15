@@ -1921,58 +1921,86 @@ export interface DashboardMetrics {
 // Get dashboard metrics for landlord
 export async function getDashboardMetrics(userId: string): Promise<DashboardMetrics> {
   try {
-    // Fetch all leases and properties
-    const [leases, propertiesData] = await Promise.all([
+    // Fetch leases, tenants, and properties
+    const [leases, tenants, propertiesData] = await Promise.all([
       fetchLeases(userId),
+      fetchTenants(userId),
       supabase.from('properties').select('*, units(*, sub_units(*))').eq('user_id', userId)
     ]);
 
-    // Count active leases
+    console.log('📊 Dashboard Metrics - Fetched:', {
+      leases: leases.length,
+      tenants: tenants.length,
+      properties: propertiesData.data?.length || 0
+    });
+
     const now = new Date();
-    const activeLeases = leases.filter(lease => 
-      lease.status === 'signed' && 
-      (!lease.expiry_date || new Date(lease.expiry_date) > now)
-    ).length;
+    
+    // Helper function to check if lease is active
+    const isLeaseActive = (lease: any) => {
+      const isCancelled = lease.status === 'cancelled' || lease.status === 'rejected' || lease.status === 'terminated';
+      const hasExpired = lease.expiry_date && new Date(lease.expiry_date) < now;
+      return !isCancelled && !hasExpired;
+    };
+
+    // Helper function to check if tenant is active and assigned
+    const isTenantActive = (tenant: any) => {
+      return tenant.status === 'active' && !!tenant.property_id;
+    };
+
+    // Count active leases and active tenants
+    const activeLeasesCount = leases.filter(isLeaseActive).length;
+    const activeTenantsCount = tenants.filter(isTenantActive).length;
+    const activeLeases = Math.max(activeLeasesCount, activeTenantsCount);
+
+    console.log('✅ Active count - Leases:', activeLeasesCount, '| Tenants:', activeTenantsCount, '| Combined:', activeLeases);
 
     // Count rentable units
     let totalRentableUnits = 0;
     let rentedUnits = 0;
+    const occupiedUnitIds = new Set<string>();
+
+    // Mark units occupied by leases
+    leases.filter(isLeaseActive).forEach(lease => {
+      if (lease.unit_id) {
+        occupiedUnitIds.add(lease.unit_id);
+      } else if (lease.property_id) {
+        occupiedUnitIds.add(lease.property_id); // If no unit_id, mark property as occupied
+      }
+    });
+
+    // Mark units occupied by active tenants
+    tenants.filter(isTenantActive).forEach(tenant => {
+      if (tenant.unit_id) {
+        occupiedUnitIds.add(tenant.unit_id);
+      } else if (tenant.property_id) {
+        occupiedUnitIds.add(tenant.property_id);
+      }
+    });
 
     if (propertiesData.data) {
       for (const property of propertiesData.data) {
         if (!property.units || property.units.length === 0) {
           // Property with no units = 1 rentable unit
           totalRentableUnits += 1;
-          // Check if property has active lease
-          const hasLease = leases.some(l => 
-            l.property_id === property.id && 
-            l.status === 'signed' &&
-            (!l.expiry_date || new Date(l.expiry_date) > now)
-          );
-          if (hasLease) rentedUnits += 1;
+          if (occupiedUnitIds.has(property.id)) {
+            rentedUnits += 1;
+          }
         } else {
           // Property has units
           for (const unit of property.units) {
             if (!unit.sub_units || unit.sub_units.length === 0) {
               // Unit with no subunits = 1 rentable unit
               totalRentableUnits += 1;
-              const hasLease = leases.some(l => 
-                l.unit_id === unit.id && 
-                l.status === 'signed' &&
-                (!l.expiry_date || new Date(l.expiry_date) > now)
-              );
-              if (hasLease) rentedUnits += 1;
+              if (occupiedUnitIds.has(unit.id)) {
+                rentedUnits += 1;
+              }
             } else {
               // Unit has subunits - count each subunit
               totalRentableUnits += unit.sub_units.length;
-              // Count rented subunits (would need to check lease form_data for subunit matching)
-              // For now, approximate by checking unit-level leases
-              const unitLeases = leases.filter(l => 
-                l.unit_id === unit.id && 
-                l.status === 'signed' &&
-                (!l.expiry_date || new Date(l.expiry_date) > now)
-              );
-              rentedUnits += Math.min(unitLeases.length, unit.sub_units.length);
+              // Count rented subunits
+              const unitOccupancy = unit.sub_units.filter((su: any) => occupiedUnitIds.has(su.id)).length;
+              rentedUnits += unitOccupancy;
             }
           }
         }
@@ -1982,6 +2010,8 @@ export async function getDashboardMetrics(userId: string): Promise<DashboardMetr
     const occupancyPercentage = totalRentableUnits > 0 
       ? Math.round((rentedUnits / totalRentableUnits) * 100) 
       : 0;
+
+    console.log(`📈 Metrics - Active: ${activeLeases}, Rented: ${rentedUnits}/${totalRentableUnits}, Occupancy: ${occupancyPercentage}%`);
 
     return {
       activeLeases,

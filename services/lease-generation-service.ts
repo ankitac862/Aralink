@@ -81,6 +81,119 @@ const getEdgeFunctionUrl = (functionName: string): string => {
 // =====================================================
 
 /**
+ * Transforms the app's OntarioLeaseFormData to match the Edge Function's expected format
+ * Maps all fields from the app form structure to the comprehensive PDF structure
+ */
+function transformFormDataForEdgeFunction(formData: OntarioLeaseFormData): any {
+  // Parse landlord name - handle multiple landlords (up to 4)
+  const landlords = [];
+  if (formData.landlordName) {
+    const names = formData.landlordName.split(/[,&]/).map(n => n.trim()).filter(n => n);
+    for (const name of names.slice(0, 4)) {
+      landlords.push({ legalName: name });
+    }
+  }
+  
+  // Parse tenant names into first and last names (up to 14)
+  const tenants = [];
+  if (formData.tenantNames) {
+    for (const fullName of formData.tenantNames.slice(0, 14)) {
+      if (fullName.trim()) {
+        const parts = fullName.trim().split(/\s+/);
+        const firstName = parts[0];
+        const lastName = parts.slice(1).join(' ') || '';
+        tenants.push({ firstName, lastName });
+      }
+    }
+  }
+  
+  return {
+    landlords,
+    tenants,
+    rentalUnit: {
+      unit: formData.unitAddress?.unit,
+      streetNumber: formData.unitAddress?.streetNumber || '',
+      streetName: formData.unitAddress?.streetName || '',
+      city: formData.unitAddress?.city || '',
+      province: formData.unitAddress?.province || 'ON',
+      postalCode: formData.unitAddress?.postalCode || '',
+      parkingSpaces: formData.parkingDescription ? '1' : undefined,
+      isCondo: formData.isCondo || false,
+    },
+    contact: {
+      unit: formData.unitAddress?.unit,
+      streetNumber: formData.unitAddress?.streetNumber || '',
+      streetName: formData.unitAddress?.streetName || '',
+      poBox: undefined,
+      city: formData.unitAddress?.city || '',
+      province: formData.unitAddress?.province || 'ON',
+      postalCode: formData.unitAddress?.postalCode || '',
+      emailConsent: formData.allowEmailNotices || false,
+      email: formData.landlordEmail,
+      phoneNumber: formData.emergencyContactPhone,
+    },
+    term: {
+      startDate: formData.tenancyStartDate || '',
+      type: (formData.tenancyType === 'fixed' ? 'fixed' : 'month_to_month') as 'fixed' | 'month_to_month' | 'other',
+      endDate: formData.tenancyEndDate,
+      otherDescription: undefined,
+    },
+    rent: {
+      dueDay: formData.rentPaymentDay || 1,
+      frequency: (formData.paymentFrequency === 'monthly' ? 'monthly' : 'weekly_daily') as 'monthly' | 'weekly_daily',
+      base: formData.baseRent || 0,
+      parking: formData.parkingRent,
+      otherDescription: formData.otherServicesDescription,
+      otherAmount: formData.otherServicesRent,
+      total: (formData.baseRent || 0) + (formData.parkingRent || 0) + (formData.otherServicesRent || 0),
+      payableTo: formData.rentPayableTo || '',
+      paymentMethod: formData.paymentMethod || 'etransfer',
+      partial: formData.partialRentAmount ? {
+        amount: formData.partialRentAmount,
+        date: formData.partialRentFromDate || '',
+        startDate: formData.partialRentFromDate || '',
+        endDate: formData.partialRentToDate || '',
+      } : undefined,
+      nsfCharge: formData.chequeBounceCharge,
+    },
+    services: {
+      gas: formData.utilities?.gas || false,
+      airConditioning: formData.utilities?.airConditioning || false,
+      storage: formData.utilities?.additionalStorage || false,
+      laundry: (formData.utilities?.laundry as 'none' | 'included' | 'coin' | 'pay_per_use') || 'none',
+      guestParking: (formData.utilities?.guestParking as 'none' | 'included' | 'paid' | 'other') || 'none',
+      other1: false,
+      other2: false,
+    },
+    utilities: {
+      electricity: formData.utilities?.electricity || 'landlord',
+      heat: formData.utilities?.heat || 'landlord',
+      water: formData.utilities?.water || 'landlord',
+    },
+    discounts: {
+      hasDiscount: formData.hasRentDiscount || false,
+      description: formData.rentDiscountDescription,
+    },
+    deposits: {
+      rentDeposit: formData.requiresRentDeposit || false,
+      rentDepositAmount: formData.rentDepositAmount,
+      keyDeposit: formData.requiresKeyDeposit || false,
+      keyDepositAmount: formData.keyDepositAmount,
+    },
+    smoking: {
+      hasRules: !!formData.smokingRules && formData.smokingRules !== 'none',
+      description: formData.smokingRulesDescription,
+    },
+    insurance: {
+      required: formData.requiresTenantInsurance || false,
+    },
+    additionalTerms: {
+      hasTerms: !!formData.additionalTerms || !!formData.specialConditions,
+    },
+  };
+}
+
+/**
  * Generates a lease PDF using the XFA template with automatic fallback
  * 
  * Flow:
@@ -119,6 +232,11 @@ export async function generateLeasePdf(
     
     const useXfa = options?.forceStandard ? false : (options?.useXfa ?? true);
     
+    // Transform form data to match Edge Function's expected format
+    const transformedFormData = transformFormDataForEdgeFunction(formData);
+    
+    console.log('📤 Sending to Edge Function, transformed data:', JSON.stringify(transformedFormData, null, 2));
+    
     // Call edge function
     const response = await fetch(getEdgeFunctionUrl('generate-lease-pdf'), {
       method: 'POST',
@@ -128,8 +246,7 @@ export async function generateLeasePdf(
       },
       body: JSON.stringify({
         leaseId,
-        formData,
-        useXfa,
+        formData: transformedFormData,
       } as GeneratePdfRequest),
     });
     
