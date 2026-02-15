@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
@@ -9,12 +9,14 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import messageService, { Conversation } from '@/services/messageService';
 import { useUserRole } from '@/hooks/use-user-role';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function MessagesScreen() {
   const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const userRole = useUserRole();
+  const { user } = useAuth();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,21 +31,33 @@ export default function MessagesScreen() {
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
   const primaryColor = '#4A90E2';
 
+  // Reload conversations when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('🔄 Messages screen focused - reloading conversations');
+      loadConversations();
+    }, [])
+  );
+
   useEffect(() => {
     loadConversations();
 
+    // Subscribe to new conversations
     const sub = messageService.subscribeToConversations((conv) => {
+      console.log('📨 New conversation received via subscription:', conv.id);
       setConversations((prev) => {
         const existing = prev.findIndex((c) => c.id === conv.id);
         if (existing > -1) {
           const updated = [...prev];
           updated[existing] = conv;
+          console.log('✏️ Updated existing conversation:', conv.id);
           return updated.sort(
             (a, b) =>
               new Date(b.last_message_at || 0).getTime() -
               new Date(a.last_message_at || 0).getTime()
           );
         }
+        console.log('➕ Added new conversation:', conv.id);
         return [conv, ...prev];
       });
     });
@@ -60,10 +74,12 @@ export default function MessagesScreen() {
   const loadConversations = async () => {
     try {
       setLoading(true);
+      console.log('📡 Loading conversations...');
       const data = await messageService.getConversations();
+      console.log('✅ Loaded conversations:', data.length);
       setConversations(data);
     } catch (error) {
-      console.error('Error loading conversations:', error);
+      console.error('❌ Error loading conversations:', error);
     } finally {
       setLoading(false);
     }
@@ -90,7 +106,19 @@ export default function MessagesScreen() {
       item.landlord_unread_count +
       item.manager_unread_count;
 
-    const displayName = item.tenant_name === 'You' ? item.landlord_name : item.tenant_name;
+    // Show the OTHER person's name (not current user's name)
+    let displayName = 'Unknown';
+    if (user?.id === item.tenant_id) {
+      // Current user is tenant, show landlord's name
+      displayName = item.landlord_name || item.manager_name || 'Landlord';
+    } else if (user?.id === item.landlord_id) {
+      // Current user is landlord, show tenant's name
+      displayName = item.tenant_name || 'Tenant';
+    } else if (user?.id === item.manager_id) {
+      // Current user is manager, show tenant's name
+      displayName = item.tenant_name || 'Tenant';
+    }
+
     const lastMessageTime = item.last_message_at
       ? new Date(item.last_message_at).toLocaleDateString('en-US', {
           month: 'short',

@@ -231,13 +231,13 @@ export default function TenantStartChatScreen() {
 
       console.log('📧 Creating conversation with:', {
         propertyId: tenantRecord.property_id,
-        tenantRecordId: tenantRecord.id,
+        tenantUserId: user.id,
         landlordId: landlord.id,
       });
 
       const conversation = await messageService.getOrCreateConversation(
         tenantRecord.property_id,
-        tenantRecord.id, // tenant_record_id
+        user.id, // Pass tenant's own user_id (current user)
         landlord.id,
         user.name || user.email || 'Tenant',
         landlord.name,

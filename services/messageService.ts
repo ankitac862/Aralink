@@ -41,7 +41,7 @@ class MessageService {
 
   async getOrCreateConversation(
     propertyId: string,
-    tenantRecordId: string, // Tenant record ID from the tenants table
+    tenantUserId: string, // Tenant user ID (auth.users.id)
     landlordId: string,
     tenantName: string,
     landlordName: string,
@@ -51,43 +51,34 @@ class MessageService {
     try {
       console.log('🔍 getOrCreateConversation - Looking for conversation:', {
         propertyId,
-        tenantRecordId,
+        tenantUserId,
         landlordId,
       });
 
-      // Try to find existing conversation by tenant record
+      // Try to find existing conversation by tenant_id, landlord_id, property_id
       const { data: existing, error: fetchError } = await supabase
         .from('conversations')
         .select('*')
         .eq('property_id', propertyId)
-        .eq('tenant_record_id', tenantRecordId)
-        .eq('landlord_id', landlordId);
+        .eq('tenant_id', tenantUserId)
+        .eq('landlord_id', landlordId)
+        .maybeSingle();
       
       console.log('🔍 Query result:', { existing, error: fetchError });
 
-      if (existing && !fetchError && Array.isArray(existing) && existing.length > 0) {
-        return existing[0]; // Return first matching conversation
+      if (existing && !fetchError) {
+        console.log('✅ Found existing conversation:', existing.id);
+        return existing;
       }
 
-      // Get tenant's user_id if they have an account
-      let tenantUserId: string | null = null;
-      const { data: tenantRecord } = await supabase
-        .from('tenants')
-        .select('user_id')
-        .eq('id', tenantRecordId)
-        .single();
-      
-      if (tenantRecord?.user_id) {
-        tenantUserId = tenantRecord.user_id;
-      }
+      console.log('➕ Creating new conversation...');
 
       // Create new conversation
       const { data, error } = await supabase
         .from('conversations')
         .insert({
           property_id: propertyId,
-          tenant_record_id: tenantRecordId,
-          tenant_id: tenantUserId, // Will be null if tenant hasn't signed up
+          tenant_id: tenantUserId,
           landlord_id: landlordId,
           manager_id: managerId,
           tenant_name: tenantName,
@@ -97,7 +88,13 @@ class MessageService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Error creating conversation:', error);
+        throw error;
+      }
+
+      console.log('✅ Created new conversation:', data.id);
+      return data;
       return data;
     } catch (error) {
       console.error('Error getting/creating conversation:', error);
@@ -110,6 +107,8 @@ class MessageService {
       const user = await this.getCurrentUser();
       if (!user) throw new Error('User not authenticated');
 
+      console.log('📡 Fetching conversations for user:', user.id);
+
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
@@ -119,10 +118,15 @@ class MessageService {
         .eq('is_archived', false)
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Error fetching conversations:', error);
+        throw error;
+      }
+      
+      console.log('✅ Found conversations:', data?.length || 0);
       return data || [];
     } catch (error) {
-      console.error('Error fetching conversations:', error);
+      console.error('❌ Error fetching conversations:', error);
       throw error;
     }
   }
