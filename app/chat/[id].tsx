@@ -209,7 +209,7 @@ export default function ChatScreen() {
             {
               backgroundColor: cardBgColor,
               borderBottomColor: borderColor,
-              paddingTop: insets.top + 12,
+              paddingTop: 12,
             },
           ]}>
           <TouchableOpacity
@@ -238,14 +238,14 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-        {/* Header */}
+        {/* Header - SafeAreaView handles top inset, so only add 12px padding */}
         <View
           style={[
             styles.header,
             {
               backgroundColor: cardBgColor,
               borderBottomColor: borderColor,
-              paddingTop: insets.top + 12,
+              paddingTop: 12,
             },
           ]}>
           <TouchableOpacity
