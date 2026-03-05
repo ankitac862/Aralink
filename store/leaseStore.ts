@@ -69,6 +69,10 @@ export interface DraftLease {
 
 interface LeaseStore {
   tenantDraft: LeaseApplicationDraft;
+  primaryApplicantDraft: LeaseApplicationDraft; // Backup of primary applicant when adding co-applicants
+  coApplicants: LeaseApplicationDraft[]; // Up to 11 co-applicants
+  currentCoApplicantIndex: number | null; // Which co-applicant is being edited
+  isAddingCoApplicant: boolean; // Whether user is in "add co-applicant" mode
   tenantApplication?: LeaseApplication;
   landlordApplications: LeaseApplication[];
   currentLeaseDraft?: DraftLease;
@@ -83,6 +87,14 @@ interface LeaseStore {
   requestMoreInfo: (id: string) => void;
   signLease: (applicationId: string, signature: string) => void;
   resetDraft: () => void;
+  
+  // Co-applicant methods
+  startAddingCoApplicant: () => void; // Start adding a new co-applicant
+  saveCurrentCoApplicant: () => void; // Save the current co-applicant being edited
+  cancelAddingCoApplicant: () => void; // Cancel adding co-applicant
+  editCoApplicant: (index: number) => void; // Edit an existing co-applicant
+  removeCoApplicant: (index: number) => void; // Remove a co-applicant
+  getCoApplicantCount: () => number; // Get total number of applicants (primary + co-applicants)
 }
 
 const initialDraft: LeaseApplicationDraft = {
@@ -161,6 +173,10 @@ const mockApplications: LeaseApplication[] = [
 
 export const useLeaseStore = create<LeaseStore>((set, get) => ({
   tenantDraft: initialDraft,
+  primaryApplicantDraft: initialDraft,
+  coApplicants: [],
+  currentCoApplicantIndex: null,
+  isAddingCoApplicant: false,
   tenantApplication: undefined,
   landlordApplications: mockApplications,
   currentLeaseDraft: undefined,
@@ -178,17 +194,18 @@ export const useLeaseStore = create<LeaseStore>((set, get) => ({
   },
 
   submitDraft: async (propertyId?: string, unitId?: string, subUnitId?: string, userId?: string, inviteId?: string) => {
-    const { tenantDraft } = get();
+    const { tenantDraft, coApplicants } = get();
     const applicationId = `app-${Date.now()}`;
     
     console.log('📤 submitDraft called with:', { propertyId, unitId, subUnitId, userId, inviteId });
+    console.log('📤 Total applicants:', coApplicants.length + 1, '(1 primary +', coApplicants.length, 'co-applicants)');
     console.log('📤 unitId type:', typeof unitId, 'value:', unitId);
     console.log('📤 subUnitId type:', typeof subUnitId, 'value:', subUnitId);
     console.log('📤 Are they empty strings?', { 
       unitIdIsEmptyString: unitId === '', 
       subUnitIdIsEmptyString: subUnitId === '' 
     });
-    console.log('📤 Application data:', {
+    console.log('📤 Primary Applicant data:', {
       fullName: tenantDraft.personal.fullName,
       email: tenantDraft.personal.email,
       phone: tenantDraft.personal.phoneNumber,
@@ -219,6 +236,7 @@ export const useLeaseStore = create<LeaseStore>((set, get) => ({
         subUnitId: subUnitId || undefined,
         unitIdAfterConversion: unitId || undefined,
         subUnitIdAfterConversion: subUnitId || undefined,
+        coApplicantsCount: coApplicants.length,
       });
       
       const { submitApplication } = await import('@/lib/supabase');
@@ -231,6 +249,7 @@ export const useLeaseStore = create<LeaseStore>((set, get) => ({
         applicantEmail: tenantDraft.personal.email,
         applicantPhone: tenantDraft.personal.phoneNumber,
         formData: tenantDraft,
+        coApplicants: coApplicants, // Pass co-applicants to be saved
         inviteId,
       });
 
@@ -343,7 +362,125 @@ export const useLeaseStore = create<LeaseStore>((set, get) => ({
   },
 
   resetDraft: () => {
-    set({ tenantDraft: initialDraft });
+    set({ 
+      tenantDraft: initialDraft,
+      primaryApplicantDraft: initialDraft,
+      coApplicants: [],
+      currentCoApplicantIndex: null,
+      isAddingCoApplicant: false,
+    });
+  },
+
+  // Co-applicant methods
+  startAddingCoApplicant: () => {
+    const currentCount = get().coApplicants.length + 1; // +1 for primary applicant
+    if (currentCount >= 12) {
+      console.warn('⚠️ Maximum of 12 applicants reached');
+      return;
+    }
+    
+    // Save current primary applicant data before switching to co-applicant mode
+    const { tenantDraft } = get();
+    
+    set({
+      primaryApplicantDraft: { ...tenantDraft }, // Backup primary applicant
+      tenantDraft: initialDraft, // Reset for co-applicant
+      isAddingCoApplicant: true,
+      currentCoApplicantIndex: null,
+    });
+    
+    console.log('💾 Saved primary applicant data before adding co-applicant');
+  },
+
+  saveCurrentCoApplicant: () => {
+    const { tenantDraft, coApplicants, currentCoApplicantIndex, primaryApplicantDraft } = get();
+    
+    // Validate that required fields are filled
+    if (!tenantDraft.personal.fullName || !tenantDraft.personal.email) {
+      console.error('❌ Co-applicant must have name and email');
+      return;
+    }
+
+    if (currentCoApplicantIndex !== null) {
+      // Editing existing co-applicant
+      const updatedCoApplicants = [...coApplicants];
+      updatedCoApplicants[currentCoApplicantIndex] = { ...tenantDraft };
+      
+      set({
+        coApplicants: updatedCoApplicants,
+        tenantDraft: { ...primaryApplicantDraft }, // Restore primary applicant
+        isAddingCoApplicant: false,
+        currentCoApplicantIndex: null,
+      });
+      
+      console.log('✅ Updated co-applicant at index', currentCoApplicantIndex);
+      console.log('✅ Restored primary applicant data');
+    } else {
+      // Adding new co-applicant
+      const currentCount = coApplicants.length + 1; // +1 for primary
+      if (currentCount >= 12) {
+        console.warn('⚠️ Maximum of 12 applicants reached');
+        return;
+      }
+      
+      set({
+        coApplicants: [...coApplicants, { ...tenantDraft }],
+        tenantDraft: { ...primaryApplicantDraft }, // Restore primary applicant
+        isAddingCoApplicant: false,
+      });
+      
+      console.log('✅ Added new co-applicant. Total count:', currentCount + 1);
+      console.log('✅ Restored primary applicant data');
+    }
+  },
+
+  cancelAddingCoApplicant: () => {
+    const { primaryApplicantDraft } = get();
+    set({
+      tenantDraft: { ...primaryApplicantDraft }, // Restore primary applicant
+      isAddingCoApplicant: false,
+      currentCoApplicantIndex: null,
+    });
+    console.log('✅ Cancelled co-applicant, restored primary applicant data');
+  },
+
+  editCoApplicant: (index: number) => {
+    const { coApplicants, tenantDraft } = get();
+    
+    if (index < 0 || index >= coApplicants.length) {
+      console.error('❌ Invalid co-applicant index:', index);
+      return;
+    }
+    
+    // Save current tenant draft (primary applicant) before editing co-applicant
+    // Load the co-applicant data into tenantDraft for editing
+    set({
+      primaryApplicantDraft: { ...tenantDraft }, // Backup current data
+      tenantDraft: { ...coApplicants[index] }, // Load co-applicant for editing
+      isAddingCoApplicant: true,
+      currentCoApplicantIndex: index,
+    });
+    
+    console.log('✏️ Editing co-applicant at index', index);
+    console.log('💾 Saved current data before editing');
+  },
+
+  removeCoApplicant: (index: number) => {
+    const { coApplicants } = get();
+    
+    if (index < 0 || index >= coApplicants.length) {
+      console.error('❌ Invalid co-applicant index:', index);
+      return;
+    }
+    
+    const updatedCoApplicants = coApplicants.filter((_, i) => i !== index);
+    set({ coApplicants: updatedCoApplicants });
+    
+    console.log('🗑️ Removed co-applicant at index', index);
+  },
+
+  getCoApplicantCount: () => {
+    return get().coApplicants.length + 1; // +1 for primary applicant
   },
 }));
 

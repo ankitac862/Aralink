@@ -13,13 +13,14 @@ export default function TenantLeaseStep3Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant } = useLocalSearchParams<{ 
     propertyId?: string; 
     address?: string; 
     fromInvite?: string;
     unitId?: string;
     subUnitId?: string;
     inviteId?: string;
+    isCoApplicant?: string;
   }>();
   const { tenantDraft, updateDraft } = useLeaseStore();
 
@@ -70,7 +71,7 @@ export default function TenantLeaseStep3Screen() {
       updateDraft('employment', formData);
       router.push({ 
         pathname: '/tenant-lease-step4', 
-        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId } 
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant } 
       });
     }
   };

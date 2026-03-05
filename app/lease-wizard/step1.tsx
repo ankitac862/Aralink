@@ -26,7 +26,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 import { useAuthStore } from '@/store/authStore';
-import { fetchTenants, DbTenant } from '@/lib/supabase';
+import { fetchTenants, DbTenant, fetchApprovedApplicants } from '@/lib/supabase';
 
 export default function LeaseWizardStep1() {
   const colorScheme = useColorScheme();
@@ -40,16 +40,22 @@ export default function LeaseWizardStep1() {
     addTenantName,
     removeTenantName,
     updateTenantName,
+    setTenantId,
     nextStep,
     resetWizard,
   } = useOntarioLeaseStore();
 
-  // Transform DbTenant to include full name
-  interface TenantWithName extends DbTenant {
+  // Combined interface for both tenants and applicants
+  interface PersonOption {
+    id: string;
     fullName: string;
+    email: string;
+    type: 'tenant' | 'applicant';
+    applicationId?: string; // For applicants
   }
-  const [existingTenants, setExistingTenants] = useState<TenantWithName[]>([]);
-  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
+  
+  const [personOptions, setPersonOptions] = useState<PersonOption[]>([]);
+  const [isLoadingPersons, setIsLoadingPersons] = useState(false);
   const [showTenantSuggestions, setShowTenantSuggestions] = useState<number | null>(null);
   const [tenantSearchQuery, setTenantSearchQuery] = useState('');
 
@@ -61,42 +67,70 @@ export default function LeaseWizardStep1() {
   const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
   const primaryColor = '#137fec';
 
-  // Load existing tenants for autocomplete
+  // Load existing tenants and approved applicants for autocomplete
   useEffect(() => {
-    loadTenants();
+    loadPersonOptions();
   }, [user?.id]);
 
-  const loadTenants = async () => {
+  const loadPersonOptions = async () => {
     if (!user?.id) return;
-    setIsLoadingTenants(true);
+    setIsLoadingPersons(true);
     try {
-      const tenants = await fetchTenants(user.id);
-      // Add fullName property combining first_name and last_name
-      const tenantsWithNames = tenants.map(t => ({
-        ...t,
-        fullName: `${t.first_name || ''} ${t.last_name || ''}`.trim() || t.email || 'Unknown',
-      }));
-      setExistingTenants(tenantsWithNames);
+      // Fetch both tenants and approved applicants
+      const [tenants, applicants] = await Promise.all([
+        fetchTenants(user.id),
+        fetchApprovedApplicants(user.id),
+      ]);
+      
+      // Combine into single list
+      const options: PersonOption[] = [
+        // Add tenants
+        ...tenants.map(t => ({
+          id: t.id,
+          fullName: `${t.first_name || ''} ${t.last_name || ''}`.trim() || t.email || 'Unknown',
+          email: t.email,
+          type: 'tenant' as const,
+        })),
+        // Add approved applicants
+        ...applicants.map(a => ({
+          id: a.applicant_email, // Use email as temporary ID
+          fullName: a.applicant_name || a.applicant_email || 'Unknown',
+          email: a.applicant_email,
+          type: 'applicant' as const,
+          applicationId: a.id, // Store application ID
+        })),
+      ];
+      
+      setPersonOptions(options);
     } catch (error) {
-      console.error('Error loading tenants:', error);
+      console.error('Error loading persons:', error);
     } finally {
-      setIsLoadingTenants(false);
+      setIsLoadingPersons(false);
     }
   };
 
-  // Filter tenants based on search query
-  const filteredTenants = existingTenants.filter((tenant) => {
+  // Filter persons based on search query
+  const filteredPersons = personOptions.filter((person) => {
     const normalizedQuery = tenantSearchQuery.trim().toLowerCase();
     if (!normalizedQuery) {
       return true;
     }
-    const name = tenant.fullName?.toLowerCase() || '';
-    const email = tenant.email?.toLowerCase() || '';
+    const name = person.fullName?.toLowerCase() || '';
+    const email = person.email?.toLowerCase() || '';
     return name.includes(normalizedQuery) || email.includes(normalizedQuery);
   });
 
-  const handleSelectTenant = (tenant: TenantWithName, index: number) => {
-    updateTenantName(index, tenant.fullName);
+  const handleSelectPerson = (person: PersonOption, index: number) => {
+    updateTenantName(index, person.fullName);
+    // Set the person ID and type in the store
+    if (index === 0) {
+      if (person.type === 'tenant') {
+        setTenantId(person.id, 'tenant');
+      } else {
+        // For applicants, don't set tenantId (leave null), only store application info
+        setTenantId(null, 'applicant', person.applicationId);
+      }
+    }
     setShowTenantSuggestions(null);
     setTenantSearchQuery('');
   };
@@ -109,6 +143,13 @@ export default function LeaseWizardStep1() {
   const handleTenantInputChange = (text: string, index: number) => {
     updateTenantName(index, text);
     setTenantSearchQuery(text);
+    // If user is editing the first tenant and it no longer matches a selected person, clear the IDs
+    if (index === 0) {
+      const matchesPerson = personOptions.some(p => p.fullName === text);
+      if (!matchesPerson) {
+        setTenantId(null);
+      }
+    }
   };
 
   const handleNext = () => {
@@ -207,7 +248,7 @@ export default function LeaseWizardStep1() {
               </ThemedText>
             </View>
             <ThemedText style={[styles.sectionDescription, { color: secondaryTextColor }]}>
-              Select from existing tenants or enter names manually. You can add multiple tenants.
+              Select from existing tenants/approved applicants or enter names manually. You can add multiple tenants.
             </ThemedText>
 
             {formData.tenantNames.map((name, index) => (
@@ -226,7 +267,7 @@ export default function LeaseWizardStep1() {
                 <View style={styles.autocompleteContainer}>
                   <TextInput
                     style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                    placeholder={`Enter or select tenant ${index + 1}'s name`}
+                    placeholder={`Enter or select tenant/applicant ${index + 1}'s name`}
                     placeholderTextColor={secondaryTextColor}
                     value={name}
                     onChangeText={(text) => handleTenantInputChange(text, index)}
@@ -234,10 +275,10 @@ export default function LeaseWizardStep1() {
                     onBlur={() => setTimeout(() => setShowTenantSuggestions(null), 200)}
                   />
                   
-                  {/* Autocomplete Dropdown - Using View+map instead of FlatList to avoid nesting issues */}
-                  {showTenantSuggestions === index && filteredTenants.length > 0 && (
+                  {/* Autocomplete Dropdown - Shows both tenants and applicants */}
+                  {showTenantSuggestions === index && filteredPersons.length > 0 && (
                     <View style={[styles.suggestionsContainer, { backgroundColor: inputBgColor, borderColor }]}>
-                      {isLoadingTenants ? (
+                      {isLoadingPersons ? (
                         <View style={styles.loadingContainer}>
                           <ActivityIndicator size="small" color={primaryColor} />
                         </View>
@@ -247,21 +288,34 @@ export default function LeaseWizardStep1() {
                           keyboardShouldPersistTaps="handled"
                           style={{ maxHeight: 200 }}
                         >
-                          {filteredTenants.slice(0, 5).map((item, idx) => (
+                          {filteredPersons.slice(0, 5).map((item, idx) => (
                             <TouchableOpacity
-                              key={item.id}
+                              key={`${item.type}-${item.id}`}
                               style={[
                                 styles.suggestionItem, 
                                 { borderBottomColor: borderColor },
-                                idx === filteredTenants.slice(0, 5).length - 1 && { borderBottomWidth: 0 }
+                                idx === filteredPersons.slice(0, 5).length - 1 && { borderBottomWidth: 0 }
                               ]}
-                              onPress={() => handleSelectTenant(item, index)}
+                              onPress={() => handleSelectPerson(item, index)}
                             >
-                              <MaterialCommunityIcons name="account" size={20} color={secondaryTextColor} />
+                              <MaterialCommunityIcons 
+                                name={item.type === 'tenant' ? 'account' : 'account-check'} 
+                                size={20} 
+                                color={item.type === 'tenant' ? secondaryTextColor : primaryColor} 
+                              />
                               <View style={styles.suggestionContent}>
-                                <ThemedText style={[styles.suggestionName, { color: textColor }]}>
-                                  {item.fullName}
-                                </ThemedText>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                  <ThemedText style={[styles.suggestionName, { color: textColor }]}>
+                                    {item.fullName}
+                                  </ThemedText>
+                                  {item.type === 'applicant' && (
+                                    <View style={[styles.badge, { backgroundColor: primaryColor + '20' }]}>
+                                      <ThemedText style={[styles.badgeText, { color: primaryColor }]}>
+                                        Approved Applicant
+                                      </ThemedText>
+                                    </View>
+                                  )}
+                                </View>
                                 {item.email && (
                                   <ThemedText style={[styles.suggestionEmail, { color: secondaryTextColor }]}>
                                     {item.email}
@@ -448,6 +502,15 @@ const styles = StyleSheet.create({
   suggestionEmail: {
     fontSize: 12,
     marginTop: 2,
+  },
+  badge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   addButton: {
     flexDirection: 'row',

@@ -143,7 +143,7 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
       .from('profiles')
       .select('*')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
     if (error) {
       if (error.code === 'PGRST205') {
@@ -169,7 +169,7 @@ export async function upsertUserProfile(profile: Partial<UserProfile> & { id: st
         updated_at: new Date().toISOString(),
       })
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       if (error.code === 'PGRST205') {
@@ -177,6 +177,11 @@ export async function upsertUserProfile(profile: Partial<UserProfile> & { id: st
       } else {
         console.error('Error upserting user profile:', error);
       }
+      return null;
+    }
+
+    if (!data) {
+      console.error('❌ Profile upsert returned 0 rows - likely RLS policy blocking. Run FIX_PROFILES_RLS_SIMPLE.sql');
       return null;
     }
 
@@ -836,24 +841,133 @@ export interface DbTenant {
 // Fetch all tenants for the current user
 export async function fetchTenants(userId: string): Promise<DbTenant[]> {
   try {
-    const { data, error } = await supabase
+    console.log('🔍 Fetching tenants for landlord:', userId);
+    
+    // Method 1: Get tenants via tenant_property_links (NEW METHOD)
+    const { data: properties, error: propError } = await supabase
+      .from('properties')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (propError) {
+      console.error('❌ Error fetching landlord properties:', propError);
+    }
+
+    let tenantsFromLinks: DbTenant[] = [];
+    
+    if (properties && properties.length > 0) {
+      const propertyIds = properties.map(p => p.id);
+      console.log(`📋 Found ${propertyIds.length} properties for landlord:`, propertyIds);
+
+      // Convert property IDs to string for comparison (tenant_property_links.property_id is often TEXT)
+      const propertyIdsAsStrings = propertyIds.map(id => String(id));
+      console.log('📋 Property IDs as strings:', propertyIdsAsStrings);
+
+      // Get tenant IDs for these properties via tenant_property_links (don't filter by status yet)
+      const { data: links, error: linksError } = await supabase
+        .from('tenant_property_links')
+        .select('tenant_id, status, property_id')
+        .in('property_id', propertyIdsAsStrings);
+
+      if (linksError) {
+        console.error('❌ Error fetching tenant_property_links:', linksError);
+      } else if (links && links.length > 0) {
+        console.log(`📋 Found ${links.length} tenant links:`, links);
+        
+        const tenantIds = [...new Set(links.map(link => link.tenant_id))];
+        console.log(`📋 Unique tenant IDs to fetch:`, tenantIds);
+
+        // Fetch all tenants by their IDs
+        const { data: tenantsData, error: tenantsError } = await supabase
+          .from('tenants')
+          .select('*')
+          .in('id', tenantIds)
+          .order('created_at', { ascending: false });
+
+        if (tenantsError) {
+          console.error('❌ Error fetching tenants by IDs:', tenantsError);
+          console.error('❌ Tenant error details:', JSON.stringify(tenantsError, null, 2));
+        } else {
+          tenantsFromLinks = tenantsData || [];
+          console.log(`✅ Fetched ${tenantsFromLinks.length} tenants via links`);
+          console.log('📋 Tenant data:', JSON.stringify(tenantsFromLinks, null, 2));
+        }
+      } else {
+        console.log('⚠️ No tenant links found for these properties');
+      }
+    } else {
+      console.log('⚠️ No properties found for landlord');
+    }
+
+    // Method 2: FALLBACK - Get tenants by user_id (OLD METHOD for backwards compatibility)
+    const { data: tenantsDirectly, error: directError } = await supabase
       .from('tenants')
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      if (error.code === 'PGRST205') {
+    if (directError) {
+      if (directError.code === 'PGRST205') {
         console.warn('⚠️ tenants table not found. Using local data.');
-        return [];
+      } else {
+        console.error('❌ Error fetching tenants directly:', directError);
       }
-      console.error('Error fetching tenants:', error);
+    }
+
+    const tenantsFromDirect = tenantsDirectly || [];
+    console.log(`📋 Fetched ${tenantsFromDirect.length} tenants directly by user_id`);
+    if (tenantsFromDirect.length > 0) {
+      console.log('📋 Direct tenant data:', JSON.stringify(tenantsFromDirect, null, 2));
+    }
+
+    // Merge both methods and deduplicate by ID
+    const allTenants = [...tenantsFromLinks, ...tenantsFromDirect];
+    const uniqueTenants = allTenants.filter((tenant, index, self) => 
+      index === self.findIndex((t) => t.id === tenant.id)
+    );
+
+    console.log(`✅ Total unique tenants: ${uniqueTenants.length}`);
+    if (uniqueTenants.length > 0) {
+      console.log('✅ Final tenant list:', uniqueTenants.map(t => ({ 
+        id: t.id, 
+        name: `${t.first_name} ${t.last_name}`,
+        email: t.email,
+        property_id: t.property_id
+      })));
+    }
+    return uniqueTenants;
+  } catch (error) {
+    console.error('❌ Error fetching tenants:', error);
+    return [];
+  }
+}
+
+// Fetch approved applicants for a landlord (for lease generation)
+export async function fetchApprovedApplicants(userId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching approved applicants:', error);
       return [];
     }
 
-    return data || [];
+    // Filter to only this landlord's properties
+    const { data: properties } = await supabase
+      .from('properties')
+      .select('id')
+      .eq('user_id', userId);
+
+    const propertyIds = properties?.map(p => p.id) || [];
+    const filtered = (data || []).filter(app => propertyIds.includes(app.property_id));
+
+    return filtered;
   } catch (error) {
-    console.error('Error fetching tenants:', error);
+    console.error('Error fetching approved applicants:', error);
     return [];
   }
 }
@@ -2267,18 +2381,97 @@ export async function fetchLeasesByProperty(propertyId: string): Promise<DbLease
 // Fetch leases by tenant
 export async function fetchLeasesByTenant(tenantId: string): Promise<DbLease[]> {
   try {
-    const { data, error } = await supabase
+    console.log('🔍 Fetching leases for user:', tenantId);
+    
+    // Get user's email from profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', tenantId)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error('Error fetching user profile:', profileError);
+    }
+
+    const userEmail = profile?.email;
+    console.log('📧 User email:', userEmail);
+    
+    // First, get leases where user is directly the tenant
+    const { data: tenantLeases, error: tenantError } = await supabase
       .from('leases')
       .select('*')
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Error fetching leases by tenant:', error);
-      return [];
+    if (tenantError) {
+      console.error('Error fetching tenant leases:', tenantError);
     }
 
-    return data || [];
+    console.log('📄 Direct tenant leases:', tenantLeases?.length || 0);
+
+    // Second, get leases associated with user's applications
+    const { data: applications, error: appError } = await supabase
+      .from('applications')
+      .select('id, applicant_email')
+      .eq('user_id', tenantId);
+
+    if (appError) {
+      console.error('Error fetching applications:', appError);
+    }
+
+    console.log('📋 User applications:', applications?.length || 0, applications);
+
+    let applicationLeases: DbLease[] = [];
+    if (applications && applications.length > 0) {
+      const applicationIds = applications.map(app => app.id);
+      
+      const { data: appLeases, error: appLeasesError } = await supabase
+        .from('leases')
+        .select('*')
+        .in('application_id', applicationIds)
+        .order('created_at', { ascending: false });
+
+      if (appLeasesError) {
+        console.error('Error fetching application leases:', appLeasesError);
+      } else {
+        applicationLeases = appLeases || [];
+        console.log('📄 Application-based leases:', applicationLeases.length);
+      }
+    }
+
+    // Third, get leases by email match (for applicants who haven't been linked yet)
+    let emailLeases: DbLease[] = [];
+    if (userEmail) {
+      const { data: allLeases, error: allLeasesError } = await supabase
+        .from('leases')
+        .select('*')
+        .is('tenant_id', null)
+        .not('application_id', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (allLeasesError) {
+        console.error('Error fetching all application leases:', allLeasesError);
+      } else if (allLeases) {
+        // Filter by email in form_data
+        emailLeases = allLeases.filter(lease => {
+          const tenantNames = lease.form_data?.tenantNames || [];
+          // Check if any tenant name in the form data matches
+          // Note: This is a basic check. You might want to enhance it
+          return tenantNames.length > 0;
+        });
+        console.log('📄 Email-matched leases:', emailLeases.length);
+      }
+    }
+
+    // Combine and deduplicate leases
+    const allLeases = [...(tenantLeases || []), ...applicationLeases, ...emailLeases];
+    const uniqueLeases = Array.from(
+      new Map(allLeases.map(lease => [lease.id, lease])).values()
+    );
+
+    console.log('✅ Total unique leases for user:', uniqueLeases.length);
+    return uniqueLeases;
   } catch (error) {
     console.error('Error fetching leases by tenant:', error);
     return [];
@@ -2288,6 +2481,8 @@ export async function fetchLeasesByTenant(tenantId: string): Promise<DbLease[]> 
 // Fetch a single lease by ID
 export async function fetchLeaseById(leaseId: string): Promise<DbLease | null> {
   try {
+    console.log('🔍 Fetching lease by ID:', leaseId);
+    
     const { data, error } = await supabase
       .from('leases')
       .select('*')
@@ -2295,13 +2490,26 @@ export async function fetchLeaseById(leaseId: string): Promise<DbLease | null> {
       .single();
 
     if (error) {
-      console.error('Error fetching lease:', error);
+      console.error('❌ Error fetching lease:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      
+      if (error.code === 'PGRST116') {
+        console.error('❌ Lease not found with ID:', leaseId);
+      } else if (error.code === '42501') {
+        console.error('❌ Permission denied - check RLS policies');
+      }
+      
       return null;
     }
 
+    console.log('✅ Lease found:', data.id, 'Status:', data.status);
     return data;
   } catch (error) {
-    console.error('Error fetching lease:', error);
+    console.error('❌ Exception fetching lease:', error);
     return null;
   }
 }
@@ -2331,9 +2539,197 @@ export async function createLease(lease: Omit<DbLease, 'id' | 'created_at' | 'up
   }
 }
 
+// Convert approved applicant to tenant after lease signing
+export async function convertApplicantToTenant(params: {
+  applicationId: string;
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  leaseId: string;
+  startDate?: string;
+  rentAmount?: number;
+}): Promise<DbTenant | null> {
+  try {
+    console.log('🔄 Starting applicant to tenant conversion:', params);
+    
+    // 0. Get current authenticated user (landlord)
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
+    if (!currentUser) {
+      console.error('❌ No authenticated user found');
+      throw new Error('Authentication required');
+    }
+    console.log('✅ Current user (landlord):', currentUser.id);
+    
+    // 0.5. Check if lease already has a tenant (already converted)
+    const { data: existingLease, error: leaseCheckError } = await supabase
+      .from('leases')
+      .select('tenant_id')
+      .eq('id', params.leaseId)
+      .single();
+    
+    if (existingLease?.tenant_id) {
+      console.error('❌ This application has already been converted to a tenant');
+      throw new Error('This applicant has already been converted to a tenant. Please refresh the page.');
+    }
+    
+    // 1. Get application data
+    const { data: application, error: appError } = await supabase
+      .from('applications')
+      .select('*')
+      .eq('id', params.applicationId)
+      .single();
+
+    if (appError || !application) {
+      console.error('❌ Error fetching application:', appError);
+      throw new Error('Application not found');
+    }
+
+    console.log('✅ Application found:', {
+      id: application.id,
+      email: application.applicant_email,
+      name: application.applicant_name,
+    });
+
+    // 2. Get or create user account for the applicant
+    let userId = null;
+    const { data: existingUser } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', application.applicant_email)
+      .maybeSingle();
+
+    if (existingUser) {
+      userId = existingUser.id;
+      console.log('✅ Found existing user profile:', userId);
+    } else {
+      console.log('⚠️ No user profile found for email:', application.applicant_email);
+    }
+
+    // 3. Create tenant record
+    console.log('🔄 Creating tenant record...');
+    const tenantData = {
+      user_id: userId || application.applicant_email, // Use email as fallback if no user account
+      first_name: application.applicant_name?.split(' ')[0] || '',
+      last_name: application.applicant_name?.split(' ').slice(1).join(' ') || '',
+      email: application.applicant_email,
+      phone: application.applicant_phone || '',
+      property_id: params.propertyId,
+      unit_id: params.unitId,
+      start_date: params.startDate,
+      rent_amount: params.rentAmount,
+      status: 'active', // Active after signing lease
+    };
+    console.log('📋 Tenant data to insert:', tenantData);
+    
+    // Check if tenant already exists for this email + property combo
+    const { data: existingTenants } = await supabase
+      .from('tenants')
+      .select('id, status')
+      .eq('email', application.applicant_email)
+      .eq('property_id', params.propertyId)
+      .limit(2);
+    
+    if (existingTenants && existingTenants.length > 0) {
+      const activeTenant = existingTenants.find(t => t.status === 'active');
+      if (activeTenant) {
+        console.error('❌ Active tenant already exists for this email/property');
+        throw new Error('This applicant has already been converted to a tenant.');
+      }
+      console.log('⚠️ Inactive tenant exists, creating new active one');
+    }
+    
+    const { data: tenant, error: tenantError } = await supabase
+      .from('tenants')
+      .insert(tenantData)
+      .select()
+      .single();
+
+    if (tenantError) {
+      console.error('❌ Error creating tenant:', tenantError);
+      console.error('❌ Tenant error details:', JSON.stringify(tenantError, null, 2));
+      throw new Error(`Failed to create tenant: ${tenantError.message}`);
+    }
+
+    console.log('✅ Tenant created successfully:', tenant.id);
+
+    // 4. Create tenant_property_links record
+    console.log('🔄 Creating tenant_property_links record...');
+    const linkData = {
+      tenant_id: tenant.id,
+      property_id: params.propertyId,
+      unit_id: params.unitId,
+      status: 'active',
+      created_via: 'lease_creation',
+      created_by_user_id: currentUser.id, // Use the current authenticated landlord's ID
+      link_start_date: params.startDate,
+    };
+    console.log('📋 Link data to insert:', linkData);
+    
+    const { data: linkResult, error: linkError } = await supabase
+      .from('tenant_property_links')
+      .insert(linkData)
+      .select();
+
+    if (linkError) {
+      console.error('❌ Error creating tenant_property_links:', linkError);
+      console.error('❌ Link error details:', JSON.stringify(linkError, null, 2));
+      
+      // Check if it's a duplicate key error (tenant already linked to this property)
+      if (linkError.code === '23505') {
+        console.error('❌ Tenant is already linked to this property');
+        await supabase.from('tenants').delete().eq('id', tenant.id);
+        throw new Error('This tenant is already linked to the property. Please check the tenant list.');
+      }
+      
+      // For other errors, clean up the tenant and fail the conversion
+      console.error('❌ Tenant was created but link failed - cleaning up tenant record');
+      await supabase.from('tenants').delete().eq('id', tenant.id);
+      
+      throw new Error(`Failed to link tenant to property: ${linkError.message || 'Unknown error'}`);
+    }
+    
+    console.log('✅ Tenant property link created successfully');
+
+    // 5. Update lease with tenant_id AND mark as signed
+    console.log('🔄 Updating lease with tenant_id and signed status...');
+    const { error: leaseUpdateError } = await supabase
+      .from('leases')
+      .update({ 
+        tenant_id: tenant.id,
+        status: 'signed',
+        signed_date: new Date().toISOString(),
+      })
+      .eq('id', params.leaseId);
+
+    if (leaseUpdateError) {
+      console.error('❌ Error updating lease with tenant_id:', leaseUpdateError);
+      console.error('❌ Lease update error details:', JSON.stringify(leaseUpdateError, null, 2));
+      // Continue anyway - tenant was created successfully
+    } else {
+      console.log('✅ Lease updated with tenant_id and signed status');
+    }
+
+    // 6. Delete the application (converted to tenant)
+    console.log('🔄 Deleting application...');
+    await supabase
+      .from('applications')
+      .delete()
+      .eq('id', params.applicationId);
+
+    console.log('✅ Successfully converted applicant to tenant:', tenant.id);
+    return tenant;
+  } catch (error) {
+    console.error('❌ Error converting applicant to tenant:', error);
+    // Rethrow the error so the UI can display it
+    throw error;
+  }
+}
+
 // Update a lease
 export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>): Promise<DbLease | null> {
   try {
+    console.log('🔄 Updating lease:', leaseId, 'with updates:', updates);
+    
     const { data, error } = await supabase
       .from('leases')
       .update({
@@ -2342,12 +2738,20 @@ export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>
       })
       .eq('id', leaseId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Error updating lease:', error);
       return null;
     }
+
+    if (!data) {
+      console.error('❌ Lease update returned 0 rows - likely RLS policy blocking update. Lease ID:', leaseId);
+      console.error('💡 Make sure to run FIX_LEASE_RLS_FOR_APPLICANTS.sql to allow tenants to update their leases');
+      return null;
+    }
+
+    console.log('✅ Lease updated successfully:', data.id);
 
     // Auto-update tenant status based on lease status
     if (data && updates.status && data.tenant_id) {
@@ -2381,6 +2785,55 @@ export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>
   } catch (error) {
     console.error('Error updating lease:', error);
     return null;
+  }
+}
+
+// Handle lease signing - converts applicant to tenant if needed
+export async function handleLeaseSigning(params: {
+  leaseId: string;
+  applicationId?: string; // If this is an applicant lease
+  propertyId: string;
+  unitId?: string;
+  subUnitId?: string;
+  startDate?: string;
+  rentAmount?: number;
+}): Promise<{ success: boolean; tenantId?: string; error?: string }> {
+  try {
+    // If this is an applicant, convert to tenant first
+    if (params.applicationId) {
+      console.log('🔄 Converting applicant to tenant before signing lease...');
+      const tenant = await convertApplicantToTenant({
+        applicationId: params.applicationId,
+        propertyId: params.propertyId,
+        unitId: params.unitId,
+        subUnitId: params.subUnitId,
+        leaseId: params.leaseId,
+        startDate: params.startDate,
+        rentAmount: params.rentAmount,
+      });
+
+      if (!tenant) {
+        return { success: false, error: 'Failed to convert applicant to tenant' };
+      }
+
+      console.log('✅ Applicant converted to tenant:', tenant.id);
+      
+      // Lease is already updated to 'signed' status in convertApplicantToTenant
+      // No need to update again
+      console.log('✅ Lease signing completed');
+
+      return { success: true, tenantId: tenant.id };
+    } else {
+      // Just update lease status to signed for existing tenant
+      await updateLeaseInDb(params.leaseId, { status: 'signed' });
+      return { success: true };
+    }
+  } catch (error) {
+    console.error('Error handling lease signing:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to process lease signing' 
+    };
   }
 }
 
@@ -2486,30 +2939,60 @@ export async function uploadLeaseDocument(
 }
 
 // Send lease to tenant (update status and potentially trigger notification)
-export async function sendLeaseToTenant(leaseId: string, tenantId: string): Promise<DbLease | null> {
+export async function sendLeaseToTenant(leaseId: string, tenantId: string | null): Promise<DbLease | null> {
   try {
+    console.log('📤 Sending lease to tenant:', { leaseId, tenantId });
+    
+    // Fetch the lease to check if it has application_id
+    const { data: lease, error: fetchError } = await supabase
+      .from('leases')
+      .select('*')
+      .eq('id', leaseId)
+      .single();
+
+    if (fetchError || !lease) {
+      console.error('Error fetching lease:', fetchError);
+      return null;
+    }
+
+    console.log('📄 Lease data:', { 
+      id: lease.id, 
+      tenant_id: lease.tenant_id, 
+      application_id: lease.application_id,
+      status: lease.status 
+    });
+
+    // Update lease status to 'sent'
+    const updateData: any = {
+      status: 'sent',
+      updated_at: new Date().toISOString(),
+    };
+
+    // Only update tenant_id if it's provided and not already set
+    if (tenantId && !lease.tenant_id) {
+      updateData.tenant_id = tenantId;
+    }
+
     const { data, error } = await supabase
       .from('leases')
-      .update({
-        status: 'sent',
-        tenant_id: tenantId,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq('id', leaseId)
       .select()
       .single();
 
     if (error) {
-      console.error('Error sending lease to tenant:', error);
+      console.error('❌ Error updating lease status:', error);
       return null;
     }
+
+    console.log('✅ Lease sent successfully:', data);
 
     // TODO: Trigger notification to tenant (in-app, push, email)
     // This would typically be handled by a Supabase Edge Function or backend service
 
     return data;
   } catch (error) {
-    console.error('Error sending lease to tenant:', error);
+    console.error('❌ Error sending lease to tenant:', error);
     return null;
   }
 }
@@ -3036,7 +3519,7 @@ export async function fetchPendingInvites(userId: string) {
       .from('profiles')
       .select('email')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
     const userEmail = profile?.email;
 
@@ -3195,6 +3678,7 @@ export async function submitApplication(params: {
   applicantEmail: string;
   applicantPhone?: string;
   formData: any;
+  coApplicants?: any[]; // Array of co-applicant data
   inviteId?: string;
 }) {
   try {
@@ -3262,6 +3746,52 @@ export async function submitApplication(params: {
       unit_id: data.unit_id,
       sub_unit_id: data.sub_unit_id,
     });
+
+    // Insert co-applicants if provided
+    if (params.coApplicants && params.coApplicants.length > 0) {
+      console.log('👥 Inserting', params.coApplicants.length, 'co-applicants...');
+      
+      const coApplicantsToInsert = params.coApplicants.map((coApp, index) => ({
+        application_id: data.id,
+        applicant_order: index + 2, // 1 is primary, so start from 2
+        full_name: coApp.personal?.fullName || '',
+        email: coApp.personal?.email || '',
+        phone: coApp.personal?.phone || null,
+        date_of_birth: coApp.personal?.dob || null,
+        current_address: coApp.residence?.currentAddress || null,
+        current_landlord_name: coApp.residence?.currentLandlordName || null,
+        current_landlord_contact: coApp.residence?.currentLandlordContact || null,
+        previous_address: coApp.residence?.previousAddress || null,
+        previous_landlord_name: coApp.residence?.previousLandlordName || null,
+        previous_landlord_contact: coApp.residence?.previousLandlordContact || null,
+        employer_name: coApp.employment?.employerName || null,
+        job_title: coApp.employment?.jobTitle || null,
+        employment_type: coApp.employment?.employmentType || null,
+        annual_income: coApp.employment?.annualIncome || null,
+        additional_income: coApp.employment?.additionalIncome || null,
+        occupants: coApp.other?.occupants || null,
+        vehicle_info: coApp.other?.vehicleInfo || null,
+        pets: coApp.other?.pets || false,
+        notes: coApp.other?.notes || null,
+        documents: coApp.documents || {},
+        form_data: coApp,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { data: coAppData, error: coAppError } = await supabase
+        .from('co_applicants')
+        .insert(coApplicantsToInsert)
+        .select();
+
+      if (coAppError) {
+        console.error('❌ Error inserting co-applicants:', coAppError);
+        // Don't fail the whole application if co-applicants fail
+        // The primary application is already saved
+      } else {
+        console.log('✅ Co-applicants inserted successfully:', coAppData?.length || 0);
+      }
+    }
 
     // Update applicant record status to 'applied'
     if (params.inviteId) {

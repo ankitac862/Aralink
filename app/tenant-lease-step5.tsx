@@ -73,13 +73,14 @@ export default function TenantLeaseStep5Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant } = useLocalSearchParams<{ 
     propertyId?: string; 
     address?: string; 
     fromInvite?: string;
     unitId?: string;
     subUnitId?: string;
     inviteId?: string;
+    isCoApplicant?: string;
   }>();
   const { tenantDraft, updateDraft } = useLeaseStore();
 
@@ -132,7 +133,7 @@ export default function TenantLeaseStep5Screen() {
     if (canContinue) {
       router.push({ 
         pathname: '/tenant-lease-step6', 
-        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId } 
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant } 
       });
     } else {
       Alert.alert('Missing Document', 'Please upload your Government ID before continuing.');

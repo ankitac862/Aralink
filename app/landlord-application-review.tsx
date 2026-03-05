@@ -69,8 +69,17 @@ export default function LandlordApplicationReviewScreen() {
               text: 'OK',
               onPress: () => {
                 if (action === 'now') {
-                  // Navigate to add-tenant with prefilled data
-                  router.replace(`/add-tenant?applicationId=${id}`);
+                  // Navigate to lease wizard with prefilled data from application
+                  router.replace({
+                    pathname: '/lease-wizard',
+                    params: { 
+                      applicationId: id,
+                      propertyId: application.property_id,
+                      unitId: application.unit_id,
+                      subUnitId: application.sub_unit_id,
+                      tenantName: application.applicant_name,
+                    }
+                  });
                 } else {
                   // Go back to applications list
                   router.back();
@@ -499,13 +508,13 @@ export default function LandlordApplicationReviewScreen() {
               Application Approved!
             </ThemedText>
             <ThemedText style={[styles.modalMessage, { color: textSecondaryColor }]}>
-              Do you want to add this applicant as a tenant now?
+              Do you want to generate a lease for this applicant now?
             </ThemedText>
 
             <TouchableOpacity
               style={[styles.modalButton, { backgroundColor: primaryColor }]}
               onPress={() => handleApproveWithTenant('now')}>
-              <ThemedText style={styles.modalButtonText}>Add as Tenant Now</ThemedText>
+              <ThemedText style={styles.modalButtonText}>Generate Lease Now</ThemedText>
             </TouchableOpacity>
 
             <TouchableOpacity

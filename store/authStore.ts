@@ -35,6 +35,7 @@ interface AuthState {
   signInWithApple: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
+  updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; error?: string }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   clearError: () => void;
   setPendingVerificationEmail: (email: string | null) => void;
@@ -450,6 +451,37 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       set({ isLoading: false, error: errorMessage });
       return { success: false, error: errorMessage };
+    }
+  },
+
+  updateAvatar: async (avatarUrl: string) => {
+    const currentUser = get().user;
+    if (!currentUser) {
+      return { success: false, error: 'No user logged in' };
+    }
+
+    try {
+      // Update profile in database
+      const result = await upsertUserProfile({
+        id: currentUser.id,
+        avatar_url: avatarUrl,
+      });
+
+      if (result) {
+        // Update local state
+        set({ 
+          user: { 
+            ...currentUser, 
+            avatarUrl 
+          } 
+        });
+        return { success: true };
+      }
+
+      return { success: false, error: 'Failed to update avatar' };
+    } catch (error) {
+      console.error('Error updating avatar:', error);
+      return { success: false, error: 'Failed to update avatar' };
     }
   },
 

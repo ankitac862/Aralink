@@ -3,6 +3,7 @@ import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image, Activ
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -23,13 +24,16 @@ export default function TenantsScreen() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending'>('all');
   const [leaseStatuses, setLeaseStatuses] = useState<Record<string, 'active' | 'inactive' | 'pending'>>({});
 
-  // Load tenants from Supabase on mount
-  useEffect(() => {
-    if (user?.id) {
-      loadFromSupabase(user.id);
-      loadProperties(user.id);
-    }
-  }, [user?.id]);
+  // Load tenants from Supabase when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user?.id) {
+        console.log('🔄 Tenants screen focused - reloading data');
+        loadFromSupabase(user.id);
+        loadProperties(user.id);
+      }
+    }, [user?.id])
+  );
 
   // Load lease statuses for all tenants
   useEffect(() => {
@@ -56,10 +60,28 @@ export default function TenantsScreen() {
   const primaryColor = '#005a9c';
   const successColor = '#28a745';
 
+  console.log('🏠 TenantsScreen: Rendering with', tenants.length, 'tenants');
+  console.log('📋 TenantsScreen: Tenant list:', tenants.map(t => ({
+    id: t.id,
+    name: `${t.firstName} ${t.lastName}`,
+    propertyId: t.propertyId,
+    unitId: t.unitId
+  })));
+
   // Transform tenants for display
   const displayTenants = tenants.map(tenant => {
+    console.log(`🔍 Processing tenant ${tenant.id}:`, {
+      propertyId: tenant.propertyId,
+      unitId: tenant.unitId,
+      unitName: tenant.unitName
+    });
+    
     const property = getPropertyById(tenant.propertyId);
+    console.log(`📍 Property lookup for ${tenant.propertyId}:`, property ? `Found: ${property.address1}` : 'Not found');
+    
     const unit = tenant.unitId ? getUnitById(tenant.unitId) : null;
+    console.log(`📍 Unit lookup for ${tenant.unitId}:`, unit ? `Found: ${unit.name}` : 'Not found');
+    
     
     // Build location string based on property type
     let locationParts: string[] = [];
@@ -88,7 +110,7 @@ export default function TenantsScreen() {
       }
     }
     
-    return {
+    const displayTenant = {
       id: tenant.id,
       name: `${tenant.firstName} ${tenant.lastName}`,
       email: tenant.email,
@@ -96,7 +118,12 @@ export default function TenantsScreen() {
       status: leaseStatuses[tenant.id] || 'inactive',
       image: tenant.photo || 'https://via.placeholder.com/150',
     };
+    
+    console.log(`✅ Display tenant created:`, displayTenant);
+    return displayTenant;
   });
+
+  console.log('📋 Total display tenants:', displayTenants.length);
 
   const filteredTenants = displayTenants.filter((t) => {
     const matchSearch = !searchQuery || 
@@ -104,8 +131,22 @@ export default function TenantsScreen() {
       t.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.location.toLowerCase().includes(searchQuery.toLowerCase());
     const matchStatus = filterStatus === 'all' || t.status === filterStatus;
-    return matchSearch && matchStatus;
+    const matches = matchSearch && matchStatus;
+    
+    if (!matches) {
+      console.log(`❌ Tenant filtered out:`, {
+        name: t.name,
+        matchSearch,
+        matchStatus,
+        filterStatus,
+        tenantStatus: t.status
+      });
+    }
+    
+    return matches;
   });
+
+  console.log('✅ Filtered tenants:', filteredTenants.length, 'out of', displayTenants.length);
 
   interface DisplayTenant {
     id: string;

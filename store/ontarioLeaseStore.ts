@@ -127,6 +127,8 @@ interface OntarioLeaseWizardState {
   propertyId: string | null;
   unitId: string | null;
   tenantId: string | null;
+  personType: 'tenant' | 'applicant' | null; // Track if selected person is tenant or applicant
+  applicationId: string | null; // Store application ID if it's an applicant
   
   // Draft lease (if saved to DB)
   draftLeaseId: string | null;
@@ -151,6 +153,7 @@ interface OntarioLeaseWizardState {
   // Context setters
   propertyContext: { propertyId?: string; unitId?: string; subUnitId?: string } | null;
   setPropertyContext: (context: { propertyId?: string; unitId?: string; subUnitId?: string; tenantId?: string }) => void;
+  setTenantId: (tenantId: string | null, personType?: 'tenant' | 'applicant', applicationId?: string) => void;
   
   // Pre-fill from user profile
   prefillLandlordInfo: (name: string, email?: string, phone?: string, address?: string) => void;
@@ -194,6 +197,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   propertyId: null,
   unitId: null,
   tenantId: null,
+  personType: null,
+  applicationId: null,
   draftLeaseId: null,
   propertyContext: null,
   
@@ -288,6 +293,14 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
     });
   },
   
+  setTenantId: (tenantId, personType, applicationId) => {
+    set({ 
+      tenantId,
+      personType: personType || null,
+      applicationId: applicationId || null,
+    });
+  },
+  
   prefillLandlordInfo: (name, email, phone, address) => {
     set((state) => ({
       formData: {
@@ -318,7 +331,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   },
   
   saveDraft: async (userId) => {
-    const { formData, propertyId, unitId, tenantId, draftLeaseId } = get();
+    const { formData, propertyId, unitId, tenantId, personType, applicationId, draftLeaseId } = get();
     
     if (!propertyId) {
       set({ error: 'Property ID is required' });
@@ -334,7 +347,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           form_data: formData,
           property_id: propertyId,
           unit_id: unitId || undefined,
-          tenant_id: tenantId || undefined,
+          tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
+          application_id: personType === 'applicant' ? applicationId || undefined : undefined,
         });
         
         set({ isSaving: false });
@@ -345,7 +359,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           user_id: userId,
           property_id: propertyId,
           unit_id: unitId || undefined,
-          tenant_id: tenantId || undefined,
+          tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
+          application_id: personType === 'applicant' ? applicationId || undefined : undefined,
           status: 'draft',
           form_data: formData,
         });
@@ -381,7 +396,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   },
   
   generateLease: async (userId) => {
-    const { formData, propertyId, unitId, tenantId, draftLeaseId } = get();
+    const { formData, propertyId, unitId, tenantId, personType, applicationId, draftLeaseId } = get();
     
     if (!propertyId) {
       set({ error: 'Property ID is required' });
@@ -399,7 +414,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           user_id: userId,
           property_id: propertyId,
           unit_id: unitId || undefined,
-          tenant_id: tenantId || undefined,
+          tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
+          application_id: personType === 'applicant' ? applicationId || undefined : undefined,
           status: 'draft',
           form_data: formData,
           effective_date: formData.tenancyStartDate,
@@ -447,7 +463,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
    * Generate official PDF with XFA template (with automatic fallback)
    */
   generateOfficialPdf: async (userId) => {
-    const { formData, propertyId, unitId, tenantId, draftLeaseId } = get();
+    const { formData, propertyId, unitId, tenantId, personType, applicationId, draftLeaseId } = get();
     
     if (!propertyId) {
       return { success: false, error: 'Property ID is required' };
@@ -464,7 +480,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           user_id: userId,
           property_id: propertyId,
           unit_id: unitId || undefined,
-          tenant_id: tenantId || undefined,
+          tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
+          application_id: personType === 'applicant' ? applicationId || undefined : undefined,
           status: 'draft',
           form_data: formData,
           effective_date: formData.tenancyStartDate,
@@ -560,7 +577,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   },
   
   uploadLease: async (uri, userId) => {
-    const { propertyId, unitId, tenantId, draftLeaseId } = get();
+    const { propertyId, unitId, tenantId, personType, applicationId, draftLeaseId } = get();
     
     if (!propertyId) {
       set({ error: 'Property ID is required' });
@@ -578,7 +595,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           user_id: userId,
           property_id: propertyId,
           unit_id: unitId || undefined,
-          tenant_id: tenantId || undefined,
+          tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
+          application_id: personType === 'applicant' ? applicationId || undefined : undefined,
           status: 'uploaded',
           form_data: get().formData,
         });
@@ -625,6 +643,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       propertyId: null,
       unitId: null,
       tenantId: null,
+      personType: null,
+      applicationId: null,
       draftLeaseId: null,
       propertyContext: null,
       isLoading: false,

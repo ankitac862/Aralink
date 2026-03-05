@@ -14,13 +14,24 @@ export default function TenantLeaseStep6Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { propertyId, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+  const { propertyId, unitId, subUnitId, inviteId, isCoApplicant } = useLocalSearchParams<{ 
     propertyId?: string;
     unitId?: string;
     subUnitId?: string;
     inviteId?: string;
+    isCoApplicant?: string;
   }>();
-  const { tenantDraft, submitDraft } = useLeaseStore();
+  const { 
+    tenantDraft, 
+    coApplicants, 
+    isAddingCoApplicant,
+    submitDraft,
+    startAddingCoApplicant,
+    saveCurrentCoApplicant,
+    editCoApplicant,
+    removeCoApplicant,
+    getCoApplicantCount,
+  } = useLeaseStore();
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
@@ -39,14 +50,17 @@ export default function TenantLeaseStep6Screen() {
   const validate = () => {
     const newErrors: Record<string, string> = {};
 
-    if (!agreed) {
-      newErrors.agreed = 'You must agree to the terms';
-    }
+    // Skip consent and signature validation when adding co-applicant
+    if (isCoApplicant !== 'true') {
+      if (!agreed) {
+        newErrors.agreed = 'You must agree to the terms';
+      }
 
-    if (!signature.trim()) {
-      newErrors.signature = 'Signature is required';
-    } else if (signature.trim() !== tenantDraft.personal.fullName.trim()) {
-      newErrors.signature = 'Signature must match your full name';
+      if (!signature.trim()) {
+        newErrors.signature = 'Signature is required';
+      } else if (signature.trim() !== tenantDraft.personal.fullName.trim()) {
+        newErrors.signature = 'Signature must match your full name';
+      }
     }
 
     setErrors(newErrors);
@@ -56,6 +70,19 @@ export default function TenantLeaseStep6Screen() {
   const handleSubmit = async () => {
     if (validate()) {
       try {
+        // If adding/editing a co-applicant, save and return to review page
+        if (isCoApplicant === 'true') {
+          saveCurrentCoApplicant();
+          console.log('✅ Co-applicant saved');
+          // Navigate back to review page (without isCoApplicant param to show review mode)
+          router.push({
+            pathname: '/tenant-lease-step6',
+            params: { propertyId, unitId, subUnitId, inviteId }
+          });
+          return;
+        }
+        
+        // Otherwise, submit the entire application
         console.log('🚀 Starting application submission...');
         console.log('📋 Raw params from useLocalSearchParams:', {
           propertyId,
@@ -94,6 +121,36 @@ export default function TenantLeaseStep6Screen() {
 
   const handleEdit = (step: number) => {
     router.push(`/tenant-lease-step${step}`);
+  };
+
+  const handleAddCoApplicant = () => {
+    const totalCount = getCoApplicantCount();
+    if (totalCount >= 12) {
+      alert('Maximum of 12 applicants (including primary) allowed');
+      return;
+    }
+    
+    // Save current primary applicant if in co-applicant mode
+    if (isAddingCoApplicant) {
+      saveCurrentCoApplicant();
+    }
+    
+    // Start adding new co-applicant
+    startAddingCoApplicant();
+    
+    // Navigate to step 1 to fill co-applicant info
+    router.push(`/tenant-lease-step1?propertyId=${propertyId || ''}&unitId=${unitId || ''}&subUnitId=${subUnitId || ''}&inviteId=${inviteId || ''}&isCoApplicant=true`);
+  };
+
+  const handleEditCoApplicant = (index: number) => {
+    editCoApplicant(index);
+    router.push(`/tenant-lease-step1?propertyId=${propertyId || ''}&unitId=${unitId || ''}&subUnitId=${subUnitId || ''}&inviteId=${inviteId || ''}&isCoApplicant=true`);
+  };
+
+  const handleRemoveCoApplicant = (index: number) => {
+    if (confirm('Are you sure you want to remove this co-applicant?')) {
+      removeCoApplicant(index);
+    }
   };
 
   return (
@@ -212,58 +269,137 @@ export default function TenantLeaseStep6Screen() {
           </View>
         </View>
 
-        {/* Consent */}
-        <View style={[styles.consentCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() => setAgreed(!agreed)}>
-            <View
-              style={[
-                styles.checkbox,
-                {
-                  backgroundColor: agreed ? primaryColor : 'transparent',
-                  borderColor: agreed ? primaryColor : borderColor,
-                },
-              ]}>
-              {agreed && <MaterialCommunityIcons name="check" size={16} color="#ffffff" />}
+        {/* Co-Applicants Section - Only show when NOT adding/editing co-applicant */}
+        {isCoApplicant !== 'true' && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <View style={styles.sectionHeader}>
+              <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>
+                Co-Applicants ({coApplicants.length})
+              </ThemedText>
             </View>
-            <ThemedText style={[styles.consentText, { color: textPrimaryColor }]}>
-              I agree to the terms and consent to a credit and background check. I confirm that all information
-              provided is true and accurate.
-            </ThemedText>
-          </TouchableOpacity>
-          {errors.agreed && <ThemedText style={styles.errorText}>{errors.agreed}</ThemedText>}
-        </View>
+            
+            {coApplicants.length === 0 ? (
+              <ThemedText style={[styles.infoLabel, { color: textSecondaryColor, marginBottom: 12 }]}>
+                No co-applicants added yet
+              </ThemedText>
+            ) : (
+              <View style={{ gap: 12, marginBottom: 12 }}>
+                {coApplicants.map((coApp, index) => (
+                  <View 
+                    key={index} 
+                    style={[
+                      styles.coApplicantItem, 
+                      { 
+                        backgroundColor: isDark ? '#121920' : '#F8F9FA',
+                        borderColor,
+                      }
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={[styles.coApplicantName, { color: textPrimaryColor }]}>
+                        {coApp.personal.fullName || 'Unnamed Co-Applicant'}
+                      </ThemedText>
+                      <ThemedText style={[styles.coApplicantEmail, { color: textSecondaryColor }]}>
+                        {coApp.personal.email}
+                      </ThemedText>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity 
+                        onPress={() => handleEditCoApplicant(index)}
+                        style={styles.iconButton}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={20} color={primaryColor} />
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => handleRemoveCoApplicant(index)}
+                        style={styles.iconButton}
+                      >
+                        <MaterialCommunityIcons name="delete" size={20} color="#ff3b30" />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
 
-        {/* Signature */}
-        <View style={[styles.signatureCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.label, { color: textPrimaryColor }]}>
-            Type your full name as signature
-          </ThemedText>
-          <TextInput
-            style={[
-              styles.signatureInput,
-              {
-                backgroundColor: inputBgColor,
-                color: textPrimaryColor,
-                borderColor: errors.signature ? '#ff3b30' : borderColor,
-              },
-            ]}
-            placeholder="Enter your full name"
-            placeholderTextColor={textSecondaryColor}
-            value={signature}
-            onChangeText={(value) => {
-              setSignature(value);
-              if (errors.signature) setErrors({ ...errors, signature: '' });
-            }}
-          />
-          {errors.signature && <ThemedText style={styles.errorText}>{errors.signature}</ThemedText>}
-        </View>
+            {getCoApplicantCount() < 12 && (
+              <TouchableOpacity
+                style={[styles.addCoApplicantButton, { borderColor: primaryColor }]}
+                onPress={handleAddCoApplicant}
+              >
+                <MaterialCommunityIcons name="plus-circle" size={24} color={primaryColor} />
+                <ThemedText style={[styles.addCoApplicantText, { color: primaryColor }]}>
+                  Add Co-Applicant ({getCoApplicantCount()}/12)
+                </ThemedText>
+              </TouchableOpacity>
+            )}
+            
+            {getCoApplicantCount() >= 12 && (
+              <ThemedText style={[styles.maxApplicantsText, { color: textSecondaryColor }]}>
+                Maximum of 12 applicants reached
+              </ThemedText>
+            )}
+          </View>
+        )}
+
+        {/* Consent - Only show when NOT adding co-applicant or submitting full app */}
+        {isCoApplicant !== 'true' && (
+          <View style={[styles.consentCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setAgreed(!agreed)}>
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    backgroundColor: agreed ? primaryColor : 'transparent',
+                    borderColor: agreed ? primaryColor : borderColor,
+                  },
+                ]}>
+                {agreed && <MaterialCommunityIcons name="check" size={16} color="#ffffff" />}
+              </View>
+              <ThemedText style={[styles.consentText, { color: textPrimaryColor }]}>
+                I agree to the terms and consent to a credit and background check. I confirm that all information
+                provided is true and accurate.
+              </ThemedText>
+            </TouchableOpacity>
+            {errors.agreed && <ThemedText style={styles.errorText}>{errors.agreed}</ThemedText>}
+          </View>
+        )}
+
+        {/* Signature - Only show when NOT adding co-applicant */}
+        {isCoApplicant !== 'true' && (
+          <View style={[styles.signatureCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.label, { color: textPrimaryColor }]}>
+              Type your full name as signature
+            </ThemedText>
+            <TextInput
+              style={[
+                styles.signatureInput,
+                {
+                  backgroundColor: inputBgColor,
+                  color: textPrimaryColor,
+                  borderColor: errors.signature ? '#ff3b30' : borderColor,
+                },
+              ]}
+              placeholder="Enter your full name"
+              placeholderTextColor={textSecondaryColor}
+              value={signature}
+              onChangeText={(value) => {
+                setSignature(value);
+                if (errors.signature) setErrors({ ...errors, signature: '' });
+              }}
+            />
+            {errors.signature && <ThemedText style={styles.errorText}>{errors.signature}</ThemedText>}
+          </View>
+        )}
 
         <TouchableOpacity
           style={[styles.submitButton, { backgroundColor: primaryColor }]}
           onPress={handleSubmit}>
-          <ThemedText style={styles.submitButtonText}>Submit Application</ThemedText>
+          <ThemedText style={styles.submitButtonText}>
+            {isCoApplicant === 'true' ? 'Save Co-Applicant' : 'Submit Application'}
+          </ThemedText>
         </TouchableOpacity>
       </ScrollView>
     </ThemedView>
@@ -414,6 +550,43 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  coApplicantItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  coApplicantName: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  coApplicantEmail: {
+    fontSize: 13,
+  },
+  iconButton: {
+    padding: 4,
+  },
+  addCoApplicantButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    gap: 8,
+  },
+  addCoApplicantText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  maxApplicantsText: {
+    fontSize: 13,
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });
 
