@@ -16,8 +16,11 @@ export default function LandlordApplicationReviewScreen() {
   const { id } = useLocalSearchParams();
 
   const [application, setApplication] = useState<any>(null);
+  const [coApplicants, setCoApplicants] = useState<any[]>([]);
+  const [selectedCoApplicant, setSelectedCoApplicant] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [showCoApplicantModal, setShowCoApplicantModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const isDark = colorScheme === 'dark';
@@ -41,11 +44,34 @@ export default function LandlordApplicationReviewScreen() {
     try {
       const data = await getApplicationById(id as string);
       setApplication(data);
+      
+      // Load co-applicants for this application
+      await loadCoApplicants(id as string);
     } catch (error) {
       console.error('Error loading application:', error);
       Alert.alert('Error', 'Failed to load application details');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadCoApplicants = async (applicationId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('co_applicants')
+        .select('*')
+        .eq('application_id', applicationId)
+        .order('applicant_order', { ascending: true });
+
+      if (error) {
+        console.error('Error loading co-applicants:', error);
+        return;
+      }
+
+      setCoApplicants(data || []);
+      console.log(`✅ Loaded ${data?.length || 0} co-applicants`);
+    } catch (error) {
+      console.error('Error fetching co-applicants:', error);
     }
   };
 
@@ -69,6 +95,9 @@ export default function LandlordApplicationReviewScreen() {
               text: 'OK',
               onPress: () => {
                 if (action === 'now') {
+                  // Prepare co-applicant names for lease
+                  const coApplicantNames = coApplicants.map(ca => ca.full_name);
+                  
                   // Navigate to lease wizard with prefilled data from application
                   router.replace({
                     pathname: '/lease-wizard',
@@ -78,6 +107,7 @@ export default function LandlordApplicationReviewScreen() {
                       unitId: application.unit_id,
                       subUnitId: application.sub_unit_id,
                       tenantName: application.applicant_name,
+                      coApplicantNames: JSON.stringify(coApplicantNames), // Pass as JSON string
                     }
                   });
                 } else {
@@ -271,6 +301,51 @@ export default function LandlordApplicationReviewScreen() {
           </View>
         </View>
 
+        {/* Co-Applicants Section */}
+        {coApplicants.length > 0 && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <View style={styles.sectionHeaderRow}>
+              <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>
+                Co-Applicants ({coApplicants.length})
+              </ThemedText>
+              <MaterialCommunityIcons name="account-group" size={20} color={primaryColor} />
+            </View>
+            <View style={styles.sectionContent}>
+              {coApplicants.map((coApplicant, index) => (
+                <TouchableOpacity
+                  key={coApplicant.id}
+                  style={[styles.coApplicantItem, { borderColor }]}
+                  onPress={() => {
+                    setSelectedCoApplicant(coApplicant);
+                    setShowCoApplicantModal(true);
+                  }}>
+                  <View style={styles.coApplicantInfo}>
+                    <View style={[styles.coApplicantAvatar, { backgroundColor: `${primaryColor}20` }]}>
+                      <ThemedText style={[styles.coApplicantAvatarText, { color: primaryColor }]}>
+                        {coApplicant.full_name.charAt(0).toUpperCase()}
+                      </ThemedText>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={[styles.coApplicantName, { color: textPrimaryColor }]}>
+                        {coApplicant.full_name}
+                      </ThemedText>
+                      <ThemedText style={[styles.coApplicantEmail, { color: textSecondaryColor }]}>
+                        {coApplicant.email}
+                      </ThemedText>
+                      {coApplicant.phone && (
+                        <ThemedText style={[styles.coApplicantPhone, { color: textSecondaryColor }]}>
+                          {coApplicant.phone}
+                        </ThemedText>
+                      )}
+                    </View>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={20} color={textSecondaryColor} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Employment & Financial Information */}
         {application.form_data?.employment && (
           <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
@@ -428,9 +503,6 @@ export default function LandlordApplicationReviewScreen() {
         {application.form_data?.documents && Object.keys(application.form_data.documents).length > 0 && (
           <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
             <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Uploaded Documents</ThemedText>
-            <ThemedText style={[styles.documentNote, { color: textSecondaryColor }]}>
-              Note: Documents are currently stored on the applicant's device. They will be available after server upload is implemented.
-            </ThemedText>
             <View style={styles.sectionContent}>
               {Object.entries(application.form_data.documents).map(([key, value]) => {
                 if (!value) return null;
@@ -532,6 +604,225 @@ export default function LandlordApplicationReviewScreen() {
                 Cancel
               </ThemedText>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Co-Applicant Detail Modal */}
+      <Modal
+        visible={showCoApplicantModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCoApplicantModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.coApplicantModal, { backgroundColor: modalBg }]}>
+            <View style={styles.coApplicantModalHeader}>
+              <ThemedText style={[styles.modalTitle, { color: textPrimaryColor }]}>
+                Co-Applicant Details
+              </ThemedText>
+              <TouchableOpacity onPress={() => setShowCoApplicantModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textPrimaryColor} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedCoApplicant && (
+              <ScrollView 
+                style={styles.coApplicantModalContent}
+                contentContainerStyle={styles.coApplicantModalScroll}
+                showsVerticalScrollIndicator={true}
+              >
+                {/* Personal Information */}
+                <View style={[styles.modalSection, { borderColor }]}>
+                  <ThemedText style={[styles.modalSectionTitle, { color: textPrimaryColor }]}>
+                    Personal Information
+                  </ThemedText>
+                  <View style={styles.infoRow}>
+                    <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Full Name</ThemedText>
+                    <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                      {selectedCoApplicant.full_name}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Email</ThemedText>
+                    <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                      {selectedCoApplicant.email}
+                    </ThemedText>
+                  </View>
+                  {selectedCoApplicant.phone && (
+                    <View style={styles.infoRow}>
+                      <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Phone</ThemedText>
+                      <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                        {selectedCoApplicant.phone}
+                      </ThemedText>
+                    </View>
+                  )}
+                  {selectedCoApplicant.date_of_birth && (
+                    <View style={styles.infoRow}>
+                      <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Date of Birth</ThemedText>
+                      <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                        {selectedCoApplicant.date_of_birth}
+                      </ThemedText>
+                    </View>
+                  )}
+                </View>
+
+                {/* Employment Information */}
+                {(selectedCoApplicant.employer_name || selectedCoApplicant.annual_income) && (
+                  <View style={[styles.modalSection, { borderColor }]}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textPrimaryColor }]}>
+                      Employment & Financial
+                    </ThemedText>
+                    {selectedCoApplicant.employer_name && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Employer</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.employer_name}
+                        </ThemedText>
+                      </View>
+                    )}
+                    {selectedCoApplicant.job_title && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Job Title</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.job_title}
+                        </ThemedText>
+                      </View>
+                    )}
+                    {selectedCoApplicant.employment_type && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Employment Type</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.employment_type}
+                        </ThemedText>
+                      </View>
+                    )}
+                    {selectedCoApplicant.annual_income && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Annual Income</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          ${selectedCoApplicant.annual_income}
+                        </ThemedText>
+                      </View>
+                    )}
+                    {selectedCoApplicant.additional_income && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Additional Income</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          ${selectedCoApplicant.additional_income}
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* Rental History */}
+                {(selectedCoApplicant.current_address || selectedCoApplicant.previous_address) && (
+                  <View style={[styles.modalSection, { borderColor }]}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textPrimaryColor }]}>
+                      Rental History
+                    </ThemedText>
+                    {selectedCoApplicant.current_address && (
+                      <>
+                        <ThemedText style={[styles.subsectionTitle, { color: textPrimaryColor }]}>
+                          Current Residence
+                        </ThemedText>
+                        <View style={styles.infoRow}>
+                          <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Address</ThemedText>
+                          <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                            {selectedCoApplicant.current_address}
+                          </ThemedText>
+                        </View>
+                        {selectedCoApplicant.current_landlord_name && (
+                          <View style={styles.infoRow}>
+                            <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Name</ThemedText>
+                            <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                              {selectedCoApplicant.current_landlord_name}
+                            </ThemedText>
+                          </View>
+                        )}
+                        {selectedCoApplicant.current_landlord_contact && (
+                          <View style={styles.infoRow}>
+                            <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Contact</ThemedText>
+                            <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                              {selectedCoApplicant.current_landlord_contact}
+                            </ThemedText>
+                          </View>
+                        )}
+                      </>
+                    )}
+                    {selectedCoApplicant.previous_address && (
+                      <>
+                        {selectedCoApplicant.current_address && <View style={styles.divider} />}
+                        <ThemedText style={[styles.subsectionTitle, { color: textPrimaryColor, marginTop: 12 }]}>
+                          Previous Residence
+                        </ThemedText>
+                        <View style={styles.infoRow}>
+                          <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Address</ThemedText>
+                          <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                            {selectedCoApplicant.previous_address}
+                          </ThemedText>
+                        </View>
+                        {selectedCoApplicant.previous_landlord_name && (
+                          <View style={styles.infoRow}>
+                            <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Name</ThemedText>
+                            <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                              {selectedCoApplicant.previous_landlord_name}
+                            </ThemedText>
+                          </View>
+                        )}
+                        {selectedCoApplicant.previous_landlord_contact && (
+                          <View style={styles.infoRow}>
+                            <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Landlord Contact</ThemedText>
+                            <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                              {selectedCoApplicant.previous_landlord_contact}
+                            </ThemedText>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+
+                {/* Additional Information */}
+                {(selectedCoApplicant.occupants || selectedCoApplicant.vehicle_info || selectedCoApplicant.notes) && (
+                  <View style={[styles.modalSection, { borderColor }]}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textPrimaryColor }]}>
+                      Additional Information
+                    </ThemedText>
+                    {selectedCoApplicant.occupants && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Other Occupants</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.occupants}
+                        </ThemedText>
+                      </View>
+                    )}
+                    {selectedCoApplicant.vehicle_info && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Vehicle Info</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.vehicle_info}
+                        </ThemedText>
+                      </View>
+                    )}
+                    <View style={styles.infoRow}>
+                      <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Pets</ThemedText>
+                      <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                        {selectedCoApplicant.pets ? 'Yes' : 'No'}
+                      </ThemedText>
+                    </View>
+                    {selectedCoApplicant.notes && (
+                      <View style={styles.infoRow}>
+                        <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Notes</ThemedText>
+                        <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                          {selectedCoApplicant.notes}
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -751,6 +1042,85 @@ const styles = StyleSheet.create({
   },
   modalButtonTextCancel: {
     fontSize: 14,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  coApplicantItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  coApplicantInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  coApplicantAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coApplicantAvatarText: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  coApplicantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  coApplicantEmail: {
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  coApplicantPhone: {
+    fontSize: 12,
+  },
+  coApplicantModal: {
+    width: '90%',
+    maxHeight: '80%',
+    borderRadius: 16,
+    padding: 0,
+    overflow: 'hidden',
+  },
+  coApplicantModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  coApplicantModalContent: {
+    maxHeight: 500,
+  },
+  coApplicantModalScroll: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalSection: {
+    paddingBottom: 20,
+    marginBottom: 20,
+    borderBottomWidth: 1,
+  },
+  modalSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 12,
   },
 });
 

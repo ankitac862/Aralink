@@ -2690,6 +2690,43 @@ export async function convertApplicantToTenant(params: {
     
     console.log('✅ Tenant property link created successfully');
 
+    // 5.5. Create co-tenant records for co-applicants
+    console.log('🔄 Creating co-tenant records for co-applicants...');
+    const { data: coApplicants, error: coAppError } = await supabase
+      .from('co_applicants')
+      .select('*')
+      .eq('application_id', params.applicationId)
+      .order('applicant_order', { ascending: true });
+
+    if (!coAppError && coApplicants && coApplicants.length > 0) {
+      console.log(`📋 Found ${coApplicants.length} co-applicants to convert`);
+      
+      // Get the tenant_property_link id we just created
+      const tenantLinkId = linkResult[0].id;
+      
+      const coTenantRecords = coApplicants.map(coApp => ({
+        tenant_id: tenantLinkId,
+        property_id: params.propertyId,
+        full_name: coApp.full_name,
+        email: coApp.email,
+        phone: coApp.phone,
+        co_applicant_id: coApp.id,
+      }));
+
+      const { error: coTenantError } = await supabase
+        .from('co_tenants')
+        .insert(coTenantRecords);
+
+      if (coTenantError) {
+        console.error('⚠️ Error creating co-tenant records:', coTenantError);
+        // Don't fail the whole conversion if co-tenants fail
+      } else {
+        console.log(`✅ Created ${coTenantRecords.length} co-tenant records`);
+      }
+    } else {
+      console.log('ℹ️ No co-applicants found for this application');
+    }
+
     // 5. Update lease with tenant_id AND mark as signed
     console.log('🔄 Updating lease with tenant_id and signed status...');
     const { error: leaseUpdateError } = await supabase

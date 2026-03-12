@@ -52,6 +52,7 @@ export default function LeaseWizardStep1() {
     email: string;
     type: 'tenant' | 'applicant';
     applicationId?: string; // For applicants
+    coApplicants?: Array<{ full_name: string; email: string }>; // Co-applicant details
   }
   
   const [personOptions, setPersonOptions] = useState<PersonOption[]>([]);
@@ -82,6 +83,27 @@ export default function LeaseWizardStep1() {
         fetchApprovedApplicants(user.id),
       ]);
       
+      // Fetch co-applicants for each approved applicant
+      const applicantsWithCoApplicants = await Promise.all(
+        applicants.map(async (a) => {
+          const { supabase } = await import('@/lib/supabase');
+          const { data: coApplicants } = await supabase
+            .from('co_applicants')
+            .select('full_name, email')
+            .eq('application_id', a.id)
+            .order('applicant_order', { ascending: true });
+          
+          return {
+            id: a.applicant_email, // Use email as temporary ID
+            fullName: a.applicant_name || a.applicant_email || 'Unknown',
+            email: a.applicant_email,
+            type: 'applicant' as const,
+            applicationId: a.id, // Store application ID
+            coApplicants: coApplicants || [],
+          };
+        })
+      );
+      
       // Combine into single list
       const options: PersonOption[] = [
         // Add tenants
@@ -92,13 +114,7 @@ export default function LeaseWizardStep1() {
           type: 'tenant' as const,
         })),
         // Add approved applicants
-        ...applicants.map(a => ({
-          id: a.applicant_email, // Use email as temporary ID
-          fullName: a.applicant_name || a.applicant_email || 'Unknown',
-          email: a.applicant_email,
-          type: 'applicant' as const,
-          applicationId: a.id, // Store application ID
-        })),
+        ...applicantsWithCoApplicants,
       ];
       
       setPersonOptions(options);
@@ -120,7 +136,7 @@ export default function LeaseWizardStep1() {
     return name.includes(normalizedQuery) || email.includes(normalizedQuery);
   });
 
-  const handleSelectPerson = (person: PersonOption, index: number) => {
+  const handleSelectPerson = async (person: PersonOption, index: number) => {
     updateTenantName(index, person.fullName);
     // Set the person ID and type in the store
     if (index === 0) {
@@ -129,6 +145,17 @@ export default function LeaseWizardStep1() {
       } else {
         // For applicants, don't set tenantId (leave null), only store application info
         setTenantId(null, 'applicant', person.applicationId);
+        
+        // If this applicant has co-applicants, automatically add them
+        if (person.coApplicants && person.coApplicants.length > 0) {
+          console.log('Auto-adding co-applicants:', person.coApplicants);
+          // Add co-applicants to the tenant list
+          person.coApplicants.forEach((coApp) => {
+            addTenantName(); // Add empty slot
+            const currentNames = useOntarioLeaseStore.getState().formData.tenantNames;
+            updateTenantName(currentNames.length - 1, coApp.full_name);
+          });
+        }
       }
     }
     setShowTenantSuggestions(null);
@@ -320,6 +347,18 @@ export default function LeaseWizardStep1() {
                                   <ThemedText style={[styles.suggestionEmail, { color: secondaryTextColor }]}>
                                     {item.email}
                                   </ThemedText>
+                                )}
+                                {item.coApplicants && item.coApplicants.length > 0 && (
+                                  <View style={{ marginTop: 4, paddingLeft: 8 }}>
+                                    {item.coApplicants.map((coApp, idx) => (
+                                      <ThemedText 
+                                        key={idx} 
+                                        style={[styles.suggestionEmail, { color: primaryColor, fontSize: 12 }]}
+                                      >
+                                        • {coApp.full_name}
+                                      </ThemedText>
+                                    ))}
+                                  </View>
                                 )}
                               </View>
                             </TouchableOpacity>

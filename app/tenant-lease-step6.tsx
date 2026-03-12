@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, TextInput, Checkbox } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, View, TextInput, Checkbox, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -46,6 +46,7 @@ export default function TenantLeaseStep6Screen() {
   const [agreed, setAgreed] = useState(false);
   const [signature, setSignature] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -68,54 +69,83 @@ export default function TenantLeaseStep6Screen() {
   };
 
   const handleSubmit = async () => {
-    if (validate()) {
-      try {
-        // If adding/editing a co-applicant, save and return to review page
-        if (isCoApplicant === 'true') {
-          saveCurrentCoApplicant();
-          console.log('✅ Co-applicant saved');
-          // Navigate back to review page (without isCoApplicant param to show review mode)
-          router.push({
-            pathname: '/tenant-lease-step6',
-            params: { propertyId, unitId, subUnitId, inviteId }
-          });
-          return;
-        }
-        
-        // Otherwise, submit the entire application
-        console.log('🚀 Starting application submission...');
-        console.log('📋 Raw params from useLocalSearchParams:', {
-          propertyId,
-          unitId,
-          subUnitId,
-          inviteId,
-          types: {
-            propertyId: typeof propertyId,
-            unitId: typeof unitId,
-            subUnitId: typeof subUnitId,
-          },
-          isEmpty: {
-            propertyId: propertyId === '',
-            unitId: unitId === '',
-            subUnitId: subUnitId === '',
-          }
-        });
-        console.log('📋 User info:', {
-          userId: user?.id,
-          userName: user?.name,
-        });
-        
-        const applicationId = await submitDraft(propertyId, unitId, subUnitId, user?.id, inviteId);
-        
-        console.log('✅ Application submitted successfully! ID:', applicationId);
-        router.push('/tenant-lease-submitted');
-      } catch (error) {
-        console.error('❌ Submission error:', error);
-        // Show error to user
-        alert('Failed to submit application. Please try again.');
+    // Validate and get errors
+    const newErrors: Record<string, string> = {};
+
+    // Skip consent and signature validation when adding co-applicant
+    if (isCoApplicant !== 'true') {
+      if (!agreed) {
+        newErrors.agreed = 'You must agree to the terms and consent';
       }
-    } else {
+
+      if (!signature.trim()) {
+        newErrors.signature = 'Signature is required';
+      } else if (signature.trim() !== tenantDraft.personal.fullName.trim()) {
+        newErrors.signature = `Signature must match your full name: ${tenantDraft.personal.fullName}`;
+      }
+    }
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) {
+      // Show first error to user
+      const firstError = Object.values(newErrors)[0];
+      alert(firstError);
       console.warn('⚠️ Validation failed, cannot submit');
+      return;
+    }
+
+    if (isSubmitting) {
+      return; // Prevent double submission
+    }
+
+    setIsSubmitting(true);
+    try {
+      // If adding/editing a co-applicant, save and return to review page
+      if (isCoApplicant === 'true') {
+        saveCurrentCoApplicant();
+        console.log('✅ Co-applicant saved');
+        // Navigate back to review page (without isCoApplicant param to show review mode)
+        router.push({
+          pathname: '/tenant-lease-step6',
+          params: { propertyId, unitId, subUnitId, inviteId }
+        });
+        return;
+      }
+      
+      // Otherwise, submit the entire application
+      console.log('🚀 Starting application submission...');
+      console.log('📋 Raw params from useLocalSearchParams:', {
+        propertyId,
+        unitId,
+        subUnitId,
+        inviteId,
+        types: {
+          propertyId: typeof propertyId,
+          unitId: typeof unitId,
+          subUnitId: typeof subUnitId,
+        },
+        isEmpty: {
+          propertyId: propertyId === '',
+          unitId: unitId === '',
+          subUnitId: subUnitId === '',
+        }
+      });
+      console.log('📋 User info:', {
+        userId: user?.id,
+        userName: user?.name,
+      });
+      
+      const applicationId = await submitDraft(propertyId, unitId, subUnitId, user?.id, inviteId);
+      
+      console.log('✅ Application submitted successfully! ID:', applicationId);
+      router.push('/tenant-lease-submitted');
+    } catch (error) {
+      console.error('❌ Submission error:', error);
+      // Show error to user
+      alert('Failed to submit application. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -395,11 +425,22 @@ export default function TenantLeaseStep6Screen() {
         )}
 
         <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: primaryColor }]}
-          onPress={handleSubmit}>
-          <ThemedText style={styles.submitButtonText}>
-            {isCoApplicant === 'true' ? 'Save Co-Applicant' : 'Submit Application'}
-          </ThemedText>
+          style={[
+            styles.submitButton, 
+            { 
+              backgroundColor: primaryColor,
+              opacity: isSubmitting ? 0.7 : 1
+            }
+          ]}
+          onPress={handleSubmit}
+          disabled={isSubmitting}>
+          {isSubmitting ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <ThemedText style={styles.submitButtonText}>
+              {isCoApplicant === 'true' ? 'Save Co-Applicant' : 'Submit Application'}
+            </ThemedText>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </ThemedView>

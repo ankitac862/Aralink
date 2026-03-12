@@ -108,7 +108,8 @@ export default function TenantLeaseStep5Screen() {
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        const fileSize = result.assets[0].size || 0;
+        const asset = result.assets[0];
+        const fileSize = asset.size || 0;
         const maxSize = 5 * 1024 * 1024; // 5MB
 
         if (fileSize > maxSize) {
@@ -116,13 +117,64 @@ export default function TenantLeaseStep5Screen() {
           return;
         }
 
-        setDocuments({ ...documents, [docType]: true });
-        updateDraft('documents', { [docType]: result.assets[0].uri });
-        Alert.alert('Success', 'Document uploaded successfully');
+        // Show uploading state
+        Alert.alert('Uploading', 'Please wait while your document is being uploaded...');
+
+        try {
+          // Upload to Supabase Storage
+          const { supabase } = await import('@/lib/supabase');
+          const { user } = await import('@/store/authStore').then(m => m.useAuthStore.getState());
+          
+          if (!user?.id) {
+            Alert.alert('Error', 'You must be logged in to upload documents.');
+            return;
+          }
+
+          // Create unique filename
+          const fileExt = asset.name?.split('.').pop() || 'pdf';
+          const fileName = `${user.id}/${docType}_${Date.now()}.${fileExt}`;
+
+          // Read file as base64 for React Native
+          const response = await fetch(asset.uri);
+          const blob = await response.blob();
+          const arrayBuffer = await blob.arrayBuffer();
+          const fileData = new Uint8Array(arrayBuffer);
+
+          // Upload to Supabase Storage
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('application-documents')
+            .upload(fileName, fileData, {
+              contentType: asset.mimeType || 'application/pdf',
+              upsert: false,
+            });
+
+          if (uploadError) {
+            console.error('Upload error:', uploadError);
+            Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+            return;
+          }
+
+          // Get public URL
+          const { data: urlData } = supabase.storage
+            .from('application-documents')
+            .getPublicUrl(fileName);
+
+          const publicUrl = urlData.publicUrl;
+          console.log('Document uploaded successfully:', publicUrl);
+
+          // Update state and store with public URL
+          setDocuments({ ...documents, [docType]: true });
+          updateDraft('documents', { [docType]: publicUrl });
+          
+          Alert.alert('Success', 'Document uploaded successfully');
+        } catch (uploadError) {
+          console.error('Upload error:', uploadError);
+          Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+        }
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to upload document. Please try again.');
-      console.error('Upload error:', error);
+      Alert.alert('Error', 'Failed to pick document. Please try again.');
+      console.error('Document picker error:', error);
     }
   };
 

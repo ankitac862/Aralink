@@ -57,7 +57,7 @@ export default function VerifyEmailScreen() {
   };
 
   const handleGoToLogin = () => {
-    router.replace('/(auth)/login');
+    router.replace('/(auth)');
   };
 
   return (

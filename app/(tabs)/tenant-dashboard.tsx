@@ -45,6 +45,7 @@ export default function TenantDashboardScreen() {
   const [tenantInfo, setTenantInfo] = useState<any>(null);
   const [propertyInfo, setPropertyInfo] = useState<any>(null);
   const [rentStatus, setRentStatus] = useState<any>(null);
+  const [coTenants, setCoTenants] = useState<any[]>([]);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -248,6 +249,9 @@ export default function TenantDashboardScreen() {
           dueDate: 'Monthly',
           status: tenantLink.status === 'active' ? 'due_soon' : 'pending',
         });
+        
+        // Load co-tenants for this tenant link
+        await loadCoTenants(tenantLink.id);
       } else {
         console.log('⚠️ No property link found for tenant record:', tenantIdToUse);
         console.log('⚠️ User auth ID:', user.id);
@@ -259,6 +263,28 @@ export default function TenantDashboardScreen() {
     } catch (error) {
       console.error('❌ Error loading tenant data:', error);
       Alert.alert('Error', 'Failed to load tenant data. Please try again.');
+    }
+  };
+
+  const loadCoTenants = async (tenantLinkId: string) => {
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      
+      const { data, error } = await supabase
+        .from('co_tenants')
+        .select('*')
+        .eq('tenant_id', tenantLinkId)
+        .order('created_at', { ascending: true });
+      
+      if (error) {
+        console.error('Error loading co-tenants:', error);
+        return;
+      }
+      
+      setCoTenants(data || []);
+      console.log(`✅ Loaded ${data?.length || 0} co-tenants`);
+    } catch (error) {
+      console.error('Error fetching co-tenants:', error);
     }
   };
 
@@ -531,6 +557,55 @@ export default function TenantDashboardScreen() {
             )}
           </View>
         </TouchableOpacity>
+
+        {/* Co-Tenants Card */}
+        {coTenants.length > 0 && (
+          <View
+            style={[
+              styles.coTenantsCard,
+              {
+                backgroundColor: cardBgColor,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: isDark ? 0.2 : 0.05,
+                shadowRadius: 4,
+              },
+            ]}>
+            <View style={styles.coTenantsHeader}>
+              <MaterialCommunityIcons name="account-group" size={20} color={primaryColor} />
+              <ThemedText style={[styles.coTenantsTitle, { color: textPrimaryColor }]}>
+                Co-Tenants ({coTenants.length})
+              </ThemedText>
+            </View>
+            <ThemedText style={[styles.coTenantsSubtitle, { color: textSecondaryColor }]}>
+              People living with you at this property
+            </ThemedText>
+            {coTenants.map((coTenant, index) => (
+              <View key={coTenant.id} style={[styles.coTenantItem, { borderTopColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                <View style={[styles.coTenantAvatar, { backgroundColor: `${primaryColor}20` }]}>
+                  <ThemedText style={[styles.coTenantAvatarText, { color: primaryColor }]}>
+                    {coTenant.full_name?.charAt(0).toUpperCase() || '?'}
+                  </ThemedText>
+                </View>
+                <View style={styles.coTenantInfo}>
+                  <ThemedText style={[styles.coTenantName, { color: textPrimaryColor }]}>
+                    {coTenant.full_name}
+                  </ThemedText>
+                  {coTenant.email && (
+                    <ThemedText style={[styles.coTenantContact, { color: textSecondaryColor }]}>
+                      {coTenant.email}
+                    </ThemedText>
+                  )}
+                  {coTenant.phone && (
+                    <ThemedText style={[styles.coTenantContact, { color: textSecondaryColor }]}>
+                      {coTenant.phone}
+                    </ThemedText>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Rent Status Card */}
         <View
@@ -872,5 +947,55 @@ const styles = StyleSheet.create({
   announcementDate: {
     fontSize: 10,
     fontWeight: '400',
+  },
+  coTenantsCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 3,
+  },
+  coTenantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  coTenantsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  coTenantsSubtitle: {
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  coTenantItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    gap: 12,
+  },
+  coTenantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coTenantAvatarText: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  coTenantInfo: {
+    flex: 1,
+  },
+  coTenantName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  coTenantContact: {
+    fontSize: 12,
+    marginBottom: 1,
   },
 });
