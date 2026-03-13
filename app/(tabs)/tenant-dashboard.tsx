@@ -45,6 +45,7 @@ export default function TenantDashboardScreen() {
   const [tenantInfo, setTenantInfo] = useState<any>(null);
   const [propertyInfo, setPropertyInfo] = useState<any>(null);
   const [rentStatus, setRentStatus] = useState<any>(null);
+  const [coTenants, setCoTenants] = useState<any[]>([]);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -85,18 +86,40 @@ export default function TenantDashboardScreen() {
       console.log('👤 Profile:', profile);
       if (profileError) console.log('❌ Profile error:', profileError);
       
-      // First, check if there are ANY tenant property links for this user
-      const { data: allLinks, error: allLinksError } = await supabase
-        .from('tenant_property_links')
-        .select('id, status, property_id, unit_id, sub_unit_id')
-        .eq('tenant_id', user.id);
+      // IMPORTANT: tenant_property_links.tenant_id points to tenants.id, NOT user.id
+      // So we need to first find the tenant record for this user
+      console.log('🔍 Step 1: Finding tenant record for user:', user.id);
+      const { data: tenantRecords, error: tenantError } = await supabase
+        .from('tenants')
+        .select('id, first_name, last_name, email, status')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
       
-      console.log('🔍 All tenant_property_links for user:', allLinks);
-      console.log('🔍 Count:', allLinks?.length || 0);
-      if (allLinksError) console.log('❌ All links error:', allLinksError);
+      console.log('🔍 Found tenant records:', tenantRecords);
+      if (tenantError) console.log('❌ Tenant lookup error:', tenantError);
       
-      // Get tenant property link with full details
-      // Try active first, then fall back to any status
+      // Filter to active tenant records only
+      const activeTenant = tenantRecords?.find(t => t.status === 'active') || tenantRecords?.[0];
+      
+      if (!activeTenant) {
+        console.log('⚠️ No tenant record found for this user');
+        // Try fallback: check if user.id is stored directly in tenant_property_links (old method)
+        const { data: directLinks } = await supabase
+          .from('tenant_property_links')
+          .select('id, tenant_id, status')
+          .eq('tenant_id', user.id);
+        
+        if (directLinks && directLinks.length > 0) {
+          console.log('✅ Found direct links (old method), count:', directLinks.length);
+        }
+      } else {
+        console.log('✅ Using tenant record:', activeTenant.id, activeTenant.first_name, activeTenant.last_name);
+      }
+      
+      const tenantIdToUse = activeTenant?.id || user.id;
+      
+      // Now get tenant property links for this tenant record
+      console.log('🔍 Step 2: Finding property links for tenant:', tenantIdToUse);
       let { data: tenantLink, error: linkError } = await supabase
         .from('tenant_property_links')
         .select(`
@@ -108,7 +131,8 @@ export default function TenantDashboardScreen() {
             address2,
             city,
             state,
-            zip_code
+            zip_code,
+            property_type
           ),
           units (
             id,
@@ -119,7 +143,7 @@ export default function TenantDashboardScreen() {
             name
           )
         `)
-        .eq('tenant_id', user.id)
+        .eq('tenant_id', tenantIdToUse)
         .eq('status', 'active')
         .order('created_at', { ascending: false })
         .limit(1)
@@ -128,8 +152,8 @@ export default function TenantDashboardScreen() {
       console.log('🏠 Active tenant link data:', tenantLink);
       if (linkError) console.log('❌ Tenant link error:', linkError);
       
-      // If no active link found, try to get any link (including pending_invite)
-      if (!tenantLink && allLinks && allLinks.length > 0) {
+      // If no active link found, try to get any link (including pending_invite or inactive)
+      if (!tenantLink) {
         console.log('⚠️ No active link found, trying to get any status...');
         const { data: anyLink, error: anyLinkError } = await supabase
           .from('tenant_property_links')
@@ -138,6 +162,7 @@ export default function TenantDashboardScreen() {
             properties (
               id,
               name,
+              property_type,
               address1,
               address2,
               city,
@@ -153,7 +178,7 @@ export default function TenantDashboardScreen() {
               name
             )
           `)
-          .eq('tenant_id', user.id)
+          .eq('tenant_id', tenantIdToUse)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -165,17 +190,18 @@ export default function TenantDashboardScreen() {
       
       // Set tenant info regardless of property link
       setTenantInfo({
-        name: profile?.full_name || 'Tenant',
-        email: profile?.email,
+        name: activeTenant ? `${activeTenant.first_name} ${activeTenant.last_name}` : profile?.full_name || 'Tenant',
+        email: activeTenant?.email || profile?.email,
       });
       
       if (tenantLink && tenantLink.properties) {
         const prop = tenantLink.properties as any;
         
-        // Build address with fallback to property name
+        // Build complete address with unit/subunit
         let displayAddress = prop.name || 'Property';
         const addressParts = [
           prop.address1,
+          prop.address2,
           prop.city,
           prop.state,
           prop.zip_code
@@ -194,6 +220,11 @@ export default function TenantDashboardScreen() {
         } else {
           // For single_unit, commercial, parking: only check subunit
           unitName = tenantLink.sub_units?.name;
+        }
+        
+        // Add unit/subunit to address if available
+        if (unitName) {
+          displayAddress = `${displayAddress}, Unit ${unitName}`;
         }
         
         console.log('✅ Setting property info:', {
@@ -218,16 +249,42 @@ export default function TenantDashboardScreen() {
           dueDate: 'Monthly',
           status: tenantLink.status === 'active' ? 'due_soon' : 'pending',
         });
+        
+        // Load co-tenants for this tenant link
+        await loadCoTenants(tenantLink.id);
       } else {
-        console.log('⚠️ No property link found for tenant:', user.id);
-        console.log('⚠️ Available links count:', allLinks?.length || 0);
-        if (allLinks && allLinks.length > 0) {
-          console.log('⚠️ But links exist! Check RLS policies or data structure');
+        console.log('⚠️ No property link found for tenant record:', tenantIdToUse);
+        console.log('⚠️ User auth ID:', user.id);
+        console.log('⚠️ Tenant records found:', tenantRecords?.length || 0);
+        if (tenantRecords && tenantRecords.length > 1) {
+          console.log('⚠️ Multiple tenant records exist - showing only active or most recent');
         }
       }
     } catch (error) {
       console.error('❌ Error loading tenant data:', error);
       Alert.alert('Error', 'Failed to load tenant data. Please try again.');
+    }
+  };
+
+  const loadCoTenants = async (tenantLinkId: string) => {
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      
+      const { data, error } = await supabase
+        .from('co_tenants')
+        .select('*')
+        .eq('tenant_id', tenantLinkId)
+        .order('created_at', { ascending: true });
+      
+      if (error) {
+        console.error('Error loading co-tenants:', error);
+        return;
+      }
+      
+      setCoTenants(data || []);
+      console.log(`✅ Loaded ${data?.length || 0} co-tenants`);
+    } catch (error) {
+      console.error('Error fetching co-tenants:', error);
     }
   };
 
@@ -290,7 +347,7 @@ export default function TenantDashboardScreen() {
   };
 
   const quickLinks: QuickLink[] = [
-    { id: '1', icon: 'file-document-outline', label: 'View Lease', route: '/(tabs)/documents' },
+    { id: '1', icon: 'file-document-multiple', label: 'My Leases', route: '/tenant-leases' },
     { id: '2', icon: 'account-supervisor', label: 'Contact Us', route: '/(tabs)/messages' },
     { id: '3', icon: 'folder-open', label: 'Documents', route: '/(tabs)/documents' },
     { id: '4', icon: 'gavel', label: 'Community Rules', route: '/(tabs)/explore' },
@@ -500,6 +557,55 @@ export default function TenantDashboardScreen() {
             )}
           </View>
         </TouchableOpacity>
+
+        {/* Co-Tenants Card */}
+        {coTenants.length > 0 && (
+          <View
+            style={[
+              styles.coTenantsCard,
+              {
+                backgroundColor: cardBgColor,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: isDark ? 0.2 : 0.05,
+                shadowRadius: 4,
+              },
+            ]}>
+            <View style={styles.coTenantsHeader}>
+              <MaterialCommunityIcons name="account-group" size={20} color={primaryColor} />
+              <ThemedText style={[styles.coTenantsTitle, { color: textPrimaryColor }]}>
+                Co-Tenants ({coTenants.length})
+              </ThemedText>
+            </View>
+            <ThemedText style={[styles.coTenantsSubtitle, { color: textSecondaryColor }]}>
+              People living with you at this property
+            </ThemedText>
+            {coTenants.map((coTenant, index) => (
+              <View key={coTenant.id} style={[styles.coTenantItem, { borderTopColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                <View style={[styles.coTenantAvatar, { backgroundColor: `${primaryColor}20` }]}>
+                  <ThemedText style={[styles.coTenantAvatarText, { color: primaryColor }]}>
+                    {coTenant.full_name?.charAt(0).toUpperCase() || '?'}
+                  </ThemedText>
+                </View>
+                <View style={styles.coTenantInfo}>
+                  <ThemedText style={[styles.coTenantName, { color: textPrimaryColor }]}>
+                    {coTenant.full_name}
+                  </ThemedText>
+                  {coTenant.email && (
+                    <ThemedText style={[styles.coTenantContact, { color: textSecondaryColor }]}>
+                      {coTenant.email}
+                    </ThemedText>
+                  )}
+                  {coTenant.phone && (
+                    <ThemedText style={[styles.coTenantContact, { color: textSecondaryColor }]}>
+                      {coTenant.phone}
+                    </ThemedText>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Rent Status Card */}
         <View
@@ -841,5 +947,55 @@ const styles = StyleSheet.create({
   announcementDate: {
     fontSize: 10,
     fontWeight: '400',
+  },
+  coTenantsCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 3,
+  },
+  coTenantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  coTenantsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  coTenantsSubtitle: {
+    fontSize: 12,
+    marginBottom: 12,
+  },
+  coTenantItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    gap: 12,
+  },
+  coTenantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coTenantAvatarText: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  coTenantInfo: {
+    flex: 1,
+  },
+  coTenantName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  coTenantContact: {
+    fontSize: 12,
+    marginBottom: 1,
   },
 });

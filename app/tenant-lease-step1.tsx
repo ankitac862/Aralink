@@ -14,15 +14,16 @@ export default function TenantLeaseStep1Screen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId } = useLocalSearchParams<{ 
+  const { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant } = useLocalSearchParams<{ 
     propertyId?: string; 
     address?: string; 
     fromInvite?: string;
     unitId?: string;
     subUnitId?: string;
     inviteId?: string;
+    isCoApplicant?: string;
   }>();
-  const { tenantDraft, updateDraft } = useLeaseStore();
+  const { tenantDraft, updateDraft, isAddingCoApplicant, getCoApplicantCount } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -78,7 +79,7 @@ export default function TenantLeaseStep1Screen() {
       updateDraft('personal', formData);
       router.push({
         pathname: '/tenant-lease-step2',
-        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId }
+        params: { propertyId, address, fromInvite, unitId, subUnitId, inviteId, isCoApplicant }
       });
     }
   };
@@ -124,10 +125,24 @@ export default function TenantLeaseStep1Screen() {
           </View>
         </View>
 
+        {isCoApplicant === 'true' && (
+          <View style={[styles.coApplicantBanner, { backgroundColor: isDark ? '#1a3a52' : '#e8f4ff', borderColor: primaryColor }]}>
+            <MaterialCommunityIcons name="account-multiple-plus" size={24} color={primaryColor} />
+            <View style={{ flex: 1 }}>
+              <ThemedText style={[styles.coApplicantTitle, { color: textPrimaryColor }]}>
+                Adding Co-Applicant #{getCoApplicantCount()}
+              </ThemedText>
+              <ThemedText style={[styles.coApplicantSubtitle, { color: textSecondaryColor }]}>
+                Please fill in the co-applicant's information
+              </ThemedText>
+            </View>
+          </View>
+        )}
+
         <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
           <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Personal Information</ThemedText>
           <ThemedText style={[styles.sectionDescription, { color: textSecondaryColor }]}>
-            Let's start with the basics. Please provide your personal details.
+            Let's start with the basics. Please provide {isCoApplicant === 'true' ? "the co-applicant's" : 'your'} personal details.
           </ThemedText>
 
           <View style={styles.form}>
@@ -409,6 +424,23 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  coApplicantBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    marginBottom: 16,
+    gap: 12,
+  },
+  coApplicantTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  coApplicantSubtitle: {
+    fontSize: 13,
   },
 });
 

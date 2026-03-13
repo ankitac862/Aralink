@@ -94,7 +94,7 @@ export default function InviteScreen() {
   };
 
   const handleSignIn = () => {
-    router.push('/(auth)/login');
+    router.push('/(auth)');
   };
 
   return (

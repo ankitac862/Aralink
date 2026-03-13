@@ -69,16 +69,33 @@ export default function LeaseDetailScreen() {
     
     setIsLoading(true);
     try {
+      console.log('📄 Loading lease with ID:', leaseId);
+      console.log('👤 Current user ID:', user?.id);
+      
       const [leaseData, docsData] = await Promise.all([
         fetchLeaseById(leaseId),
         getLeaseDocumentVersions(leaseId),
       ]);
       
+      console.log('📄 Lease data received:', leaseData ? 'Found' : 'NULL');
+      if (leaseData) {
+        console.log('📄 Lease details:', {
+          id: leaseData.id,
+          status: leaseData.status,
+          user_id: leaseData.user_id,
+          tenant_id: leaseData.tenant_id,
+        });
+      }
+      
       setLease(leaseData);
       setDocuments(docsData);
+      
+      if (!leaseData) {
+        Alert.alert('Error', 'Lease not found. You may not have permission to view this lease.');
+      }
     } catch (error) {
-      console.error('Error loading lease:', error);
-      Alert.alert('Error', 'Failed to load lease details');
+      console.error('❌ Error loading lease:', error);
+      Alert.alert('Error', 'Failed to load lease details: ' + (error instanceof Error ? error.message : 'Unknown error'));
     } finally {
       setIsLoading(false);
     }

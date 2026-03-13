@@ -99,16 +99,28 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
   // Load tenants from Supabase
   loadFromSupabase: async (userId: string) => {
     try {
+      console.log('🔄 TenantStore: Starting to load tenants for user:', userId);
       set({ isLoading: true, error: null });
       
       const dbTenants = await fetchTenants(userId);
+      console.log('📋 TenantStore: Received', dbTenants.length, 'tenants from fetchTenants');
+      console.log('📋 TenantStore: Raw tenant data:', JSON.stringify(dbTenants, null, 2));
       
       // Always update with API data (even if empty)
       // This ensures user only sees their own tenants
       const tenants = dbTenants.map(dbToLocalTenant);
+      console.log('📋 TenantStore: Transformed to', tenants.length, 'local tenants');
+      console.log('📋 TenantStore: Transformed tenants:', tenants.map(t => ({
+        id: t.id,
+        name: `${t.firstName} ${t.lastName}`,
+        email: t.email,
+        propertyId: t.propertyId
+      })));
+      
       set({ tenants, isLoading: false, isSynced: true });
+      console.log('✅ TenantStore: State updated with', tenants.length, 'tenants');
     } catch (error) {
-      console.error('Error loading tenants from Supabase:', error);
+      console.error('❌ TenantStore: Error loading tenants from Supabase:', error);
       // On error, show empty list (don't fallback to mock data)
       set({ tenants: [], isLoading: false, error: 'Failed to load tenants' });
     }

@@ -121,10 +121,18 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         // Fetch from tenant_property_links
         const { supabase } = await import('@/lib/supabase');
         
-        // First get all tenant property links
+        // Get tenant property links with property details to get landlord_id
         const { data: allLinks } = await supabase
           .from('tenant_property_links')
-          .select('property_id, landlord_id, unit_id, sub_unit_id, status')
+          .select(`
+            property_id, 
+            unit_id, 
+            sub_unit_id, 
+            status,
+            properties (
+              user_id
+            )
+          `)
           .eq('tenant_id', input.tenantId);
         
         // Try to find active link first
@@ -141,7 +149,7 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         }
 
         propertyId = tenantLink.property_id;
-        landlordId = tenantLink.landlord_id;
+        landlordId = (tenantLink.properties as any)?.user_id;
         unitId = tenantLink.unit_id || undefined;
         subUnitId = tenantLink.sub_unit_id || undefined;
       }

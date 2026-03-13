@@ -1,22 +1,54 @@
-import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image, Switch } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image, Switch, Alert, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
+import { upsertUserProfile, uploadImage } from '@/lib/supabase';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [role, setRole] = useState('owner');
+  const { user, signOut, updateAvatar } = useAuthStore();
+  
+  // Form state
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  
+  // Section open/close state
+  const [personalOpen, setPersonalOpen] = useState(true);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
+  
+  // Notification preferences
   const [pushNotif, setPushNotif] = useState(true);
   const [emailNotif, setEmailNotif] = useState(true);
   const [smsNotif, setSmsNotif] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
+  // Load user data
+  useEffect(() => {
+    if (user) {
+      setFullName(user.name || '');
+      setEmail(user.email || '');
+      setPhone(user.phone || '');
+    }
+  }, [user]);
+
+  // Log avatar URL changes for debugging
+  useEffect(() => {
+    if (user?.avatarUrl) {
+      console.log('🖼️ Avatar URL changed:', user.avatarUrl);
+    }
+  }, [user?.avatarUrl]);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101622' : '#f6f6f8';
@@ -25,6 +57,116 @@ export default function ProfileScreen() {
   const textColor = isDark ? '#f3f4f6' : '#0d121b';
   const secondaryTextColor = isDark ? '#9ca3af' : '#4c669a';
   const primaryColor = '#135bec';
+
+  const handleSaveChanges = async () => {
+    if (!user) return;
+    
+    setIsSaving(true);
+    try {
+      const result = await upsertUserProfile({
+        id: user.id,
+        full_name: fullName,
+        email: email,
+        phone: phone || undefined,
+      });
+
+      if (result) {
+        Alert.alert('Success', 'Profile updated successfully');
+      } else {
+        Alert.alert('Error', 'Failed to update profile');
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      Alert.alert('Error', 'Failed to update profile');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            await signOut();
+            router.replace('/');
+          },
+        },
+      ]
+    );
+  };
+
+  const getRoleDisplayName = (role: string) => {
+    switch (role) {
+      case 'landlord':
+        return 'Property Owner';
+      case 'tenant':
+        return 'Tenant';
+      case 'manager':
+        return 'Property Manager';
+      default:
+        return 'User';
+    }
+  };
+
+  const handlePickAvatar = async () => {
+    if (!user) return;
+
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photo library.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setIsUploadingAvatar(true);
+        const imageUri = result.assets[0].uri;
+
+        // Upload image to Supabase Storage
+        const uploadResult = await uploadImage(
+          imageUri,
+          'avatars',
+          `user-${user.id}`
+        );
+
+        if (uploadResult.success && uploadResult.url) {
+          console.log('✅ Avatar uploaded successfully:', uploadResult.url);
+          
+          // Update user profile with new avatar URL
+          const updateResult = await updateAvatar(uploadResult.url);
+          
+          if (updateResult.success) {
+            console.log('✅ Avatar URL updated in profile');
+            Alert.alert('Success', 'Profile picture updated successfully');
+          } else {
+            Alert.alert('Error', updateResult.error || 'Failed to update profile picture');
+          }
+        } else {
+          Alert.alert('Error', uploadResult.error || 'Failed to upload image. Make sure the "avatars" bucket exists in Supabase Storage.');
+        }
+        
+        setIsUploadingAvatar(false);
+      }
+    } catch (error) {
+      console.error('Error picking avatar:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
+      setIsUploadingAvatar(false);
+    }
+  };
 
   const SettingSection = ({
     title,
@@ -114,90 +256,115 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Role Switcher */}
-        <View style={styles.roleSwitcher}>
-          <ThemedText style={[styles.roleSwitcherLabel, { color: secondaryTextColor }]}>
-            Viewing As:
-          </ThemedText>
-          <View style={[styles.roleButtons, { backgroundColor: isDark ? '#1a2332' : '#e7ebf3' }]}>
-            {['owner', 'manager'].map((r) => (
-              <TouchableOpacity
-                key={r}
-                style={[
-                  styles.roleButton,
-                  role === r && [styles.roleButtonActive, { backgroundColor: cardBgColor }],
-                ]}
-                onPress={() => setRole(r)}>
-                <ThemedText
-                  style={[
-                    styles.roleButtonText,
-                    role === r && { color: primaryColor, fontWeight: '600' },
-                  ]}>
-                  {r === 'owner' ? 'John Smith Prop.' : 'Jane Doe Res.'}
-                </ThemedText>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
         {/* Profile Section */}
         <View style={styles.profileSection}>
-          <Image
-            source={{
-              uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDT6tBSmRfV0U1t9Nyfyjr4Rjy51jqbfpyMzsjMaBlYcBVlwFPopmEnre-Fb3tCVJWDUI8ed_etMl_q5qn_CTggRbRiKnBjA7FlqxF-THFsmO8Nr7-lbFctzLnwd3d20Iy9E5-uy9Ni2dGZ_aTTRH29CTmNCjINj6tMkySAu1uf4j5-O5EWmTUmiHeYjJ3TyI8DggQCtkwU7xJRYp8t9Fb_WrISkNFtoTbNpXLFdcjcFJnFmVuhtrWSOuZuck5eCfMhe05Q6niEwE2Z',
-            }}
-            style={styles.profileImage}
-          />
-          <TouchableOpacity style={[styles.editButton, { backgroundColor: primaryColor }]}>
-            <MaterialCommunityIcons name="pencil" size={14} color="white" />
+          {user?.avatarUrl ? (
+            <Image
+              source={{ 
+                uri: user.avatarUrl,
+                cache: 'reload' // Force reload from server, not cache
+              }}
+              style={styles.profileImage}
+              key={user.avatarUrl} // Force re-render when URL changes
+            />
+          ) : (
+            <View style={[styles.profileImage, styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
+              <ThemedText style={styles.avatarInitials}>
+                {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U'}
+              </ThemedText>
+            </View>
+          )}
+          <TouchableOpacity 
+            style={[styles.editButton, { backgroundColor: primaryColor }]}
+            onPress={handlePickAvatar}
+            disabled={isUploadingAvatar}
+          >
+            {isUploadingAvatar ? (
+              <ActivityIndicator size="small" color="white" />
+            ) : (
+              <MaterialCommunityIcons name="pencil" size={14} color="white" />
+            )}
           </TouchableOpacity>
-          <ThemedText style={[styles.profileName, { color: textColor }]}>Alex Johnson</ThemedText>
+          <ThemedText style={[styles.profileName, { color: textColor }]}>
+            {user?.name || 'User'}
+          </ThemedText>
           <ThemedText style={[styles.profileRole, { color: secondaryTextColor }]}>
-            Property Manager
+            {user ? getRoleDisplayName(user.role) : 'User'}
           </ThemedText>
         </View>
 
         {/* Settings Sections */}
         <View style={styles.sectionsContainer}>
-          <SettingSection title="Personal Details" isOpen={true} onToggle={() => {}}>
-            <SettingInput label="Full Name" value="Alex Johnson" onChangeText={() => {}} />
-            <SettingInput label="Email Address" value="alex.j@manage.co" type="email" onChangeText={() => {}} />
-            <SettingInput label="Phone Number" value="(555) 123-4567" type="tel" onChangeText={() => {}} />
+          <SettingSection 
+            title="Personal Details" 
+            isOpen={personalOpen} 
+            onToggle={() => setPersonalOpen(!personalOpen)}
+          >
+            <SettingInput 
+              label="Full Name" 
+              value={fullName} 
+              onChangeText={setFullName} 
+            />
+            <SettingInput 
+              label="Email Address" 
+              value={email} 
+              type="email" 
+              onChangeText={setEmail} 
+            />
+            <SettingInput 
+              label="Phone Number" 
+              value={phone} 
+              type="tel" 
+              onChangeText={setPhone} 
+            />
           </SettingSection>
 
-          <SettingSection title="Notification Preferences" isOpen={false} onToggle={() => {}}>
+          <SettingSection 
+            title="Notification Preferences" 
+            isOpen={notificationsOpen} 
+            onToggle={() => setNotificationsOpen(!notificationsOpen)}
+          >
             <ToggleSetting label="Push Notifications" value={pushNotif} onValueChange={setPushNotif} />
             <ToggleSetting label="Email" value={emailNotif} onValueChange={setEmailNotif} />
             <ToggleSetting label="SMS" value={smsNotif} onValueChange={setSmsNotif} />
           </SettingSection>
 
-          <SettingSection title="Security" isOpen={false} onToggle={() => {}}>
-            <TouchableOpacity style={[styles.buttonItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}>
+          <SettingSection 
+            title="Security" 
+            isOpen={securityOpen} 
+            onToggle={() => setSecurityOpen(!securityOpen)}
+          >
+            <TouchableOpacity 
+              style={[styles.buttonItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}
+              onPress={() => Alert.alert('Change Password', 'Password change feature coming soon')}
+            >
               <ThemedText style={[styles.buttonItemText, { color: textColor }]}>Change Password</ThemedText>
               <MaterialCommunityIcons name="arrow-right" size={20} color={secondaryTextColor} />
             </TouchableOpacity>
             <View style={{ marginTop: 12 }}>
-              <View
+              <TouchableOpacity
                 style={[
                   styles.toggleItem,
                   { backgroundColor: isDark ? '#111827' : '#ffffff' },
-                ]}>
+                ]}
+                onPress={() => Alert.alert('2FA', 'Two-factor authentication setup coming soon')}
+              >
                 <View>
                   <ThemedText style={[styles.toggleLabel, { color: textColor }]}>
                     Two-Factor Authentication
                   </ThemedText>
-                  <ThemedText style={{ color: '#10b981', fontSize: 12, marginTop: 4 }}>
-                    Enabled
+                  <ThemedText style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
+                    Not Enabled
                   </ThemedText>
                 </View>
                 <MaterialCommunityIcons name="arrow-right" size={20} color={secondaryTextColor} />
-              </View>
+              </TouchableOpacity>
             </View>
           </SettingSection>
         </View>
 
         {/* Logout Button */}
-        <TouchableOpacity style={styles.logoutButton}>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={20} color="#ef4444" />
           <ThemedText style={styles.logoutButtonText}>Log Out</ThemedText>
         </TouchableOpacity>
@@ -210,11 +377,10 @@ export default function ProfileScreen() {
         <TouchableOpacity
           style={[styles.saveButton, { backgroundColor: primaryColor, opacity: isSaving ? 0.6 : 1 }]}
           disabled={isSaving}
-          onPress={() => {
-            setIsSaving(true);
-            setTimeout(() => setIsSaving(false), 500);
-          }}>
-          <ThemedText style={styles.saveButtonText}>Save Changes</ThemedText>
+          onPress={handleSaveChanges}>
+          <ThemedText style={styles.saveButtonText}>
+            {isSaving ? 'Saving...' : 'Save Changes'}
+          </ThemedText>
         </TouchableOpacity>
       </View>
     </ThemedView>
@@ -241,40 +407,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 16,
   },
-  roleSwitcher: {
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    alignItems: 'center',
-  },
-  roleSwitcherLabel: {
-    fontSize: 11,
-    fontWeight: '400',
-    marginBottom: 8,
-  },
-  roleButtons: {
-    flexDirection: 'row',
-    borderRadius: 10,
-    padding: 4,
-    width: '100%',
-    gap: 4,
-  },
-  roleButton: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  roleButtonActive: {
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  roleButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
   profileSection: {
     alignItems: 'center',
     marginBottom: 24,
@@ -285,10 +417,19 @@ const styles = StyleSheet.create({
     borderRadius: 64,
     marginBottom: 8,
   },
+  avatarPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarInitials: {
+    fontSize: 48,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
   editButton: {
     position: 'absolute',
-    bottom: 20,
-    right: '28%',
+    bottom: 8,
+    right: '30%',
     width: 32,
     height: 32,
     borderRadius: 16,

@@ -53,7 +53,7 @@ export default function ForgotPasswordScreen() {
         [
           {
             text: 'Back to Login',
-            onPress: () => router.replace('/(auth)/login'),
+            onPress: () => router.replace('/(auth)'),
           },
         ]
       );
@@ -106,7 +106,7 @@ export default function ForgotPasswordScreen() {
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.backLink} onPress={() => router.replace('/(auth)/login')}>
+        <TouchableOpacity style={styles.backLink} onPress={() => router.replace('/(auth)')}>
           <ThemedText style={[styles.backLinkText, { color: primaryColor }]}>
             Back to Login
           </ThemedText>

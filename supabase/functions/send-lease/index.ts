@@ -288,7 +288,7 @@ serve(async (req) => {
       );
     }
     
-    // Fetch lease with property and tenant info
+    // Fetch lease with property info (but not tenant - it might be null for applicants)
     const { data: lease, error: leaseError } = await supabase
       .from('leases')
       .select(`
@@ -298,20 +298,56 @@ serve(async (req) => {
           city,
           state,
           zip_code
-        ),
-        tenants:tenant_id (
-          id,
-          name,
-          email
         )
       `)
       .eq('id', leaseId)
       .single();
     
     if (leaseError || !lease) {
+      console.error('Lease fetch error:', leaseError);
       return new Response(
         JSON.stringify({ success: false, error: 'Lease not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Fetch tenant or applicant info separately
+    let recipientEmail = overrideEmail;
+    let recipientName = 'Tenant';
+    let recipientId: string | null = null;
+    
+    if (lease.tenant_id) {
+      // This is for an existing tenant
+      const { data: tenant } = await supabase
+        .from('tenants')
+        .select('id, first_name, last_name, email')
+        .eq('id', lease.tenant_id)
+        .single();
+      
+      if (tenant) {
+        recipientEmail = recipientEmail || tenant.email;
+        recipientName = `${tenant.first_name} ${tenant.last_name}`;
+        recipientId = tenant.id;
+      }
+    } else if (lease.application_id) {
+      // This is for an applicant
+      const { data: application } = await supabase
+        .from('applications')
+        .select('id, applicant_name, applicant_email, user_id')
+        .eq('id', lease.application_id)
+        .single();
+      
+      if (application) {
+        recipientEmail = recipientEmail || application.applicant_email;
+        recipientName = application.applicant_name;
+        recipientId = application.user_id;
+      }
+    }
+    
+    if (!recipientEmail) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'No recipient email found. Please provide an email address.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     
@@ -346,20 +382,14 @@ serve(async (req) => {
     
     const landlordName = landlordProfile?.full_name || 'Your Landlord';
     
-    // Get tenant info
-    const tenant = lease.tenants;
-    const tenantEmail = overrideEmail || tenant?.email;
-    const tenantName = tenant?.name || 'Tenant';
-    const tenantId = tenant?.id;
-    
     let emailSent = false;
     let notificationSent = false;
     
     // Send email if enabled and email is available
-    if (sendEmail && tenantEmail) {
+    if (sendEmail && recipientEmail) {
       emailSent = await sendEmailNotification(
-        tenantEmail,
-        tenantName,
+        recipientEmail,
+        recipientName,
         landlordName,
         propertyAddress,
         lease.document_url,
@@ -367,10 +397,10 @@ serve(async (req) => {
       );
     }
     
-    // Create in-app notification if enabled and tenant ID is available
-    if (sendNotification && tenantId) {
+    // Create in-app notification if enabled and recipient ID is available
+    if (sendNotification && recipientId) {
       notificationSent = await createInAppNotification(
-        tenantId,
+        recipientId,
         leaseId,
         landlordName,
         propertyAddress

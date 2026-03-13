@@ -108,12 +108,19 @@ export default function LeaseWizardStep6() {
   };
 
   const handleDone = () => {
-    resetWizard();
-    if (draftLeaseId) {
-      router.replace(`/lease-detail?id=${draftLeaseId}`);
-    } else {
+    console.log('📋 handleDone called, draftLeaseId:', draftLeaseId);
+    
+    if (!draftLeaseId) {
+      console.error('❌ No draftLeaseId found, redirecting to properties');
+      Alert.alert('Error', 'Lease ID not found. Returning to properties.');
       router.replace('/properties');
+      return;
     }
+    
+    console.log('✅ Navigating to lease-detail with ID:', draftLeaseId);
+    const leaseIdToNavigate = draftLeaseId; // Store ID before reset
+    resetWizard(); // Reset after storing the ID
+    router.replace(`/lease-detail?id=${leaseIdToNavigate}`);
   };
 
   const handleGenerate = async () => {
@@ -122,6 +129,9 @@ export default function LeaseWizardStep6() {
       return;
     }
 
+    console.log('🔄 Starting lease generation...');
+    console.log('📋 Current draftLeaseId before generation:', draftLeaseId);
+    
     setIsGenerating(true);
     setGenerationComplete(false);
     setGenerationMessage('');
@@ -129,6 +139,9 @@ export default function LeaseWizardStep6() {
     try {
       // Use generateOfficialPdf which tries XFA first, then falls back
       const result = await generateOfficialPdf(user.id);
+
+      console.log('📋 Generation result:', result);
+      console.log('📋 draftLeaseId after generation:', draftLeaseId);
 
       if (result.success) {
         setGenerationComplete(true);
@@ -140,10 +153,14 @@ export default function LeaseWizardStep6() {
         } else {
           setGenerationMessage('Ontario Standard Lease generated successfully.');
         }
+        
+        console.log('✅ Lease generated successfully');
       } else {
+        console.error('❌ Generation failed:', result.error);
         Alert.alert('Generation Failed', result.error || 'Failed to generate lease. Please try again.');
       }
     } catch (err) {
+      console.error('❌ Exception during generation:', err);
       Alert.alert('Error', 'An unexpected error occurred. Please try again.');
     } finally {
       setIsGenerating(false);
@@ -201,6 +218,9 @@ export default function LeaseWizardStep6() {
       );
 
       if (result.success) {
+        // Store leaseId before reset
+        const leaseId = draftLeaseId;
+        
         Alert.alert(
           'Lease Sent',
           `Your lease has been sent to the tenant.${result.emailSent ? ' An email notification was sent.' : ''}`,
@@ -209,7 +229,7 @@ export default function LeaseWizardStep6() {
               text: 'View Lease Details',
               onPress: () => {
                 resetWizard();
-                router.replace(`/lease-detail?id=${draftLeaseId}`);
+                router.replace(`/lease-detail?id=${leaseId}`);
               },
             },
             {

@@ -101,20 +101,33 @@ export default function LeasesScreen() {
   };
 
   const handleSendToTenant = async (lease: DbLease) => {
-    if (!lease.tenant_id) {
-      Alert.alert('No Tenant', 'Please assign a tenant to this lease first.');
+    if (!lease.tenant_id && !lease.application_id) {
+      Alert.alert('No Tenant', 'Please assign a tenant or applicant to this lease first.');
       return;
     }
 
+    console.log('📤 Sending lease from list:', {
+      leaseId: lease.id,
+      tenant_id: lease.tenant_id,
+      application_id: lease.application_id,
+      status: lease.status
+    });
+
     try {
-      const result = await sendLeaseToTenant(lease.id, lease.tenant_id);
+      const result = await sendLeaseToTenant(lease.id, lease.tenant_id || null);
       if (result) {
-        Alert.alert('Success', 'Lease has been sent to the tenant.');
+        Alert.alert(
+          'Success', 
+          lease.application_id 
+            ? 'Lease has been sent to the applicant.'
+            : 'Lease has been sent to the tenant.'
+        );
         loadLeases(); // Refresh
       } else {
-        Alert.alert('Error', 'Failed to send lease to tenant.');
+        Alert.alert('Error', 'Failed to send lease. Please try again.');
       }
     } catch (error) {
+      console.error('Error sending lease:', error);
       Alert.alert('Error', 'An error occurred while sending the lease.');
     }
   };

@@ -110,6 +110,10 @@ export default function RootLayout() {
         <Stack.Screen name="tenant-lease-status" />
         <Stack.Screen name="tenant-lease-review-sign" />
         
+        {/* Tenant Lease Management Routes */}
+        <Stack.Screen name="tenant-leases" />
+        <Stack.Screen name="tenant-lease-detail" />
+        
         {/* Landlord Lease Routes */}
         <Stack.Screen name="landlord-applications" />
         <Stack.Screen name="landlord-application-review" />

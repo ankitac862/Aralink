@@ -43,6 +43,8 @@ export default function LeaseWizardIndex() {
     roomId?: string;
     tenantId?: string;
     tenantName?: string;
+    coApplicantNames?: string; // JSON stringified array of co-applicant names
+    applicationId?: string; // New param for approved applications
   }>();
   
   const { user } = useAuthStore();
@@ -73,13 +75,98 @@ export default function LeaseWizardIndex() {
 
   // Initialize wizard with context
   useEffect(() => {
-    initializeWizard();
-  }, [params.propertyId, params.unitId, params.roomId, params.tenantId, params.tenantName]);
+    if (!initComplete) {
+      initializeWizard();
+    }
+  }, [params.propertyId, params.unitId, params.roomId, params.tenantId, params.tenantName, params.coApplicantNames, params.applicationId]);
 
   const initializeWizard = async () => {
+    console.log('Initializing wizard with params:', params);
+    
     // Reset wizard for fresh start if no draft
-    if (!params.propertyId && !params.tenantId) {
+    if (!params.propertyId && !params.tenantId && !params.applicationId) {
       // Fresh start - show property/tenant selection
+      setInitComplete(true);
+      return;
+    }
+
+    // If applicationId is provided, fetch and prefill from application
+    if (params.applicationId) {
+      try {
+        const { getApplicationById } = await import('@/lib/supabase');
+        const application = await getApplicationById(params.applicationId);
+        
+        if (application) {
+          // Set context with application data
+          setPropertyContext({
+            propertyId: application.property_id,
+            unitId: application.unit_id || undefined,
+            subUnitId: application.sub_unit_id || undefined,
+            tenantId: undefined, // No tenant yet, will be created after signing
+          });
+          
+          // Store application ID in ontarioLeaseStore
+          const { useOntarioLeaseStore: LeaseStore } = await import('@/store/ontarioLeaseStore');
+          LeaseStore.getState().setTenantId(null, 'applicant', params.applicationId);
+          
+          // Prefill tenant name
+          if (application.applicant_name) {
+            console.log('Setting primary applicant:', application.applicant_name);
+            LeaseStore.getState().updateTenantName(0, application.applicant_name);
+          }
+          
+          // Add co-applicants if provided
+          if (params.coApplicantNames) {
+            try {
+              const coAppNames = JSON.parse(params.coApplicantNames);
+              console.log('Adding co-applicants:', coAppNames);
+              
+              for (let i = 0; i < coAppNames.length; i++) {
+                const name = coAppNames[i];
+                console.log(`Adding co-applicant ${i + 1}:`, name);
+                LeaseStore.getState().addTenantName(); // Add empty slot
+                LeaseStore.getState().updateTenantName(i + 1, name); // Fill the slot (+1 because 0 is primary)
+              }
+              
+              console.log('Final tenant names:', LeaseStore.getState().formData.tenantNames);
+            } catch (error) {
+              console.error('Error parsing co-applicant names:', error);
+            }
+          }
+          
+          // Get property info for prefilling address
+          const property = getPropertyById(application.property_id);
+          if (property) {
+            let unitInfo = '';
+            
+            // Handle different property types
+            if (property.property_type === 'multi_unit' && application.unit_id) {
+              const unit = property.units?.find(u => u.id === application.unit_id);
+              if (unit && application.sub_unit_id) {
+                const subUnit = unit.sub_units?.find(s => s.id === application.sub_unit_id);
+                unitInfo = subUnit?.name || unit.unit_number || '';
+              } else if (unit) {
+                unitInfo = unit.unit_number || '';
+              }
+            } else if (application.sub_unit_id) {
+              const subUnit = property.sub_units?.find(s => s.id === application.sub_unit_id);
+              unitInfo = subUnit?.name || '';
+            }
+
+            prefillFromProperty({
+              unit: unitInfo,
+              streetNumber: property.address1?.split(' ')[0] || '',
+              streetName: property.address1?.split(' ').slice(1).join(' ') || '',
+              city: property.city || '',
+              province: property.state || 'ON',
+              postalCode: property.zip_code || '',
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading application:', error);
+      }
+      
       setInitComplete(true);
       return;
     }
