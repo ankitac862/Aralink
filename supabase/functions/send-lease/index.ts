@@ -294,7 +294,7 @@ serve(async (req) => {
       .select(`
         *,
         properties:property_id (
-          address,
+          address1,
           city,
           state,
           zip_code
@@ -370,7 +370,7 @@ serve(async (req) => {
     // Get property address
     const property = lease.properties;
     const propertyAddress = property
-      ? `${property.address}, ${property.city}, ${property.state} ${property.zip_code}`
+      ? `${property.address1}, ${property.city}, ${property.state} ${property.zip_code}`
       : 'Property Address';
     
     // Get landlord info

@@ -138,6 +138,14 @@ export default function LeaseWizardStep1() {
 
   const handleSelectPerson = async (person: PersonOption, index: number) => {
     updateTenantName(index, person.fullName);
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+    updatedEmails[index] = person.email || '';
+    updateFormData('tenantEmails', updatedEmails);
+
     // Set the person ID and type in the store
     if (index === 0) {
       if (person.type === 'tenant') {
@@ -152,8 +160,16 @@ export default function LeaseWizardStep1() {
           // Add co-applicants to the tenant list
           person.coApplicants.forEach((coApp) => {
             addTenantName(); // Add empty slot
-            const currentNames = useOntarioLeaseStore.getState().formData.tenantNames;
-            updateTenantName(currentNames.length - 1, coApp.full_name);
+            const currentState = useOntarioLeaseStore.getState().formData;
+            const coIndex = currentState.tenantNames.length - 1;
+            updateTenantName(coIndex, coApp.full_name);
+
+            const coEmails = [...(currentState.tenantEmails || currentState.tenantNames.map(() => ''))];
+            while (coEmails.length < currentState.tenantNames.length) {
+              coEmails.push('');
+            }
+            coEmails[coIndex] = coApp.email || '';
+            updateFormData('tenantEmails', coEmails);
           });
         }
       }
@@ -170,6 +186,26 @@ export default function LeaseWizardStep1() {
   const handleTenantInputChange = (text: string, index: number) => {
     updateTenantName(index, text);
     setTenantSearchQuery(text);
+
+    const normalizedText = text.trim().toLowerCase();
+    const matchedPerson = personOptions.find(
+      (p) => (p.fullName || '').trim().toLowerCase() === normalizedText
+    );
+
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+
+    if (matchedPerson?.email) {
+      updatedEmails[index] = matchedPerson.email;
+    } else if (!text.trim()) {
+      updatedEmails[index] = '';
+    }
+
+    updateFormData('tenantEmails', updatedEmails);
+
     // If user is editing the first tenant and it no longer matches a selected person, clear the IDs
     if (index === 0) {
       const matchesPerson = personOptions.some(p => p.fullName === text);
@@ -190,6 +226,16 @@ export default function LeaseWizardStep1() {
 
     nextStep();
     router.push('/lease-wizard/step2');
+  };
+
+  const updateTenantEmail = (index: number, value: string) => {
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+    updatedEmails[index] = value;
+    updateFormData('tenantEmails', updatedEmails);
   };
 
   const handleClose = () => {
@@ -368,6 +414,31 @@ export default function LeaseWizardStep1() {
                     </View>
                   )}
                 </View>
+
+                {(() => {
+                  const normalizedName = name.trim().toLowerCase();
+                  const matchedPerson = personOptions.find(
+                    (p) => (p.fullName || '').trim().toLowerCase() === normalizedName
+                  );
+                  const isManualTenant = !!name.trim() && !matchedPerson;
+
+                  if (!isManualTenant) return null;
+
+                  return (
+                    <View style={{ marginTop: 10 }}>
+                      <ThemedText style={[styles.label, { color: textColor, marginBottom: 6 }]}>Tenant Email</ThemedText>
+                      <TextInput
+                        style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                        placeholder={`Enter tenant ${index + 1}'s email`}
+                        placeholderTextColor={secondaryTextColor}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={(formData.tenantEmails && formData.tenantEmails[index]) || ''}
+                        onChangeText={(text) => updateTenantEmail(index, text)}
+                      />
+                    </View>
+                  );
+                })()}
               </View>
             ))}
 

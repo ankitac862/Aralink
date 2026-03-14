@@ -35,6 +35,7 @@ const getDefaultFormData = (): OntarioLeaseFormData => ({
   landlordName: '',
   landlordAddress: '',
   tenantNames: [''],
+  tenantEmails: [''],
   
   // Section 2: Rental Unit
   unitAddress: {
@@ -233,6 +234,23 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   },
   
   updateFormData: (section, value) => {
+    if (section === 'tenantNames') {
+      set((state) => {
+        const tenantNames = Array.isArray(value) ? value : [];
+        const existingEmails = state.formData.tenantEmails || [];
+        const tenantEmails = tenantNames.map((_, index) => existingEmails[index] || '');
+
+        return {
+          formData: {
+            ...state.formData,
+            tenantNames,
+            tenantEmails,
+          },
+        };
+      });
+      return;
+    }
+
     set((state) => ({
       formData: {
         ...state.formData,
@@ -258,6 +276,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       formData: {
         ...state.formData,
         tenantNames: [...state.formData.tenantNames, ''],
+        tenantEmails: [...(state.formData.tenantEmails || state.formData.tenantNames.map(() => '')), ''],
       },
     }));
   },
@@ -267,6 +286,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       formData: {
         ...state.formData,
         tenantNames: state.formData.tenantNames.filter((_, i) => i !== index),
+        tenantEmails: (state.formData.tenantEmails || state.formData.tenantNames.map(() => '')).filter((_, i) => i !== index),
       },
     }));
   },

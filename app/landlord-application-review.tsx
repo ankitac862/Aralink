@@ -8,12 +8,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getApplicationById, approveApplication, rejectApplication, supabase } from '@/lib/supabase';
+import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 export default function LandlordApplicationReviewScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
+  const { resetWizard, updateFormData, setTenantId, setPropertyContext } = useOntarioLeaseStore();
 
   const [application, setApplication] = useState<any>(null);
   const [coApplicants, setCoApplicants] = useState<any[]>([]);
@@ -87,37 +89,60 @@ export default function LandlordApplicationReviewScreen() {
       const result = await approveApplication(id as string, action);
       
       if (result.success) {
-        Alert.alert(
-          'Application Approved',
-          'The applicant has been notified of approval.',
-          [
-            {
+        if (action === 'now') {
+          // Fetch fresh co-applicants right now (async, before navigating)
+          let freshCoApplicants: Array<{ full_name: string }> = [];
+          try {
+            const { data } = await supabase
+              .from('co_applicants')
+              .select('full_name')
+              .eq('application_id', id as string)
+              .order('applicant_order', { ascending: true });
+            freshCoApplicants = data || [];
+          } catch (_) {}
+
+          const allTenantNames = [
+            application.applicant_name || '',
+            ...freshCoApplicants.map(ca => ca.full_name).filter(Boolean),
+          ];
+
+          console.log('🏠 Setting lease tenant names before navigation:', allTenantNames);
+
+          // Pre-fill store BEFORE navigating so step1 shows correct names immediately
+          resetWizard();
+          setTenantId(null, 'applicant', id as string);
+          setPropertyContext({
+            propertyId: application.property_id,
+            unitId: application.unit_id || undefined,
+            subUnitId: application.sub_unit_id || undefined,
+          });
+          updateFormData('tenantNames', allTenantNames);
+
+          Alert.alert(
+            'Application Approved',
+            'The applicant has been notified. Navigating to lease wizard...',
+            [{
               text: 'OK',
               onPress: () => {
-                if (action === 'now') {
-                  // Prepare co-applicant names for lease
-                  const coApplicantNames = coApplicants.map(ca => ca.full_name);
-                  
-                  // Navigate to lease wizard with prefilled data from application
-                  router.replace({
-                    pathname: '/lease-wizard',
-                    params: { 
-                      applicationId: id,
-                      propertyId: application.property_id,
-                      unitId: application.unit_id,
-                      subUnitId: application.sub_unit_id,
-                      tenantName: application.applicant_name,
-                      coApplicantNames: JSON.stringify(coApplicantNames), // Pass as JSON string
-                    }
-                  });
-                } else {
-                  // Go back to applications list
-                  router.back();
-                }
+                router.replace({
+                  pathname: '/lease-wizard/step1',
+                  params: {
+                    applicationId: id,
+                    propertyId: application.property_id,
+                    unitId: application.unit_id,
+                    subUnitId: application.sub_unit_id,
+                  }
+                });
               }
-            }
-          ]
-        );
+            }]
+          );
+        } else {
+          Alert.alert(
+            'Application Approved',
+            'The applicant has been notified of approval.',
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+        }
       } else {
         Alert.alert('Error', result.error || 'Failed to approve application');
       }

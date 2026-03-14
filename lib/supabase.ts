@@ -2210,6 +2210,7 @@ export interface OntarioLeaseFormData {
   landlordName: string;
   landlordAddress?: string;
   tenantNames: string[];
+  tenantEmails?: string[];
   
   // Section 2: Rental Unit
   unitAddress: {
@@ -2590,25 +2591,42 @@ export async function convertApplicantToTenant(params: {
       name: application.applicant_name,
     });
 
-    // 2. Get or create user account for the applicant
-    let userId = null;
-    const { data: existingUser } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', application.applicant_email)
-      .maybeSingle();
+    // 2. Resolve the applicant auth user id
+    let userId = application.user_id || null;
 
-    if (existingUser) {
-      userId = existingUser.id;
-      console.log('✅ Found existing user profile:', userId);
+    if (userId) {
+      console.log('✅ Found applicant user_id on application:', userId);
     } else {
-      console.log('⚠️ No user profile found for email:', application.applicant_email);
+      const { data: existingUser, error: profileLookupError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', application.applicant_email)
+        .maybeSingle();
+
+      if (profileLookupError) {
+        console.error('❌ Error looking up profile by email:', profileLookupError);
+        throw new Error(`Failed to look up applicant profile: ${profileLookupError.message}`);
+      }
+
+      if (existingUser?.id) {
+        userId = existingUser.id;
+        console.log('✅ Found existing user profile:', userId);
+      } else {
+        console.log('⚠️ No user profile found for email:', application.applicant_email);
+      }
+    }
+
+    if (!userId) {
+      console.error('❌ No auth user found for applicant:', application.applicant_email);
+      throw new Error(
+        'Applicant does not have an account yet. They must sign up and log in before being converted to a tenant.'
+      );
     }
 
     // 3. Create tenant record
     console.log('🔄 Creating tenant record...');
     const tenantData = {
-      user_id: userId || application.applicant_email, // Use email as fallback if no user account
+      user_id: userId,
       first_name: application.applicant_name?.split(' ')[0] || '',
       last_name: application.applicant_name?.split(' ').slice(1).join(' ') || '',
       email: application.applicant_email,
@@ -2617,7 +2635,7 @@ export async function convertApplicantToTenant(params: {
       unit_id: params.unitId,
       start_date: params.startDate,
       rent_amount: params.rentAmount,
-      status: 'active', // Active after signing lease
+      status: 'active',
     };
     console.log('📋 Tenant data to insert:', tenantData);
     

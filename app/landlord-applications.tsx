@@ -11,6 +11,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { fetchLandlordApplications, supabase, convertApplicantToTenant } from '@/lib/supabase';
+import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 interface Application {
   id: string;
@@ -29,6 +30,7 @@ export default function LandlordApplicationsScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const { loadFromSupabase: loadTenants } = useTenantStore();
+  const { resetWizard, updateFormData, setTenantId, setPropertyContext } = useOntarioLeaseStore();
   
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -145,10 +147,26 @@ export default function LandlordApplicationsScreen() {
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Generate Lease',
-            onPress: () => {
+            onPress: async () => {
+              let coApplicantNames: string[] = [];
+              try {
+                const { data } = await supabase
+                  .from('co_applicants')
+                  .select('full_name')
+                  .eq('application_id', application.id)
+                  .order('applicant_order', { ascending: true });
+                coApplicantNames = (data || []).map((c: any) => c.full_name).filter(Boolean);
+              } catch (_) {}
+
+              const allTenantNames = [application.applicant_name || '', ...coApplicantNames];
+              resetWizard();
+              setTenantId(null, 'applicant', application.id);
+              setPropertyContext({ propertyId: application.property_id || '' });
+              updateFormData('tenantNames', allTenantNames);
+
               router.push({
-                pathname: '/lease-wizard',
-                params: { 
+                pathname: '/lease-wizard/step1',
+                params: {
                   applicationId: application.id,
                   propertyId: application.property_id,
                   tenantName: application.applicant_name,
@@ -293,11 +311,31 @@ export default function LandlordApplicationsScreen() {
           {!applicationLeases[item.id] && (
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: primaryColor, flex: 1 }]}
-              onPress={(e) => {
+              onPress={async (e) => {
                 e.stopPropagation();
+                // Fetch co-applicants fresh before navigating
+                let coApplicantNames: string[] = [];
+                try {
+                  const { data } = await supabase
+                    .from('co_applicants')
+                    .select('full_name')
+                    .eq('application_id', item.id)
+                    .order('applicant_order', { ascending: true });
+                  coApplicantNames = (data || []).map((c: any) => c.full_name).filter(Boolean);
+                } catch (_) {}
+
+                const allTenantNames = [item.applicant_name || '', ...coApplicantNames];
+                console.log('🏠 Generate Lease - setting tenant names:', allTenantNames);
+
+                // Pre-fill store BEFORE navigating
+                resetWizard();
+                setTenantId(null, 'applicant', item.id);
+                setPropertyContext({ propertyId: item.property_id || '' });
+                updateFormData('tenantNames', allTenantNames);
+
                 router.push({
-                  pathname: '/lease-wizard',
-                  params: { 
+                  pathname: '/lease-wizard/step1',
+                  params: {
                     applicationId: item.id,
                     propertyId: item.property_id,
                     tenantName: item.applicant_name,

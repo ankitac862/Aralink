@@ -18,8 +18,15 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
-import { DbTransaction, fetchTenantTransactions } from '@/lib/supabase';
+import { DbTransaction, fetchTenantTransactions, supabase } from '@/lib/supabase';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
+
+interface CoTenant {
+  id: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
+}
 
 const PAYMENT_CATEGORIES = [
   { key: 'rent', label: 'Rent', color: '#3b82f6', active: true },
@@ -75,6 +82,7 @@ export default function TenantDetailScreen() {
   const [selectedCategory, setSelectedCategory] = useState('rent');
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
+  const [coTenants, setCoTenants] = useState<CoTenant[]>([]);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -97,6 +105,56 @@ export default function TenantDetailScreen() {
 
     loadTransactions();
   }, [id]);
+
+  useEffect(() => {
+    const loadCoTenants = async () => {
+      if (!id || !tenantData?.propertyId) {
+        setCoTenants([]);
+        return;
+      }
+
+      try {
+        const { data: tenantLink, error: tenantLinkError } = await supabase
+          .from('tenant_property_links')
+          .select('id')
+          .eq('tenant_id', id)
+          .eq('property_id', tenantData.propertyId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (tenantLinkError) {
+          console.error('Error loading tenant property link for co-tenants:', tenantLinkError);
+          setCoTenants([]);
+          return;
+        }
+
+        if (!tenantLink?.id) {
+          setCoTenants([]);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('co_tenants')
+          .select('id, full_name, email, phone')
+          .eq('tenant_id', tenantLink.id)
+          .order('created_at', { ascending: true });
+
+        if (error) {
+          console.error('Error loading co-tenants for tenant detail:', error);
+          setCoTenants([]);
+          return;
+        }
+
+        setCoTenants(data || []);
+      } catch (error) {
+        console.error('Error fetching co-tenants for tenant detail:', error);
+        setCoTenants([]);
+      }
+    };
+
+    loadCoTenants();
+  }, [id, tenantData?.propertyId]);
   
   // Format tenant data for display
   const tenant = tenantData ? {
@@ -242,6 +300,44 @@ export default function TenantDetailScreen() {
             </View>
           </View>
         </View>
+
+        {coTenants.length > 0 && (
+          <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}> 
+            <View style={styles.coTenantsHeader}>
+              <MaterialCommunityIcons name="account-group" size={20} color="#137fec" />
+              <ThemedText style={[styles.cardTitle, styles.coTenantsTitle, { color: textColor }]}> 
+                Co-Tenants ({coTenants.length})
+              </ThemedText>
+            </View>
+            <ThemedText style={[styles.coTenantsSubtitle, { color: secondaryTextColor }]}> 
+              Co-applicants converted with this tenant
+            </ThemedText>
+            {coTenants.map((coTenant) => (
+              <View key={coTenant.id} style={[styles.coTenantRow, { borderTopColor: borderColor }]}> 
+                <View style={[styles.coTenantAvatar, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}> 
+                  <ThemedText style={styles.coTenantAvatarText}>
+                    {coTenant.full_name?.charAt(0).toUpperCase() || '?'}
+                  </ThemedText>
+                </View>
+                <View style={styles.coTenantContent}>
+                  <ThemedText style={[styles.coTenantName, { color: textColor }]}> 
+                    {coTenant.full_name}
+                  </ThemedText>
+                  {coTenant.email ? (
+                    <ThemedText style={[styles.coTenantMeta, { color: secondaryTextColor }]}> 
+                      {coTenant.email}
+                    </ThemedText>
+                  ) : null}
+                  {coTenant.phone ? (
+                    <ThemedText style={[styles.coTenantMeta, { color: secondaryTextColor }]}> 
+                      {coTenant.phone}
+                    </ThemedText>
+                  ) : null}
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Payment Overview */}
         <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
@@ -501,6 +597,50 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flex: 1,
     marginLeft: 16,
+  },
+  coTenantsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  coTenantsTitle: {
+    marginBottom: 0,
+  },
+  coTenantsSubtitle: {
+    fontSize: 13,
+    marginBottom: 12,
+  },
+  coTenantRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingTop: 12,
+    marginTop: 12,
+    borderTopWidth: 1,
+  },
+  coTenantAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coTenantAvatarText: {
+    color: '#137fec',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  coTenantContent: {
+    flex: 1,
+    gap: 2,
+  },
+  coTenantName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  coTenantMeta: {
+    fontSize: 13,
   },
   paymentGrid: {
     flexDirection: 'row',
