@@ -1,0 +1,120 @@
+app/(auth)/otp.tsx(82,31): error TS2345: Argument of type '{ type: "signup"; phone: string; } | { type: "signup" | "email_change"; email: string; }' is not assignable to parameter of type 'ResendParams'.
+  Object literal may only specify known properties, and 'phone' does not exist in type '{ type: "signup" | "email_change"; email: string; options?: { emailRedirectTo?: string | undefined; captchaToken?: string | undefined; } | undefined; }'.
+app/(tabs)/tenant-dashboard.tsx(87,95): error TS2367: This comparison appears to be unintentional because the types '"active" | "draft" | "uploaded" | "signed" | "signed_pending_move_in" | "terminated"' and '"pending_signature"' have no overlap.
+app/(tabs)/tenant-dashboard.tsx(721,32): error TS2339: Property 'welcomeCard' does not exist on type '{ container: { flex: number; }; header: { borderBottomWidth: number; borderBottomColor: string; }; headerContent: { flexDirection: "row"; justifyContent: "space-between"; alignItems: "center"; paddingHorizontal: number; }; ... 49 more ...; coTenantContact: { ...; }; }'.
+app/(tabs)/tenant-dashboard.tsx(816,33): error TS2339: Property 'welcomeCard' does not exist on type '{ container: { flex: number; }; header: { borderBottomWidth: number; borderBottomColor: string; }; headerContent: { flexDirection: "row"; justifyContent: "space-between"; alignItems: "center"; paddingHorizontal: number; }; ... 49 more ...; coTenantContact: { ...; }; }'.
+app/landlord-applications.tsx(226,23): error TS2339: Property 'unit_name' does not exist on type '{ id: any; unit_id: any; effective_date: any; form_data: any; status: any; }'.
+app/lease-detail.tsx(76,9): error TS2304: Cannot find name 'loadLeaseDetails'.
+app/lease-detail.tsx(141,9): error TS2322: Type 'string | undefined' is not assignable to type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+app/lease-detail.tsx(151,7): error TS2304: Cannot find name 'loadLeaseDetails'.
+app/lease-wizard/index.tsx(157,26): error TS2551: Property 'property_type' does not exist on type 'Property'. Did you mean 'propertyType'?
+app/lease-wizard/index.tsx(160,38): error TS2551: Property 'sub_units' does not exist on type 'Unit'. Did you mean 'subUnits'?
+app/lease-wizard/index.tsx(160,54): error TS7006: Parameter 's' implicitly has an 'any' type.
+app/lease-wizard/index.tsx(161,50): error TS2339: Property 'unit_number' does not exist on type 'Unit'.
+app/lease-wizard/index.tsx(163,33): error TS2339: Property 'unit_number' does not exist on type 'Unit'.
+app/lease-wizard/index.tsx(166,40): error TS2339: Property 'sub_units' does not exist on type 'Property'.
+app/lease-wizard/index.tsx(166,56): error TS7006: Parameter 's' implicitly has an 'any' type.
+app/lease-wizard/index.tsx(176,36): error TS2551: Property 'zip_code' does not exist on type 'Property'. Did you mean 'zipCode'?
+app/lease-wizard/index.tsx(243,38): error TS2339: Property 'name' does not exist on type 'DbTenant'.
+app/lease-wizard/index.tsx(257,17): error TS2345: Argument of type '`/lease-wizard/step${number}`' is not assignable to parameter of type 'RelativePathString | ExternalPathString | "/accounting" | `/accounting?${string}` | `/accounting#${string}` | "/add-applicant" | `/add-applicant?${string}` | `/add-applicant#${string}` | "/add-property" | ... 339 more ... | { ...; }'.
+app/lease-wizard/step2.tsx(71,42): error TS2339: Property 'unitNumber' does not exist on type 'Unit'.
+app/leases.tsx(213,43): error TS7053: Element implicitly has an 'any' type because expression of type '"active" | "draft" | "generated" | "uploaded" | "sent" | "signed" | "signed_pending_move_in" | "terminated"' can't be used to index type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+  Property 'active' does not exist on type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+app/leases.tsx(217,42): error TS7053: Element implicitly has an 'any' type because expression of type '"active" | "draft" | "generated" | "uploaded" | "sent" | "signed" | "signed_pending_move_in" | "terminated"' can't be used to index type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+  Property 'active' does not exist on type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+app/leases.tsx(221,32): error TS7053: Element implicitly has an 'any' type because expression of type '"active" | "draft" | "generated" | "uploaded" | "sent" | "signed" | "signed_pending_move_in" | "terminated"' can't be used to index type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+  Property 'active' does not exist on type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+app/leases.tsx(223,24): error TS7053: Element implicitly has an 'any' type because expression of type '"active" | "draft" | "generated" | "uploaded" | "sent" | "signed" | "signed_pending_move_in" | "terminated"' can't be used to index type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+  Property 'active' does not exist on type '{ draft: string; generated: string; uploaded: string; sent: string; signed: string; }'.
+app/properties.tsx(71,26): error TS2339: Property 'streetAddress' does not exist on type 'Property'.
+app/properties.tsx(88,51): error TS2339: Property 'streetAddress' does not exist on type 'Property'.
+app/properties.tsx(107,70): error TS2551: Property 'photo' does not exist on type 'Property'. Did you mean 'photos'?
+app/properties.tsx(109,61): error TS2551: Property 'photo' does not exist on type 'Property'. Did you mean 'photos'?
+app/properties.tsx(120,46): error TS2339: Property 'streetAddress' does not exist on type 'Property'.
+app/start-chat.tsx(210,9): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+app/start-chat.tsx(379,8): error TS2304: Cannot find name 'filteredTenants'.
+app/tenant-lease-step6.tsx(2,69): error TS2305: Module '"react-native"' has no exported member 'Checkbox'.
+app/tenant-lease-step6.tsx(153,17): error TS2345: Argument of type '`/tenant-lease-step${number}`' is not assignable to parameter of type 'RelativePathString | ExternalPathString | "/accounting" | `/accounting?${string}` | `/accounting#${string}` | "/add-applicant" | `/add-applicant?${string}` | `/add-applicant#${string}` | "/add-property" | ... 339 more ... | { ...; }'.
+app/tenant-leases.tsx(178,15): error TS2322: Type '"file-document" | "file-document-check" | "file-document-outline" | "email-send"' is not assignable to type '"symbol" | "function" | "android" | "web" | "repeat" | "anchor" | "link" | "google" | "apple" | "facebook" | "hvac" | "sort" | "map" | "filter" | "star" | "email" | "phone" | "parking" | ... 7430 more ... | undefined'.
+  Type '"email-send"' is not assignable to type '"symbol" | "function" | "android" | "web" | "repeat" | "anchor" | "link" | "google" | "apple" | "facebook" | "hvac" | "sort" | "map" | "filter" | "star" | "email" | "phone" | "parking" | ... 7430 more ... | undefined'. Did you mean '"email-edit"'?
+app/tenant-maintenance-detail.tsx(74,26): error TS2322: Type '{ uri: string; type: string; }[]' is not assignable to type 'UploadedFile[]'.
+  Property 'name' is missing in type '{ uri: string; type: string; }' but required in type 'UploadedFile'.
+app/tenants.tsx(269,31): error TS2339: Property 'emptyState' does not exist on type '{ container: { flex: number; }; topBar: { flexDirection: "row"; alignItems: "center"; justifyContent: "space-between"; paddingHorizontal: number; paddingVertical: number; borderBottomWidth: number; }; ... 24 more ...; fab: { ...; }; }'.
+app/tenants.tsx(271,40): error TS2339: Property 'emptyTitle' does not exist on type '{ container: { flex: number; }; topBar: { flexDirection: "row"; alignItems: "center"; justifyContent: "space-between"; paddingHorizontal: number; paddingVertical: number; borderBottomWidth: number; }; ... 24 more ...; fab: { ...; }; }'.
+app/tenants.tsx(274,40): error TS2339: Property 'emptySubtitle' does not exist on type '{ container: { flex: number; }; topBar: { flexDirection: "row"; alignItems: "center"; justifyContent: "space-between"; paddingHorizontal: number; paddingVertical: number; borderBottomWidth: number; }; ... 24 more ...; fab: { ...; }; }'.
+components/AddressAutocomplete.tsx(119,22): error TS2345: Argument of type 'number' is not assignable to parameter of type 'SetStateAction<Timeout | null>'.
+components/PropertyAddressSelector.tsx(110,63): error TS2339: Property 'unitNumber' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(179,18): error TS2339: Property 'rentAmount' does not exist on type 'SubUnit'.
+components/PropertyAddressSelector.tsx(180,28): error TS2339: Property 'rentAmount' does not exist on type 'SubUnit'.
+components/PropertyAddressSelector.tsx(181,22): error TS2339: Property 'rentAmount' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(182,25): error TS2339: Property 'rentAmount' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(193,30): error TS2339: Property 'parkingIncluded' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(253,38): error TS2339: Property 'unitNumber' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(260,15): error TS2339: Property 'rentAmount' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(262,20): error TS2339: Property 'rentAmount' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(290,15): error TS2339: Property 'rentAmount' does not exist on type 'SubUnit'.
+components/PropertyAddressSelector.tsx(292,20): error TS2339: Property 'rentAmount' does not exist on type 'SubUnit'.
+components/PropertyAddressSelector.tsx(361,82): error TS2339: Property 'unitNumber' does not exist on type 'Unit'.
+components/PropertyAddressSelector.tsx(440,70): error TS2339: Property 'unitNumber' does not exist on type 'Unit'.
+components/user-type-selector.tsx(57,17): error TS2322: Type 'string' is not assignable to type '"symbol" | "function" | "android" | "web" | "repeat" | "anchor" | "link" | "google" | "apple" | "facebook" | "hvac" | "sort" | "map" | "filter" | "star" | "email" | "phone" | "parking" | ... 7430 more ... | undefined'.
+components/web-navbar.tsx(263,5): error TS2345: Argument of type '{ navbar: { paddingVertical: number; paddingHorizontal: number; }; container: { flexDirection: "row"; alignItems: "center"; justifyContent: "space-between"; maxWidth: number; marginHorizontal: "auto"; width: "100%"; gap: number; }; ... 15 more ...; mobileMenuItemText: { ...; }; }' is not assignable to parameter of type '{ navbar: { paddingVertical: number; paddingHorizontal: number; }; container: { flexDirection: "row"; alignItems: "center"; justifyContent: "space-between"; maxWidth: number; marginHorizontal: "auto"; width: "100%"; gap: number; }; ... 15 more ...; mobileMenuItemText: { ...; }; } & NamedStyles<...>'.
+  Property 'navItem' is incompatible with index signature.
+    Object literal may only specify known properties, and 'transition' does not exist in type 'TextStyle | ViewStyle | ImageStyle'.
+store/leaseStore.ts(211,35): error TS2339: Property 'phoneNumber' does not exist on type '{ fullName: string; email: string; phone: string; dob: string; }'.
+store/leaseStore.ts(250,46): error TS2339: Property 'phoneNumber' does not exist on type '{ fullName: string; email: string; phone: string; dob: string; }'.
+store/maintenanceStore.ts(180,49): error TS2345: Argument of type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/services/maintenanceService").DbMaintenanceRequest' is not assignable to parameter of type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/lib/supabase").DbMaintenanceRequest'.
+  Types of property 'category' are incompatible.
+    Type 'string' is not assignable to type '"plumbing" | "electrical" | "hvac" | "appliance" | "general"'.
+store/maintenanceStore.ts(285,33): error TS2345: Argument of type '(dbRequest: DbMaintenanceRequest) => MaintenanceRequest' is not assignable to parameter of type '(value: DbMaintenanceRequest, index: number, array: DbMaintenanceRequest[]) => MaintenanceRequest'.
+  Types of parameters 'dbRequest' and 'value' are incompatible.
+    Type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/services/maintenanceService").DbMaintenanceRequest' is not assignable to type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/lib/supabase").DbMaintenanceRequest'.
+      Types of property 'category' are incompatible.
+        Type 'string' is not assignable to type '"plumbing" | "electrical" | "hvac" | "appliance" | "general"'.
+store/maintenanceStore.ts(303,53): error TS2345: Argument of type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/services/maintenanceService").DbMaintenanceRequest' is not assignable to parameter of type 'import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/lib/supabase").DbMaintenanceRequest'.
+  Types of property 'category' are incompatible.
+    Type 'string' is not assignable to type '"plumbing" | "electrical" | "hvac" | "appliance" | "general"'.
+store/ontarioLeaseStore.ts(701,37): error TS2339: Property 'name' does not exist on type '{ name: any; address1: any; }[]'.
+store/ontarioLeaseStore.ts(701,68): error TS2339: Property 'address1' does not exist on type '{ name: any; address1: any; }[]'.
+store/propertyStore.ts(174,43): error TS2339: Property 'streetAddress' does not exist on type 'Partial<Property>'.
+store/propertyStore.ts(425,3): error TS2322: Type '(propertyId: string, unitData: Omit<Unit, "id" | "subUnits" | "isOccupied">) => Promise<string>' is not assignable to type '(propertyId: string, unit: Omit<Unit, "id" | "subUnits" | "isOccupied">) => Promise<void>'.
+  Type 'Promise<string>' is not assignable to type 'Promise<void>'.
+    Type 'string' is not assignable to type 'void'.
+store/propertyStore.ts(534,3): error TS2322: Type '(propertyId: string, unitId: string, subUnitData: Omit<SubUnit, "id">) => Promise<string>' is not assignable to type '(propertyId: string, unitId: string, subUnit: Omit<SubUnit, "id">) => Promise<void>'.
+  Type 'Promise<string>' is not assignable to type 'Promise<void>'.
+    Type 'string' is not assignable to type 'void'.
+supabase/functions/generate-lease-pdf/index.ts(8,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/generate-lease-pdf/index.ts(9,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2.39.0' or its corresponding type declarations.
+supabase/functions/generate-lease-pdf/index.ts(11,23): error TS2304: Cannot find name 'Deno'.
+supabase/functions/generate-lease-pdf/index.ts(145,21): error TS2304: Cannot find name 'Deno'.
+supabase/functions/generate-lease-pdf/index.ts(146,28): error TS2304: Cannot find name 'Deno'.
+supabase/functions/generate-lease-pdf/index.ts(148,22): error TS2304: Cannot find name 'Deno'.
+supabase/functions/generate-lease-pdf/index.ts(654,14): error TS7006: Parameter 'req' implicitly has an 'any' type.
+supabase/functions/hard-delete-tenant-account/index.ts(16,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/hard-delete-tenant-account/index.ts(17,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2.39.0' or its corresponding type declarations.
+supabase/functions/hard-delete-tenant-account/index.ts(43,21): error TS2304: Cannot find name 'Deno'.
+supabase/functions/hard-delete-tenant-account/index.ts(44,28): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(11,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/send-lease/index.ts(12,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2.39.0' or its corresponding type declarations.
+supabase/functions/send-lease/index.ts(34,21): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(35,28): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(39,25): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(40,21): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(41,19): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-lease/index.ts(245,14): error TS7006: Parameter 'req' implicitly has an 'any' type.
+supabase/functions/send-message-notification/index.ts(1,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/send-message-notification/index.ts(2,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2' or its corresponding type declarations.
+supabase/functions/send-message-notification/index.ts(9,14): error TS7006: Parameter 'req' implicitly has an 'any' type.
+supabase/functions/send-message-notification/index.ts(16,25): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-message-notification/index.ts(17,32): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-message-notification/index.ts(96,47): error TS7031: Binding element 'token' implicitly has an 'any' type.
+supabase/functions/send-message-notification/index.ts(142,31): error TS18046: 'error' is of type 'unknown'.
+supabase/functions/send-tenant-invitation/index.ts(8,23): error TS2307: Cannot find module 'https://deno.land/std@0.168.0/http/server.ts' or its corresponding type declarations.
+supabase/functions/send-tenant-invitation/index.ts(9,30): error TS2307: Cannot find module 'https://esm.sh/@supabase/supabase-js@2.39.0' or its corresponding type declarations.
+supabase/functions/send-tenant-invitation/index.ts(27,21): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-tenant-invitation/index.ts(28,28): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-tenant-invitation/index.ts(32,22): error TS2304: Cannot find name 'Deno'.
+supabase/functions/send-tenant-invitation/index.ts(33,19): error TS2304: Cannot find name 'Deno'.
+utils/excelExport.ts(41,37): error TS2339: Property 'documentDirectory' does not exist on type 'typeof import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/node_modules/expo-file-system/build/index")'.
+utils/excelExport.ts(43,30): error TS2339: Property 'EncodingType' does not exist on type 'typeof import("/Users/ankitac862/Documents/ANKITA /FProject/Aaralink/Aralink/node_modules/expo-file-system/build/index")'.

@@ -27,7 +27,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, DbLease } from '@/lib/supabase';
+import { fetchLeaseById, DbLease, updateLeaseInDb, uploadLeaseDocument, addTenantToProperty, supabase } from '@/lib/supabase';
+import * as DocumentPicker from 'expo-document-picker';
 import {
   sendLeaseToTenant,
   getLeaseDocumentVersions,
@@ -47,6 +48,114 @@ export default function LeaseDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handleUploadFinalSignature = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      setIsProcessing(true);
+      const uploadResult = await uploadLeaseDocument(
+        result.assets[0].uri,
+        lease!.id,
+        user!.id
+      );
+
+      if (uploadResult.success) {
+        await updateLeaseInDb(lease!.id, { 
+          status: 'signed_pending_move_in', 
+          signed_pdf_url: uploadResult.url, // Store the final signed URL
+          version: 3, // Increment version to v3 (landlord signed)
+        });
+        Alert.alert('Success', 'Final signed lease (v3) uploaded successfully.');
+        loadLease();
+      } else {
+        throw new Error(uploadResult.error || 'Failed to upload lease');
+      }
+    } catch (error) {
+      console.error('Error uploading final signature:', error);
+      Alert.alert('Error', 'Failed to upload document');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleConvertToTenant = async () => {
+    if (!lease) return;
+    setIsProcessing(true);
+    try {
+      let targetTenantEmail = lease.form_data?.tenantEmails?.[0];
+      let existingTenantId = lease.tenant_id;
+
+      if (!targetTenantEmail && lease.application_id) {
+         const { data: a } = await supabase.from('applications').select('applicant_email').eq('id', lease.application_id).single();
+         if (a) targetTenantEmail = a.applicant_email;
+      }
+      
+      // We must get the tenant from the mapping or lookup
+      if (!targetTenantEmail && !existingTenantId) {
+         throw new Error("Missing email to map tenant.");
+      }
+      
+      // Find exact tenant ID if we don't have it
+      if (!existingTenantId && targetTenantEmail) {
+         const { data: tnt } = await supabase.from('tenants').select('id').eq('email', targetTenantEmail).single();
+         if (tnt) existingTenantId = tnt.id;
+      }
+      
+      // If still NO tenant record, create one! This converts Applicant -> Tenant physically.
+      if (!existingTenantId && targetTenantEmail) {
+         const tenantNameParts = (lease.form_data?.tenantNames?.[0] || 'New Tenant').split(' ');
+         const first = tenantNameParts[0];
+         const last = tenantNameParts.slice(1).join(' ');
+         
+         const { data: newTnt, error: createTntErr } = await supabase.from('tenants').insert({
+             first_name: first,
+             last_name: last,
+             email: targetTenantEmail,
+             user_id: lease.application_id ? (await supabase.from('applications').select('user_id').eq('id', lease.application_id).single()).data?.user_id : null,
+             phone: '',
+         }).select('id').single();
+         
+         if (createTntErr) throw createTntErr;
+         existingTenantId = newTnt.id;
+      }
+
+      // CRITICAL LOGIC: Remove access from old property for this tenant
+      if (existingTenantId) {
+         await supabase.from('tenant_property_links')
+           .update({ status: 'past', link_end_date: new Date().toISOString() })
+           .eq('tenant_id', existingTenantId)
+           .eq('status', 'active');
+      }
+
+      // Now add them tightly to THIS new property
+      await addTenantToProperty({
+        landlordUserId: user!.id,
+        propertyId: lease.property_id,
+        tenantEmail: targetTenantEmail as string,
+        tenantName: lease.form_data?.tenantNames?.[0] || 'Tenant',
+        unitId: lease.unit_id || undefined,
+        linkStartDate: lease.effective_date || new Date().toISOString()
+      });
+
+      // Update lease status to active
+      await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId });
+
+      Alert.alert('Success', 'Applicant successfully converted to Active Tenant for this property!');
+      loadLease();
+    } catch (error: any) {
+      console.error('Error converting to tenant:', error);
+      Alert.alert('Error', error.message || 'Failed to convert to tenant.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -126,13 +235,15 @@ export default function LeaseDetailScreen() {
       return;
     }
 
+    const isResend = lease?.status === 'sent';
+
     Alert.alert(
-      'Send Lease',
-      'Are you sure you want to send this lease to the tenant?',
+      isResend ? 'Send Reminder' : 'Send Lease',
+      isResend ? 'Are you sure you want to send a reminder to the tenant to sign the lease?' : 'Are you sure you want to send this lease to the tenant?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Send',
+          text: isResend ? 'Remind' : 'Send',
           onPress: async () => {
             setIsSending(true);
             try {
@@ -229,7 +340,7 @@ export default function LeaseDetailScreen() {
 
   const formData = lease.form_data;
   const isOwner = lease.user_id === user?.id;
-  const canSend = isOwner && ['generated', 'uploaded'].includes(lease.status) && lease.document_url;
+  const canSend = isOwner && ['generated', 'uploaded', 'sent'].includes(lease.status) && lease.document_url;
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -392,21 +503,57 @@ export default function LeaseDetailScreen() {
         <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor, backgroundColor: bgColor }]}>
           {canSend && (
             <TouchableOpacity
-              style={[styles.sendButton, { backgroundColor: successColor }]}
+              style={[styles.sendButton, { backgroundColor: successColor, marginBottom: 12 }]}
               onPress={handleSendLease}
-              disabled={isSending}
+              disabled={isSending || isProcessing}
             >
               {isSending ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <>
-                  <MaterialCommunityIcons name="send" size={20} color="#fff" />
-                  <ThemedText style={styles.sendButtonText}>Send to Tenant</ThemedText>
+                  <MaterialCommunityIcons name={lease.status === 'sent' ? "bell-ring" : "send"} size={20} color="#fff" />
+                  <ThemedText style={styles.sendButtonText}>
+                    {lease.status === 'sent' ? 'Send Reminder' : 'Send to Tenant'}
+                  </ThemedText>
                 </>
               )}
             </TouchableOpacity>
           )}
           
+          {lease.status === 'signed' && (
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: '#f59e0b', marginBottom: 12 }]}
+              onPress={handleUploadFinalSignature}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="file-sign" size={20} color="#fff" />
+                  <ThemedText style={styles.sendButtonText}>Upload Final Contract (v3)</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {lease.status === 'signed_pending_move_in' && (
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: '#10b981', marginBottom: 12 }]}
+              onPress={handleConvertToTenant}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="account-convert" size={20} color="#fff" />
+                  <ThemedText style={styles.sendButtonText}>Convert to Tenant</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
           {lease.status === 'sent' && (
             <View style={[styles.sentBadge, { backgroundColor: `${successColor}15` }]}>
               <MaterialCommunityIcons name="check-circle" size={20} color={successColor} />

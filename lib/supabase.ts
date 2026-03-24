@@ -13,23 +13,50 @@ if (!supabaseUrl || !supabaseAnonKey) {
 const createStorageAdapter = () => {
   // For web, use localStorage
   if (Platform.OS === 'web') {
-    return {
-      getItem: (key: string) => {
+    const memoryStorage = new Map<string, string>();
+
+    const safeGet = (key: string) => {
+      try {
         if (typeof window !== 'undefined' && window.localStorage) {
-          return Promise.resolve(window.localStorage.getItem(key));
+          return window.localStorage.getItem(key);
         }
-        return Promise.resolve(null);
-      },
-      setItem: (key: string, value: string) => {
+      } catch {
+        // Safari/private mode can throw on localStorage access
+      }
+      return memoryStorage.get(key) ?? null;
+    };
+
+    const safeSet = (key: string, value: string) => {
+      try {
         if (typeof window !== 'undefined' && window.localStorage) {
           window.localStorage.setItem(key, value);
+          return;
         }
-        return Promise.resolve();
-      },
-      removeItem: (key: string) => {
+      } catch {
+        // Safari/private mode can throw on localStorage access
+      }
+      memoryStorage.set(key, value);
+    };
+
+    const safeRemove = (key: string) => {
+      try {
         if (typeof window !== 'undefined' && window.localStorage) {
           window.localStorage.removeItem(key);
         }
+      } catch {
+        // Safari/private mode can throw on localStorage access
+      }
+      memoryStorage.delete(key);
+    };
+
+    return {
+      getItem: (key: string) => Promise.resolve(safeGet(key)),
+      setItem: (key: string, value: string) => {
+        safeSet(key, value);
+        return Promise.resolve();
+      },
+      removeItem: (key: string) => {
+        safeRemove(key);
         return Promise.resolve();
       },
     };
@@ -863,11 +890,12 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
       const propertyIdsAsStrings = propertyIds.map(id => String(id));
       console.log('📋 Property IDs as strings:', propertyIdsAsStrings);
 
-      // Get tenant IDs for these properties via tenant_property_links (don't filter by status yet)
+      // Get ACTIVE tenant IDs for these properties via tenant_property_links
       const { data: links, error: linksError } = await supabase
         .from('tenant_property_links')
         .select('tenant_id, status, property_id')
-        .in('property_id', propertyIdsAsStrings);
+        .in('property_id', propertyIdsAsStrings)
+        .eq('status', 'active');
 
       if (linksError) {
         console.error('❌ Error fetching tenant_property_links:', linksError);
@@ -948,7 +976,7 @@ export async function fetchApprovedApplicants(userId: string) {
     const { data, error } = await supabase
       .from('applications')
       .select('*')
-      .eq('status', 'approved')
+      // .eq('status', 'approved') // Removed to allow all applicants to be selected for lease generation
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -1098,8 +1126,16 @@ export interface DbApplication {
   applicant_name: string;
   applicant_email: string;
   applicant_phone?: string | null;
-  status: 'draft' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'lease_ready' | 'lease_signed';
+  status: 'draft' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'lease_ready' | 'lease_sent' | 'lease_signed' | 'move_in_approved' | 'completed';
   form_data?: Record<string, any>;
+  
+  // NEW FIELDS
+  proposed_move_in_date?: string | null;
+  approved_move_in_date?: string | null;
+  move_in_status?: 'unselected' | 'pending_approval' | 'approved' | 'declined';
+  is_transfer?: boolean;
+  current_property_id?: string | null;
+  
   submitted_at?: string | null;
   reviewed_at?: string | null;
   created_at: string;
@@ -2210,6 +2246,7 @@ export interface OntarioLeaseFormData {
   landlordName: string;
   landlordAddress?: string;
   tenantNames: string[];
+  tenantEmails?: string[];
   
   // Section 2: Rental Unit
   unitAddress: {
@@ -2314,7 +2351,12 @@ export interface DbLease {
   tenant_id?: string; // Tenant assigned to this lease
   application_id?: string; // Link to application if created from approved application
   
-  status: LeaseStatus;
+  status: 'draft' | 'generated' | 'uploaded' | 'sent' | 'signed' | 'signed_pending_move_in' | 'active' | 'terminated';
+  
+  // NEW FIELDS FOR VERSIONING
+  original_pdf_url?: string;
+  signed_pdf_url?: string;
+  version?: number;
   
   // Ontario lease form data (stored as JSONB)
   form_data?: OntarioLeaseFormData;
@@ -2443,24 +2485,24 @@ export async function fetchLeasesByTenant(tenantId: string): Promise<DbLease[]> 
     // Third, get leases by email match (for applicants who haven't been linked yet)
     let emailLeases: DbLease[] = [];
     if (userEmail) {
-      const { data: allLeases, error: allLeasesError } = await supabase
-        .from('leases')
-        .select('*')
-        .is('tenant_id', null)
-        .not('application_id', 'is', null)
-        .order('created_at', { ascending: false });
-
-      if (allLeasesError) {
-        console.error('Error fetching all application leases:', allLeasesError);
-      } else if (allLeases) {
-        // Filter by email in form_data
-        emailLeases = allLeases.filter(lease => {
-          const tenantNames = lease.form_data?.tenantNames || [];
-          // Check if any tenant name in the form data matches
-          // Note: This is a basic check. You might want to enhance it
-          return tenantNames.length > 0;
-        });
-        console.log('📄 Email-matched leases:', emailLeases.length);
+      // Find all invitations matching email
+      const { data: invitations, error: invError } = await supabase
+        .from('tenant_invitations')
+        .select('lease_id')
+        .eq('email', userEmail);
+        
+      if (!invError && invitations && invitations.length > 0) {
+        const leaseIds = invitations.map(inv => inv.lease_id).filter(Boolean);
+        if (leaseIds.length > 0) {
+          const { data: invLeases, error: lError } = await supabase
+            .from('leases')
+            .select('*')
+            .in('id', leaseIds);
+          if (!lError && invLeases) {
+            emailLeases = invLeases;
+            console.log('📄 Invited leases matching email:', emailLeases.length);
+          }
+        }
       }
     }
 
@@ -2548,7 +2590,7 @@ export async function convertApplicantToTenant(params: {
   leaseId: string;
   startDate?: string;
   rentAmount?: number;
-}): Promise<DbTenant | null> {
+}): Promise<{ tenant: DbTenant; activationStatus: 'active' | 'pending_move_in' } | null> {
   try {
     console.log('🔄 Starting applicant to tenant conversion:', params);
     
@@ -2590,25 +2632,49 @@ export async function convertApplicantToTenant(params: {
       name: application.applicant_name,
     });
 
-    // 2. Get or create user account for the applicant
-    let userId = null;
-    const { data: existingUser } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', application.applicant_email)
-      .maybeSingle();
+    // 2. Resolve the applicant auth user id
+    let userId = application.user_id || null;
 
-    if (existingUser) {
-      userId = existingUser.id;
-      console.log('✅ Found existing user profile:', userId);
+    if (userId) {
+      console.log('✅ Found applicant user_id on application:', userId);
     } else {
-      console.log('⚠️ No user profile found for email:', application.applicant_email);
+      const { data: existingUser, error: profileLookupError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', application.applicant_email)
+        .maybeSingle();
+
+      if (profileLookupError) {
+        console.error('❌ Error looking up profile by email:', profileLookupError);
+        throw new Error(`Failed to look up applicant profile: ${profileLookupError.message}`);
+      }
+
+      if (existingUser?.id) {
+        userId = existingUser.id;
+        console.log('✅ Found existing user profile:', userId);
+      } else {
+        console.log('⚠️ No user profile found for email:', application.applicant_email);
+      }
     }
+
+    if (!userId) {
+      console.error('❌ No auth user found for applicant:', application.applicant_email);
+      throw new Error(
+        'Applicant does not have an account yet. They must sign up and log in before being converted to a tenant.'
+      );
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const moveInDate = params.startDate || today;
+    
+    // As per new Flow rules, do NOT auto-activate a tenant/link on lease signing
+    // Action MUST await landlord approval, then wait for Move In Date hook.
+    const shouldActivateNow = false;
 
     // 3. Create tenant record
     console.log('🔄 Creating tenant record...');
     const tenantData = {
-      user_id: userId || application.applicant_email, // Use email as fallback if no user account
+      user_id: userId,
       first_name: application.applicant_name?.split(' ')[0] || '',
       last_name: application.applicant_name?.split(' ').slice(1).join(' ') || '',
       email: application.applicant_email,
@@ -2617,7 +2683,7 @@ export async function convertApplicantToTenant(params: {
       unit_id: params.unitId,
       start_date: params.startDate,
       rent_amount: params.rentAmount,
-      status: 'active', // Active after signing lease
+      status: shouldActivateNow ? 'active' : 'inactive',
     };
     console.log('📋 Tenant data to insert:', tenantData);
     
@@ -2635,7 +2701,7 @@ export async function convertApplicantToTenant(params: {
         console.error('❌ Active tenant already exists for this email/property');
         throw new Error('This applicant has already been converted to a tenant.');
       }
-      console.log('⚠️ Inactive tenant exists, creating new active one');
+      console.log('⚠️ Inactive tenant exists, creating new tenant record');
     }
     
     const { data: tenant, error: tenantError } = await supabase
@@ -2658,10 +2724,10 @@ export async function convertApplicantToTenant(params: {
       tenant_id: tenant.id,
       property_id: params.propertyId,
       unit_id: params.unitId,
-      status: 'active',
+      status: shouldActivateNow ? 'active' : 'inactive', // Changed from pending_invite to inactive because the link isn't active until Move-In Date
       created_via: 'lease_creation',
       created_by_user_id: currentUser.id, // Use the current authenticated landlord's ID
-      link_start_date: params.startDate,
+      link_start_date: moveInDate,
     };
     console.log('📋 Link data to insert:', linkData);
     
@@ -2727,13 +2793,13 @@ export async function convertApplicantToTenant(params: {
       console.log('ℹ️ No co-applicants found for this application');
     }
 
-    // 5. Update lease with tenant_id AND mark as signed
-    console.log('🔄 Updating lease with tenant_id and signed status...');
+    // 5. Update lease with tenant_id AND mark as signed_pending_move_in
+    console.log('🔄 Updating lease with tenant_id and signed_pending_move_in status...');
     const { error: leaseUpdateError } = await supabase
       .from('leases')
       .update({ 
         tenant_id: tenant.id,
-        status: 'signed',
+        status: 'signed_pending_move_in',
         signed_date: new Date().toISOString(),
       })
       .eq('id', params.leaseId);
@@ -2746,19 +2812,148 @@ export async function convertApplicantToTenant(params: {
       console.log('✅ Lease updated with tenant_id and signed status');
     }
 
-    // 6. Delete the application (converted to tenant)
-    console.log('🔄 Deleting application...');
-    await supabase
-      .from('applications')
-      .delete()
-      .eq('id', params.applicationId);
+    // 5.1 If move-in is today/past, make this the active tenancy now and retire old links for same user
+    if (shouldActivateNow) {
+      const { data: allTenantRecords } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('user_id', userId);
 
-    console.log('✅ Successfully converted applicant to tenant:', tenant.id);
-    return tenant;
+      const allTenantIds = (allTenantRecords || []).map((row: any) => row.id);
+      const oldTenantIds = allTenantIds.filter((tenantId: string) => tenantId !== tenant.id);
+
+      if (oldTenantIds.length > 0) {
+        await supabase
+          .from('tenant_property_links')
+          .update({
+            status: 'removed',
+            link_end_date: today,
+            updated_at: new Date().toISOString(),
+          })
+          .in('tenant_id', oldTenantIds)
+          .eq('status', 'active');
+
+        await supabase
+          .from('tenants')
+          .update({
+            status: 'inactive',
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', oldTenantIds)
+          .eq('status', 'active');
+      }
+    }
+
+    // 6. Update the application (converted to tenant profile but keep application for move-in flow)
+    console.log('🔄 Updating application instead of deleting...');
+    const { error: appUpdateError } = await supabase
+      .from('applications')
+      .update({ 
+        status: 'lease_signed',
+        proposed_move_in_date: moveInDate,
+        move_in_status: 'pending_approval'
+      })
+      .eq('id', params.applicationId);
+      
+    if (appUpdateError) {
+      console.error('❌ Error updating application:', appUpdateError);
+    } else {
+      console.log('✅ Successfully updated application to lease_signed status');
+    }
+
+    console.log('✅ Successfully processed applicant to tenant conversion step:', tenant.id, 'status:', shouldActivateNow ? 'active' : 'pending_move_in');
+    return {
+      tenant,
+      activationStatus: shouldActivateNow ? 'active' : 'pending_move_in',
+    };
   } catch (error) {
     console.error('❌ Error converting applicant to tenant:', error);
     // Rethrow the error so the UI can display it
     throw error;
+  }
+}
+
+export async function activateScheduledTenancyForUser(
+  userId: string
+): Promise<{ activated: boolean; tenantId?: string; propertyId?: string }> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: tenantRows, error: tenantError } = await supabase
+      .from('tenants')
+      .select('id, user_id, status')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (tenantError || !tenantRows || tenantRows.length === 0) {
+      return { activated: false };
+    }
+
+    const tenantIds = tenantRows.map((row: any) => row.id);
+
+    const { data: pendingLinks, error: pendingError } = await supabase
+      .from('tenant_property_links')
+      .select('id, tenant_id, property_id, status, link_start_date')
+      .in('tenant_id', tenantIds)
+      .eq('status', 'pending_invite')
+      .lte('link_start_date', today)
+      .order('link_start_date', { ascending: true })
+      .limit(1);
+
+    if (pendingError || !pendingLinks || pendingLinks.length === 0) {
+      return { activated: false };
+    }
+
+    const targetLink = pendingLinks[0] as any;
+    const targetTenantId = targetLink.tenant_id as string;
+
+    const oldTenantIds = tenantIds.filter((tenantId: string) => tenantId !== targetTenantId);
+
+    if (oldTenantIds.length > 0) {
+      await supabase
+        .from('tenant_property_links')
+        .update({
+          status: 'removed',
+          link_end_date: today,
+          updated_at: new Date().toISOString(),
+        })
+        .in('tenant_id', oldTenantIds)
+        .eq('status', 'active');
+
+      await supabase
+        .from('tenants')
+        .update({
+          status: 'inactive',
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', oldTenantIds)
+        .eq('status', 'active');
+    }
+
+    await supabase
+      .from('tenant_property_links')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', targetLink.id);
+
+    await supabase
+      .from('tenants')
+      .update({
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', targetTenantId);
+
+    return {
+      activated: true,
+      tenantId: targetTenantId,
+      propertyId: targetLink.property_id,
+    };
+  } catch (error) {
+    console.error('Error activating scheduled tenancy:', error);
+    return { activated: false };
   }
 }
 
@@ -2803,7 +2998,7 @@ export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>
           status: tenantStatus,
           updated_at: new Date().toISOString()
         })
-        .eq('user_id', data.tenant_id);
+        .eq('id', data.tenant_id);
       
       // Update tenant_property_links status
       await supabase
@@ -2834,12 +3029,12 @@ export async function handleLeaseSigning(params: {
   subUnitId?: string;
   startDate?: string;
   rentAmount?: number;
-}): Promise<{ success: boolean; tenantId?: string; error?: string }> {
+}): Promise<{ success: boolean; tenantId?: string; activationStatus?: 'active' | 'pending_move_in'; error?: string }> {
   try {
     // If this is an applicant, convert to tenant first
     if (params.applicationId) {
       console.log('🔄 Converting applicant to tenant before signing lease...');
-      const tenant = await convertApplicantToTenant({
+      const conversion = await convertApplicantToTenant({
         applicationId: params.applicationId,
         propertyId: params.propertyId,
         unitId: params.unitId,
@@ -2849,17 +3044,21 @@ export async function handleLeaseSigning(params: {
         rentAmount: params.rentAmount,
       });
 
-      if (!tenant) {
+      if (!conversion?.tenant) {
         return { success: false, error: 'Failed to convert applicant to tenant' };
       }
 
-      console.log('✅ Applicant converted to tenant:', tenant.id);
+      console.log('✅ Applicant converted to tenant:', conversion.tenant.id, 'activationStatus:', conversion.activationStatus);
       
       // Lease is already updated to 'signed' status in convertApplicantToTenant
       // No need to update again
       console.log('✅ Lease signing completed');
 
-      return { success: true, tenantId: tenant.id };
+      return {
+        success: true,
+        tenantId: conversion.tenant.id,
+        activationStatus: conversion.activationStatus,
+      };
     } else {
       // Just update lease status to signed for existing tenant
       await updateLeaseInDb(params.leaseId, { status: 'signed' });
@@ -2870,6 +3069,68 @@ export async function handleLeaseSigning(params: {
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Failed to process lease signing' 
+    };
+  }
+}
+
+export async function requestArrivalDateChange(params: {
+  leaseId: string;
+  tenantUserId: string;
+  requestedDate: string; // YYYY-MM-DD
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data: lease, error: leaseError } = await supabase
+      .from('leases')
+      .select('id, user_id, property_id, effective_date, form_data')
+      .eq('id', params.leaseId)
+      .single();
+
+    if (leaseError || !lease) {
+      return { success: false, error: 'Lease not found' };
+    }
+
+    const baseFormData = (lease.form_data || {}) as Record<string, any>;
+    const updatedFormData = {
+      ...baseFormData,
+      tenant_requested_arrival_date: params.requestedDate,
+      arrival_date_request_status: 'requested',
+      arrival_date_requested_at: new Date().toISOString(),
+      landlord_arrival_date: lease.effective_date || null,
+    };
+
+    const { error: updateError } = await supabase
+      .from('leases')
+      .update({
+        form_data: updatedFormData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.leaseId);
+
+    if (updateError) {
+      return { success: false, error: updateError.message };
+    }
+
+    await supabase.from('notifications').insert({
+      user_id: lease.user_id,
+      type: 'arrival_date_change_request',
+      title: 'Arrival date change requested',
+      message: `Tenant requested to change move-in date to ${params.requestedDate}.`,
+      data: {
+        leaseId: lease.id,
+        propertyId: lease.property_id,
+        requestedDate: params.requestedDate,
+        landlordDate: lease.effective_date || null,
+        tenantUserId: params.tenantUserId,
+      },
+      created_at: new Date().toISOString(),
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error requesting arrival date change:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to request date change',
     };
   }
 }
@@ -4091,6 +4352,51 @@ export async function rejectApplication(applicationId: string, reason?: string) 
       console.error('Error sending rejection notification:', notifError);
     }
 
+    // Cleanup applicant pipeline artifacts for rejected applications
+    try {
+      const applicantUserId = application.applicant_id || application.user_id;
+
+      await supabase
+        .from('applicants')
+        .delete()
+        .eq('email', application.applicant_email)
+        .eq('property_id', application.property_id)
+        .in('status', ['invited', 'pending', 'rejected']);
+
+      await supabase
+        .from('invites')
+        .update({
+          status: 'expired',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('tenant_email', application.applicant_email)
+        .eq('property_id', application.property_id)
+        .eq('status', 'pending');
+
+      if (applicantUserId) {
+        const { data: activeTenant } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('user_id', applicantUserId)
+          .eq('status', 'active')
+          .limit(1)
+          .maybeSingle();
+
+        // Fresh applicant (no active tenancy): suspend profile access
+        if (!activeTenant) {
+          await supabase
+            .from('profiles')
+            .update({
+              account_status: 'suspended',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', applicantUserId);
+        }
+      }
+    } catch (cleanupError) {
+      console.error('Error during rejection cleanup:', cleanupError);
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Error rejecting application:', error);
@@ -4158,5 +4464,340 @@ export async function getApplicationById(applicationId: string) {
   } catch (error) {
     console.error('Error fetching application:', error);
     return null;
+  }
+}
+
+// ============ TENANT INVITATION FLOW ============
+
+/**
+ * Create a tenant invitation
+ * This sends an invitation link to the applicant so they can activate their account
+ */
+export async function createTenantInvitation(params: {
+  email: string;
+  tenantName: string;
+  applicationId: string;
+  leaseId: string;
+  propertyId: string;
+}) {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    // Generate secure random token
+    const token = Math.random().toString(36).substring(2) + 
+                  Math.random().toString(36).substring(2) + 
+                  Date.now().toString(36);
+
+    const { data, error } = await supabase
+      .from('tenant_invitations')
+      .insert({
+        token: token,
+        email: params.email,
+        tenant_name: params.tenantName,
+        application_id: params.applicationId,
+        lease_id: params.leaseId,
+        property_id: params.propertyId,
+        created_by_user_id: user.id,
+        status: 'pending',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return {
+      success: true,
+      invitation: data,
+      activationLink: `${process.env.EXPO_PUBLIC_APP_URL || 'https://aaralink.app'}/activate-tenant?token=${token}&email=${encodeURIComponent(params.email)}`,
+    };
+  } catch (error) {
+    console.error('Error creating tenant invitation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send tenant invitation email via Edge Function
+ */
+export async function sendTenantInvitationEmail(params: {
+  email: string;
+  tenantName: string;
+  activationLink: string;
+  propertyName: string;
+  landlordName: string;
+}) {
+  try {
+    const { data, error } = await supabase.functions.invoke('send-tenant-invitation', {
+      body: {
+        email: params.email,
+        tenantName: params.tenantName,
+        activationLink: params.activationLink,
+        propertyName: params.propertyName,
+        landlordName: params.landlordName,
+      },
+    });
+
+    if (error) throw error;
+    return { success: true, data };
+  } catch (error) {
+    console.error('Error sending invitation email:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send tenant invitation-based lease for applicant-tenant conversion
+ * Instead of auto-converting, send an invitation link
+ */
+export async function handleInviteBasedLeaseSigning(params: {
+  applicationId: string;
+  leaseId: string;
+  propertyId: string;
+  applicantEmail: string;
+  applicantName: string;
+  propertyName: string;
+  landlordName: string;
+}) {
+  try {
+    console.log('📧 Creating tenant invitation for lease signing...');
+
+    // 1. Create the invitation
+    const invitationResult = await createTenantInvitation({
+      email: params.applicantEmail,
+      tenantName: params.applicantName,
+      applicationId: params.applicationId,
+      leaseId: params.leaseId,
+      propertyId: params.propertyId,
+    });
+
+    console.log('✅ Invitation created:', invitationResult.invitation.id);
+
+    // 2. Send the invitation email
+    await sendTenantInvitationEmail({
+      email: params.applicantEmail,
+      tenantName: params.applicantName,
+      activationLink: invitationResult.activationLink,
+      propertyName: params.propertyName,
+      landlordName: params.landlordName,
+    });
+
+    console.log('✅ Invitation email sent');
+
+    // 3. Update lease status to 'sent' (awaiting tenant activation)
+    const { error: leaseError } = await supabase
+      .from('leases')
+      .update({ 
+        status: 'sent',
+        sent_date: new Date().toISOString(),
+      })
+      .eq('id', params.leaseId);
+
+    if (leaseError) throw leaseError;
+
+    console.log('✅ Lease status updated to sent');
+
+    return {
+      success: true,
+      message: 'Invitation sent successfully. Tenant can now activate their account.',
+    };
+  } catch (error) {
+    console.error('Error in invitation-based lease signing:', error);
+    throw error;
+  }
+}
+
+/**
+ * Complete tenant activation after they set their password
+ * This is called from the activate-tenant screen after user creates their account
+ */
+export async function completeTenantActivation(params: {
+  invitationToken: string;
+  userId: string;
+}) {
+  try {
+    console.log('🔄 Completing tenant activation...');
+
+    // 1. Get invitation details
+    const { data: invitation, error: inviteError } = await supabase
+      .from('tenant_invitations')
+      .select('*')
+      .eq('token', params.invitationToken)
+      .single();
+
+    if (inviteError || !invitation) {
+      throw new Error('Invitation not found');
+    }
+
+    // 2. Mark invitation as activated
+    const { error: updateError } = await supabase
+      .from('tenant_invitations')
+      .update({
+        status: 'activated',
+        activated_at: new Date().toISOString(),
+        user_id: params.userId,
+      })
+      .eq('token', params.invitationToken);
+
+    if (updateError) throw updateError;
+
+    console.log('✅ Invitation marked as activated');
+
+    // 3. Keep user in applicant flow after activation.
+    // Conversion to tenant happens on lease signing completion.
+    return {
+      success: true,
+      activationStatus: 'activated_pending_signature',
+      message: 'Account activated successfully. Please review and sign your lease to complete tenant conversion.',
+    };
+  } catch (error) {
+    console.error('Error completing tenant activation:', error);
+    throw error;
+  }
+}
+
+// ============ TENANT DELETION FLOW ============
+
+/**
+ * Hard delete a tenant and all associated data
+ * This is called when a lease ends or tenant is removed
+ * Note: This requires server-side action due to needing service role key for auth deletion
+ */
+export async function hardDeleteTenant(params: {
+  tenantId: string;
+  leaseId?: string;
+  reason?: string;
+}) {
+  try {
+    console.log('🗑️ Starting hard delete for tenant:', params.tenantId);
+
+    // Get tenant details first
+    const { data: tenant, error: tenantFetchError } = await supabase
+      .from('tenants')
+      .select('*, profiles:user_id(email)')
+      .eq('id', params.tenantId)
+      .single();
+
+    if (tenantFetchError || !tenant) {
+      throw new Error('Tenant not found');
+    }
+
+    console.log('📋 Tenant details:', tenant.user_id, tenant.profiles?.email);
+
+    // Call edge function to handle hard deletion (requires service role)
+    console.log('📞 Calling edge function for auth user deletion...');
+    const { data, error: edgeFunctionError } = await supabase.functions.invoke('hard-delete-tenant-account', {
+      body: {
+        userId: tenant.user_id,
+        tenantId: params.tenantId,
+        leaseId: params.leaseId,
+        reason: params.reason || 'Lease ended',
+      },
+    });
+
+    if (edgeFunctionError) {
+      console.error('Error from edge function:', edgeFunctionError);
+      throw edgeFunctionError;
+    }
+
+    console.log('✅ Edge function completed:', data);
+
+    // Clean up local references if deletion was successful
+    if (data.success) {
+      // Delete lease soft-delete or mark as historical
+      if (params.leaseId) {
+        await supabase
+          .from('leases')
+          .update({ 
+            status: 'terminated',
+            terminated_date: new Date().toISOString(),
+          })
+          .eq('id', params.leaseId);
+      }
+
+      console.log('✅ Tenant hard delete completed successfully');
+    }
+
+    return {
+      success: data.success === true,
+      message: data.message || 'Tenant deleted successfully',
+      deletedRecords: data.deletedRecords,
+    };
+  } catch (error) {
+    console.error('Error hard deleting tenant:', error);
+    throw error;
+  }
+}
+
+/**
+ * Schedule or trigger tenant deletion when lease ends
+ * Can be called from lease end date or manual removal
+ */
+export async function initiateTenantRemoval(params: {
+  leaseId: string;
+  reason: 'lease_ended' | 'manual_removal' | 'payment_failed';
+}) {
+  try {
+    console.log('📅 Initiating tenant removal for lease:', params.leaseId);
+
+    // Get lease and tenant info
+    const { data: lease, error: leaseError } = await supabase
+      .from('leases')
+      .select('*, tenants(*)')
+      .eq('id', params.leaseId)
+      .single();
+
+    if (leaseError || !lease) {
+      throw new Error('Lease not found');
+    }
+
+    if (!lease.tenant_id) {
+      console.log('ℹ️ Lease has no tenant - marking as ended');
+      await supabase
+        .from('leases')
+        .update({ status: 'terminated' })
+        .eq('id', params.leaseId);
+      return { success: true, message: 'Lease marked as terminated' };
+    }
+
+    // Hard delete the tenant account
+    const deleteResult = await hardDeleteTenant({
+      tenantId: lease.tenant_id,
+      leaseId: params.leaseId,
+      reason: params.reason,
+    });
+
+    return deleteResult;
+  } catch (error) {
+    console.error('Error initiating tenant removal:', error);
+    throw error;
+  }
+}
+export async function approveMoveInDate(applicationId: string) {
+  try {
+    const { data: appData, error: appFetchError } = await supabase
+      .from('applications')
+      .select('*, leases(*)')
+      .eq('id', applicationId)
+      .single();
+
+    if (appFetchError) throw appFetchError;
+    
+    // Update application move-in status
+    const { error: updateError } = await supabase
+      .from('applications')
+      .update({
+        status: 'move_in_approved',
+        move_in_status: 'approved',
+        approved_move_in_date: appData.proposed_move_in_date || appData.leases?.[0]?.effective_date || new Date().toISOString().split('T')[0]
+      })
+      .eq('id', applicationId);
+
+    if (updateError) throw updateError;
+    
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error approving move-in date:', error);
+    return { success: false, error: error.message };
   }
 }

@@ -9,10 +9,12 @@ import { create } from 'zustand';
 import { 
   OntarioLeaseFormData, 
   DbLease, 
+  supabase,
   createLease, 
   updateLeaseInDb,
   uploadLeaseDocument,
   fetchLeaseById,
+  handleInviteBasedLeaseSigning,
 } from '@/lib/supabase';
 import {
   generateLeasePdf,
@@ -35,6 +37,7 @@ const getDefaultFormData = (): OntarioLeaseFormData => ({
   landlordName: '',
   landlordAddress: '',
   tenantNames: [''],
+  tenantEmails: [''],
   
   // Section 2: Rental Unit
   unitAddress: {
@@ -233,6 +236,23 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   },
   
   updateFormData: (section, value) => {
+    if (section === 'tenantNames') {
+      set((state) => {
+        const tenantNames = Array.isArray(value) ? value : [];
+        const existingEmails = state.formData.tenantEmails || [];
+        const tenantEmails = tenantNames.map((_, index) => existingEmails[index] || '');
+
+        return {
+          formData: {
+            ...state.formData,
+            tenantNames,
+            tenantEmails,
+          },
+        };
+      });
+      return;
+    }
+
     set((state) => ({
       formData: {
         ...state.formData,
@@ -258,6 +278,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       formData: {
         ...state.formData,
         tenantNames: [...state.formData.tenantNames, ''],
+        tenantEmails: [...(state.formData.tenantEmails || state.formData.tenantNames.map(() => '')), ''],
       },
     }));
   },
@@ -267,6 +288,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       formData: {
         ...state.formData,
         tenantNames: state.formData.tenantNames.filter((_, i) => i !== index),
+        tenantEmails: (state.formData.tenantEmails || state.formData.tenantNames.map(() => '')).filter((_, i) => i !== index),
       },
     }));
   },
@@ -503,16 +525,22 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
       }
       
       // Generate PDF using edge function (tries XFA first, then fallback)
+      console.log('🖨️ Generating PDF for lease ID:', leaseId);
       const result = await generateLeasePdf(leaseId, formData, { useXfa: true });
+      
+      console.log('🖨️ PDF generation result:', result);
       
       if (result.success) {
         set({
           isLoading: false,
+          draftLeaseId: leaseId,
           documentUrl: result.documentUrl || null,
           documentVersion: result.version || 1,
           engineUsed: result.engineUsed || 'standard',
           error: null,
         });
+        
+        console.log('✅ PDF generated and stored. Store state updated with draftLeaseId:', leaseId);
       } else {
         set({
           isLoading: false,
@@ -535,30 +563,238 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
    * Send the generated lease to tenant
    */
   sendLease: async (tenantEmail, message) => {
-    const { draftLeaseId, documentUrl } = get();
+    const { draftLeaseId, documentUrl, propertyId, tenantId, applicationId, personType, formData } = get();
     
-    if (!draftLeaseId) {
-      return { success: false, error: 'No lease to send. Generate or upload a lease first.' };
-    }
+    console.log('📤 sendLease called with:', {
+      draftLeaseId,
+      documentUrl,
+      propertyId,
+      tenantId,
+      applicationId,
+      hasDocument: !!documentUrl,
+    });
     
     if (!documentUrl) {
       return { success: false, error: 'No document attached. Generate or upload a PDF first.' };
     }
+
+    let leaseIdToSend = draftLeaseId;
+
+    // Resolve missing/stale lease ID before sending
+    if (leaseIdToSend) {
+      console.log('🔍 Verifying lease ID:', leaseIdToSend);
+      const existingLease = await fetchLeaseById(leaseIdToSend);
+      if (!existingLease) {
+        console.warn('⚠️ Lease ID is stale, searching for matching lease...');
+        leaseIdToSend = null;
+      } else {
+        console.log('✅ Lease verified:', existingLease.id);
+      }
+    }
+
+    if (!leaseIdToSend && applicationId) {
+      console.log('🔍 Searching for lease by applicationId:', applicationId);
+      const { data: latestLease, error: latestLeaseError } = await supabase
+        .from('leases')
+        .select('id, property_id, tenant_id, application_id, document_url, updated_at')
+        .eq('application_id', applicationId)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+
+      if (latestLeaseError) {
+        console.error('❌ Error querying leases by applicationId:', latestLeaseError);
+      } else {
+        console.log('📋 Found leases by applicationId:', latestLease?.length || 0, latestLease);
+      }
+
+      if (!latestLeaseError && latestLease && latestLease.length > 0) {
+        const matchedLease = latestLease.find((lease: any) => !!lease.document_url) || latestLease[0];
+
+        if (matchedLease?.id) {
+          console.log('✅ Matched lease by applicationId:', matchedLease.id);
+          leaseIdToSend = matchedLease.id;
+          set({ draftLeaseId: matchedLease.id });
+        }
+      }
+    }
+
+    if (!leaseIdToSend && propertyId) {
+      console.log('🔍 Searching for lease by propertyId:', propertyId);
+      const { data: latestLease, error: latestLeaseError } = await supabase
+        .from('leases')
+        .select('id, property_id, tenant_id, application_id, document_url, updated_at')
+        .eq('property_id', propertyId)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+
+      if (latestLeaseError) {
+        console.error('❌ Error querying leases:', latestLeaseError);
+      } else {
+        console.log('📋 Found leases:', latestLease?.length || 0, latestLease);
+      }
+
+      if (!latestLeaseError && latestLease && latestLease.length > 0) {
+        const matchedLease = latestLease.find((lease: any) => {
+          if (!lease.document_url) return false;
+          if (applicationId && lease.application_id === applicationId) return true;
+          if (tenantId && lease.tenant_id === tenantId) return true;
+          return !applicationId && !tenantId;
+        }) || latestLease.find((lease: any) => !!lease.document_url);
+
+        if (matchedLease?.id) {
+          console.log('✅ Matched lease:', matchedLease.id);
+          leaseIdToSend = matchedLease.id;
+          set({ draftLeaseId: matchedLease.id });
+        }
+      }
+    }
+
+    if (!leaseIdToSend) {
+      console.error('❌ Could not find lease to send');
+      return { success: false, error: 'No lease to send. Generate or upload a lease first.' };
+    }
+
+    let activeLeaseId: string = leaseIdToSend;
+    console.log('📤 Sending lease:', activeLeaseId);
     
     set({ isLoading: true, error: null });
     
     try {
-      const result = await sendLeaseApi(draftLeaseId, {
+      // Applicant flow: send invitation link to primary applicant for sign/download/re-upload
+      if (personType === 'applicant' && applicationId) {
+        console.log('📨 Using invitation-based send flow for applicant');
+
+        const { data: application, error: applicationError } = await supabase
+          .from('applications')
+          .select('id, applicant_name, applicant_email, property_id, properties(name, address1)')
+          .eq('id', applicationId)
+          .single();
+
+        if (applicationError || !application) {
+          console.error('❌ Failed to load application for invitation:', applicationError);
+          set({
+            isLoading: false,
+            error: 'Could not load applicant details for invitation',
+          });
+          return { success: false, error: 'Could not load applicant details for invitation' };
+        }
+
+        const { data: authUser } = await supabase.auth.getUser();
+        const { data: landlordProfile } = await supabase
+          .from('profiles')
+          .select('name, full_name')
+          .eq('id', authUser.user?.id)
+          .single();
+
+        const propertyNameFromForm = [
+          formData.unitAddress?.streetNumber,
+          formData.unitAddress?.streetName,
+          formData.unitAddress?.city,
+          formData.unitAddress?.province,
+          formData.unitAddress?.postalCode,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+
+          const propertyNameFromData = application.properties ? 
+            (application.properties.name || application.properties.address1) : null;
+
+          const invitationResult = await handleInviteBasedLeaseSigning({
+            applicationId,
+            leaseId: activeLeaseId,
+            propertyId: propertyId || application.property_id,
+            applicantEmail: tenantEmail || application.applicant_email,
+            applicantName: application.applicant_name || formData.tenantNames?.[0] || 'Applicant',
+            propertyName: propertyNameFromData || propertyNameFromForm || 'Property',
+          landlordName: landlordProfile?.full_name || landlordProfile?.name || 'Your Landlord',
+        });
+
+        if (invitationResult?.success) {
+          console.log('✅ Applicant invitation sent successfully');
+          set({
+            isLoading: false,
+            isSent: true,
+            error: null,
+          });
+          return {
+            success: true,
+            status: 'sent',
+            emailSent: true,
+            notificationSent: true,
+            leaseId: activeLeaseId,
+          } as SendLeaseResponse & { leaseId: string };
+        }
+
+        set({
+          isLoading: false,
+          error: 'Failed to send applicant invitation',
+        });
+        return { success: false, error: 'Failed to send applicant invitation' };
+      }
+
+      console.log('📨 Calling sendLeaseApi with:', {
+        activeLeaseId,
         tenantEmail,
+        propertyId,
+        applicationId,
+        tenantId,
+      });
+
+      let result = await sendLeaseApi(activeLeaseId, {
+        tenantEmail,
+        propertyId: propertyId || undefined,
+        applicationId: applicationId || undefined,
+        tenantId: tenantId || undefined,
         message,
       });
+
+      console.log('📨 sendLeaseApi result:', result);
+
+      // Retry once if backend reports missing lease but we can resolve another candidate
+      if (!result.success && (result.error || '').toLowerCase().includes('lease not found') && (propertyId || applicationId)) {
+        console.warn('⚠️ Lease not found on first attempt, retrying with fallback...');
+        const fallbackQuery = supabase
+          .from('leases')
+          .select('id, document_url')
+          .order('updated_at', { ascending: false })
+          .limit(1);
+
+        const scopedFallbackQuery = applicationId
+          ? fallbackQuery.eq('application_id', applicationId)
+          : fallbackQuery.eq('property_id', propertyId);
+
+        const { data: fallbackLease } = await scopedFallbackQuery.maybeSingle();
+
+        console.log('📋 Fallback lease:', fallbackLease);
+
+        if (fallbackLease?.id && fallbackLease.id !== activeLeaseId) {
+          console.log('🔄 Retrying with fallback lease:', fallbackLease.id);
+          activeLeaseId = fallbackLease.id;
+          set({ draftLeaseId: fallbackLease.id });
+          result = await sendLeaseApi(activeLeaseId, {
+            tenantEmail,
+            propertyId: propertyId || undefined,
+            applicationId: applicationId || undefined,
+            tenantId: tenantId || undefined,
+            message,
+          });
+          console.log('📨 Retry result:', result);
+        }
+      }
       
       if (result.success) {
+        console.log('✅ Lease sent successfully');
         set({
           isLoading: false,
           isSent: true,
         });
+        return {
+          ...result,
+          leaseId: activeLeaseId,
+        } as SendLeaseResponse & { leaseId: string };
       } else {
+        console.error('❌ Failed to send lease:', result.error);
         set({
           isLoading: false,
           error: result.error || 'Failed to send lease',
@@ -620,10 +856,12 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
         return null;
       }
       
-      // Update lease with document URL
+      // Update lease with document URLs
       await updateLeaseInDb(leaseId, {
         status: 'uploaded',
-        document_url: uploadResult.url,
+        document_url: uploadResult.url, // Keep for backward compatibility
+        original_pdf_url: uploadResult.url,
+        version: 1,
       });
       
       set({ isLoading: false });

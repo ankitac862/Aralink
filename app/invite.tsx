@@ -16,7 +16,7 @@ import { acceptInvite, declineInvite, getInviteDetails, InviteDetails } from '@/
 import { useAuthStore } from '@/store/authStore';
 
 export default function InviteScreen() {
-  const { token } = useLocalSearchParams<{ token?: string }>();
+  const { token, tenant_email, email } = useLocalSearchParams<{ token?: string; tenant_email?: string; email?: string }>();
   const router = useRouter();
   const colorScheme = useColorScheme();
   const { user, isInitialized } = useAuthStore();
@@ -33,6 +33,7 @@ export default function InviteScreen() {
   const textColor = isDark ? '#f9fafb' : '#0f172a';
   const secondaryText = isDark ? '#94a3b8' : '#64748b';
   const primaryColor = '#137fec';
+  const inviteEmail = tenant_email || email || '';
 
   const addressLine = useMemo(() => {
     if (!inviteDetails?.property) return '';
@@ -48,15 +49,11 @@ export default function InviteScreen() {
 
   useEffect(() => {
     if (!token || !isInitialized) return;
-    if (!user) {
-      setInviteDetails(null);
-      return;
-    }
 
     const loadInvite = async () => {
       setIsLoading(true);
       setError(null);
-      const details = await getInviteDetails({ token });
+      const details = await getInviteDetails({ token, tenantEmail: user?.email || inviteEmail });
       if (!details) {
         setError('Unable to load invite details.');
       }
@@ -65,7 +62,7 @@ export default function InviteScreen() {
     };
 
     loadInvite();
-  }, [token, user, isInitialized]);
+  }, [token, user, isInitialized, inviteEmail]);
 
   const handleAccept = async () => {
     if (!token) return;
@@ -97,6 +94,16 @@ export default function InviteScreen() {
     router.push('/(auth)');
   };
 
+  const handleSetPassword = () => {
+    router.push({
+      pathname: '/invite-auth',
+      params: {
+        ...(token ? { token } : {}),
+        ...(inviteEmail ? { email: inviteEmail } : {}),
+      },
+    });
+  };
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       <View style={[styles.card, { backgroundColor: cardColor, borderColor }]}>
@@ -111,10 +118,13 @@ export default function InviteScreen() {
         {token && !user && (
           <>
             <ThemedText style={[styles.body, { color: secondaryText }]}>
-              Please sign in with the invited email to view the property details.
+              Use the invited email to create your password first, then continue with the property invite.
             </ThemedText>
-            <TouchableOpacity style={[styles.button, { backgroundColor: primaryColor }]} onPress={handleSignIn}>
-              <ThemedText style={styles.buttonText}>Sign in</ThemedText>
+            <TouchableOpacity style={[styles.button, { backgroundColor: primaryColor }]} onPress={handleSetPassword}>
+              <ThemedText style={styles.buttonText}>Set Password</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.button, styles.decline, { borderColor }]} onPress={handleSignIn}>
+              <ThemedText style={[styles.buttonText, { color: textColor }]}>Already have an account? Sign in</ThemedText>
             </TouchableOpacity>
           </>
         )}

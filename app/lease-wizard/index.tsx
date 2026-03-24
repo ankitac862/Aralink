@@ -76,6 +76,21 @@ export default function LeaseWizardIndex() {
   // Initialize wizard with context
   useEffect(() => {
     if (!initComplete) {
+      // ── Synchronous step: set tenant names immediately from params ──
+      // This runs before the async fetch so step1 always shows correct names
+      if (params.applicationId && (params.tenantName || params.coApplicantNames)) {
+        const allNames: string[] = [params.tenantName || ''];
+        if (params.coApplicantNames) {
+          try {
+            const coAppNames = JSON.parse(params.coApplicantNames) as string[];
+            allNames.push(...coAppNames.filter(n => n?.trim()));
+          } catch (_) {}
+        }
+        if (allNames.some(n => n.trim())) {
+          updateFormData('tenantNames', allNames);
+          console.log('⚡ Synchronously set tenant names:', allNames);
+        }
+      }
       initializeWizard();
     }
   }, [params.propertyId, params.unitId, params.roomId, params.tenantId, params.tenantName, params.coApplicantNames, params.applicationId]);
@@ -97,6 +112,9 @@ export default function LeaseWizardIndex() {
         const application = await getApplicationById(params.applicationId);
         
         if (application) {
+          console.log('📋 Application loaded:', application.applicant_name);
+          console.log('📋 Co-applicant names from params:', params.coApplicantNames);
+          
           // Set context with application data
           setPropertyContext({
             propertyId: application.property_id,
@@ -109,30 +127,26 @@ export default function LeaseWizardIndex() {
           const { useOntarioLeaseStore: LeaseStore } = await import('@/store/ontarioLeaseStore');
           LeaseStore.getState().setTenantId(null, 'applicant', params.applicationId);
           
-          // Prefill tenant name
-          if (application.applicant_name) {
-            console.log('Setting primary applicant:', application.applicant_name);
-            LeaseStore.getState().updateTenantName(0, application.applicant_name);
-          }
+          // Build complete tenant names array including primary and co-applicants
+          const allTenantNames: string[] = [application.applicant_name || ''];
           
           // Add co-applicants if provided
           if (params.coApplicantNames) {
             try {
-              const coAppNames = JSON.parse(params.coApplicantNames);
-              console.log('Adding co-applicants:', coAppNames);
-              
-              for (let i = 0; i < coAppNames.length; i++) {
-                const name = coAppNames[i];
-                console.log(`Adding co-applicant ${i + 1}:`, name);
-                LeaseStore.getState().addTenantName(); // Add empty slot
-                LeaseStore.getState().updateTenantName(i + 1, name); // Fill the slot (+1 because 0 is primary)
-              }
-              
-              console.log('Final tenant names:', LeaseStore.getState().formData.tenantNames);
+              const coAppNames = JSON.parse(params.coApplicantNames) as string[];
+              console.log('📋 Parsed co-applicants:', coAppNames);
+              allTenantNames.push(...coAppNames.filter(n => n?.trim()));
             } catch (error) {
               console.error('Error parsing co-applicant names:', error);
             }
           }
+          
+          console.log('📋 All tenant names to set:', allTenantNames);
+          
+          // Update form data with all tenant names at once
+          LeaseStore.getState().updateFormData('tenantNames', allTenantNames);
+          
+          console.log('📋 Store tenant names after update:', LeaseStore.getState().formData.tenantNames);
           
           // Get property info for prefilling address
           const property = getPropertyById(application.property_id);

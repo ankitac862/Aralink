@@ -1,0 +1,17 @@
+--- app/(tabs)/tenant-dashboard.tsx
++++ app/(tabs)/tenant-dashboard.tsx
+@@ -750,6 +750,14 @@
+             handleStartApplicationPress();
+           }}
+         />
++        {(!propertyInfo && !pendingInvites.length) && (
++           <View style={[styles.welcomeCard, { backgroundColor: cardColor, borderColor, borderWidth: 1 }]}>
++            <ThemedText type="subtitle" style={{ color: textColor, marginBottom: 8 }}>Application Status</ThemedText>
++            <ThemedText style={{ color: textSecondaryColor, marginBottom: 16 }}>
++              You're currently an applicant. Your applications are under review or pending landlord approval for move-in. Once a property link is set to active, it will appear here.
++            </ThemedText>
++          </View>
++        )}
+       </ScrollView>
+     </ThemedView>
+   );

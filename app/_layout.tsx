@@ -1,7 +1,7 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-reanimated';
@@ -18,6 +18,11 @@ export default function RootLayout() {
   const { initialize, isInitialized, user, isLoading } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Initialize auth on app start
   useEffect(() => {
@@ -28,11 +33,11 @@ export default function RootLayout() {
 
   // Handle navigation based on auth state
   useEffect(() => {
-    if (!isInitialized || isLoading) return;
+    if (!isMounted || !isInitialized || isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
 
-    const isInviteRoute = segments[0] === 'invite';
+    const isInviteRoute = segments[0] === 'invite' || segments[0] === 'invite-auth';
 
     if (!user && !inAuthGroup && !isInviteRoute) {
       // User is not authenticated and not in auth group, redirect to auth
@@ -78,6 +83,7 @@ export default function RootLayout() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="invite" />
+        <Stack.Screen name="invite-auth" />
         <Stack.Screen name="properties" />
         <Stack.Screen name="tenants" />
         <Stack.Screen name="leases" />

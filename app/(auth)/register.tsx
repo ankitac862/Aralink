@@ -30,7 +30,7 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
   const [selectedUserType, setSelectedUserType] = useState<UserRole | null>(null);
   const [formData, setFormData] = useState({
     name: '',
-    email: '',
+    identifier: '',
     password: '',
   });
 
@@ -70,7 +70,7 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
-    if (!formData.email || !formData.password || !formData.name) {
+    if (!formData.identifier || !formData.password || !formData.name) {
       Alert.alert('Missing Information', 'Please fill in all required fields');
       return;
     }
@@ -81,15 +81,21 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
     }
 
     clearError();
-    const result = await signUp(formData.email, formData.password, formData.name, selectedUserType);
+    const result = await signUp(formData.identifier, formData.password, formData.name, selectedUserType);
     
     if (result.success) {
       if (result.needsVerification) {
-        // Navigate to email verification screen
-        router.replace({
-          pathname: '/(auth)/verify-email',
-          params: { email: formData.email },
-        });
+        if (result.verificationType === 'phone') {
+          router.replace({
+            pathname: '/(auth)/otp',
+            params: { phone: result.verificationTarget || formData.identifier, type: 'signup' },
+          });
+        } else {
+          router.replace({
+            pathname: '/(auth)/verify-email',
+            params: { email: result.verificationTarget || formData.identifier },
+          });
+        }
       } else {
         // No verification needed, go to dashboard
         navigateToDashboard(selectedUserType);
@@ -282,12 +288,6 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                 description="Own and manage rental properties"
               />
               <UserTypeCard
-                type="tenant"
-                icon="account"
-                title="Tenant"
-                description="Rent and live in a property"
-              />
-              <UserTypeCard
                 type="manager"
                 icon="briefcase"
                 title="Property Manager"
@@ -316,10 +316,10 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
               />
             </View>
 
-            {/* Email */}
+            {/* Email or Phone */}
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: textColor }]}>
-                Email Address
+                Email or Phone Number
               </ThemedText>
               <TextInput
                 style={[
@@ -330,12 +330,12 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                     color: textColor,
                   },
                 ]}
-                placeholder="Enter your email address"
+                placeholder="Enter your email or phone number"
                 placeholderTextColor={placeholderColor}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                value={formData.email}
-                onChangeText={(value) => setFormData({ ...formData, email: value })}
+                value={formData.identifier}
+                onChangeText={(value) => setFormData({ ...formData, identifier: value })}
               />
             </View>
 

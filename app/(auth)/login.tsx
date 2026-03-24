@@ -28,7 +28,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const insets = useSafeAreaInsets();
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
-    email: '',
+    identifier: '',
     password: '',
   });
 
@@ -55,13 +55,13 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const placeholderColor = isDark ? '#64748b' : '#9ca3af';
 
   const handleLogin = async () => {
-    if (!formData.email || !formData.password) {
+    if (!formData.identifier || !formData.password) {
       Alert.alert('Missing Information', 'Please fill in all fields');
       return;
     }
 
     clearError();
-    const result = await signIn(formData.email, formData.password);
+    const result = await signIn(formData.identifier, formData.password);
     
     if (result.success && result.user) {
       // Navigate based on user role
@@ -77,7 +77,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
         router.replace('/(tabs)/landlord-dashboard');
       }
     } else {
-      Alert.alert('Login Failed', result.error || 'Invalid email or password');
+      Alert.alert('Login Failed', result.error || 'Invalid email/phone or password');
     }
   };
 
@@ -112,7 +112,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   };
 
   const handleForgotPassword = () => {
-    router.push({ pathname: '/(auth)/forgot-password', params: { email: formData.email } });
+    router.push({ pathname: '/(auth)/forgot-password', params: { email: formData.identifier } });
   };
 
   return (
@@ -167,10 +167,10 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
 
           {/* Form Content */}
           <View style={styles.formContent}>
-            {/* Email */}
+            {/* Email or Phone */}
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: textColor }]}>
-                Email Address
+                Email or Phone Number
               </ThemedText>
               <TextInput
                 style={[
@@ -181,12 +181,12 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
                     color: textColor,
                   },
                 ]}
-                placeholder="Enter your email address"
+                placeholder="Enter your email or phone number"
                 placeholderTextColor={placeholderColor}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                value={formData.email}
-                onChangeText={(value) => setFormData({ ...formData, email: value })}
+                value={formData.identifier}
+                onChangeText={(value) => setFormData({ ...formData, identifier: value })}
               />
             </View>
 

@@ -2,7 +2,7 @@ import { Session, User } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
 
-import { clearCorruptedSession, getUserProfile, supabase, UserProfile } from '@/lib/supabase';
+import { clearCorruptedSession, getUserProfile, supabase, upsertUserProfile, UserProfile } from '@/lib/supabase';
 
 export type UserRole = 'landlord' | 'tenant' | 'manager';
 
@@ -28,8 +28,8 @@ interface AuthState {
   
   // Actions
   initialize: () => Promise<void>;
-  signUp: (email: string, password: string, name: string, role: UserRole) => Promise<{ success: boolean; error?: string; needsVerification?: boolean }>;
-  signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
+  signUp: (identifier: string, password: string, name: string, role: UserRole) => Promise<{ success: boolean; error?: string; needsVerification?: boolean; verificationType?: 'email' | 'phone'; verificationTarget?: string }>;
+  signIn: (identifier: string, password: string) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signOut: () => Promise<void>;
   signInWithGoogle: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   signInWithApple: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
@@ -85,6 +85,56 @@ const removeStorageValue = async (key: string): Promise<void> => {
   } catch (error) {
     console.error('Error removing storage value:', error);
   }
+};
+
+const isEmailIdentifier = (value: string): boolean => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+};
+
+const normalizePhoneIdentifier = (value: string): string | null => {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const startsWithPlus = raw.startsWith('+');
+  const digitsOnly = raw.replace(/\D/g, '');
+
+  if (startsWithPlus) {
+    if (digitsOnly.length < 8) return null;
+    return `+${digitsOnly}`;
+  }
+
+  if (digitsOnly.length === 10) {
+    return `+1${digitsOnly}`;
+  }
+
+  if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+    return `+${digitsOnly}`;
+  }
+
+  if (digitsOnly.length >= 8) {
+    return `+${digitsOnly}`;
+  }
+
+  return null;
+};
+
+const resolveAuthIdentifier = (identifier: string): { type: 'email' | 'phone'; value: string; error?: string } => {
+  const trimmed = identifier.trim();
+
+  if (!trimmed) {
+    return { type: 'email', value: '', error: 'Email or phone number is required' };
+  }
+
+  if (isEmailIdentifier(trimmed)) {
+    return { type: 'email', value: trimmed.toLowerCase() };
+  }
+
+  const normalizedPhone = normalizePhoneIdentifier(trimmed);
+  if (normalizedPhone) {
+    return { type: 'phone', value: normalizedPhone };
+  }
+
+  return { type: 'email', value: '', error: 'Please enter a valid email or phone number' };
 };
 
 // Helper to convert Supabase user and profile to AuthUser
@@ -221,12 +271,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signUp: async (email, password, name, role) => {
+  signUp: async (identifier, password, name, role) => {
     try {
       set({ isLoading: true, error: null });
 
-      const { data, error } = await supabase.auth.signUp({
-        email,
+      // Prevent tenant self-signup - tenants must be invited
+      if (role === 'tenant') {
+        const errorMessage = 'Tenant accounts can only be created via invitation. Contact your landlord for access.';
+        set({ isLoading: false, error: errorMessage });
+        return { success: false, error: errorMessage };
+      }
+
+      const resolved = resolveAuthIdentifier(identifier);
+      if (resolved.error) {
+        set({ isLoading: false, error: resolved.error });
+        return { success: false, error: resolved.error };
+      }
+
+      const signUpPayload = {
         password,
         options: {
           data: {
@@ -235,17 +297,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             user_type: role,
           },
         },
-      });
+      };
+
+      const { data, error } = await supabase.auth.signUp(
+        resolved.type === 'email'
+          ? { ...signUpPayload, email: resolved.value }
+          : { ...signUpPayload, phone: resolved.value }
+      );
 
       if (error) {
         // Handle specific error cases
         let errorMessage = error.message;
         
-        // Check for duplicate email error
+        // Check for duplicate credential error
         if (error.message.includes('User already registered') || 
             error.message.includes('already been registered') ||
             error.message.includes('already exists')) {
-          errorMessage = 'An account with this email already exists. Please login instead.';
+          errorMessage = resolved.type === 'phone'
+            ? 'An account with this phone number already exists. Please login instead.'
+            : 'An account with this email already exists. Please login instead.';
         }
         
         set({ isLoading: false, error: errorMessage });
@@ -255,7 +325,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Supabase returns a user even for existing emails with email confirmation disabled
       // Check if user.identities is empty (indicates user already exists)
       if (data.user && data.user.identities && data.user.identities.length === 0) {
-        const errorMessage = 'An account with this email already exists. Please login instead.';
+        const errorMessage = resolved.type === 'phone'
+          ? 'An account with this phone number already exists. Please login instead.'
+          : 'An account with this email already exists. Please login instead.';
         set({ isLoading: false, error: errorMessage });
         return { success: false, error: errorMessage };
       }
@@ -272,28 +344,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         // Check if email confirmation is required
         // If user.identities is empty or email is not confirmed, verification is needed
-        const needsVerification = !data.user.email_confirmed_at;
+        const needsVerification = resolved.type === 'phone'
+          ? !data.user.phone_confirmed_at
+          : !data.user.email_confirmed_at;
 
         if (needsVerification) {
           set({ 
             isLoading: false, 
-            pendingVerificationEmail: email 
+            pendingVerificationEmail: resolved.value,
           });
-          return { success: true, needsVerification: true };
+          return {
+            success: true,
+            needsVerification: true,
+            verificationType: resolved.type,
+            verificationTarget: resolved.value,
+          };
         }
 
         // If no verification needed, set user
         const authUser: AuthUser = {
           id: data.user.id,
-          email: data.user.email || email,
+          email: data.user.email || (resolved.type === 'email' ? resolved.value : ''),
           name: name,
           role: role,
+          phone: data.user.phone || (resolved.type === 'phone' ? resolved.value : undefined),
           isSocialLogin: false,
-          emailVerified: true,
+          emailVerified: data.user.email_confirmed_at !== null,
         };
 
         set({ user: authUser, session: data.session, isLoading: false });
-        return { success: true, needsVerification: false };
+        return {
+          success: true,
+          needsVerification: false,
+          verificationType: resolved.type,
+          verificationTarget: resolved.value,
+        };
       }
 
       set({ isLoading: false });
@@ -305,14 +390,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signIn: async (email, password) => {
+  signIn: async (identifier, password) => {
     try {
       set({ isLoading: true, error: null });
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const resolved = resolveAuthIdentifier(identifier);
+      if (resolved.error) {
+        set({ isLoading: false, error: resolved.error });
+        return { success: false, error: resolved.error };
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword(
+        resolved.type === 'email'
+          ? { email: resolved.value, password }
+          : { phone: resolved.value, password }
+      );
 
       if (error) {
         set({ isLoading: false, error: error.message });
@@ -321,6 +413,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (data.user) {
         const profile = await getUserProfile(data.user.id);
+
+        if (profile?.account_status === 'suspended') {
+          await supabase.auth.signOut();
+          const suspendedMessage =
+            'This account is not active. Please contact your landlord/property manager for a new invitation.';
+          set({ isLoading: false, error: suspendedMessage, user: null, session: null });
+          return { success: false, error: suspendedMessage };
+        }
+
         const savedRole = await getStorageValue('userRole') as UserRole | null;
         const savedName = await getStorageValue('userName');
         

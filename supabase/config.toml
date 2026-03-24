@@ -1,5 +1,9 @@
 # Supabase Configuration
-# This file configures the Supabase Edge Functions
+# This file configures the Supabase project
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**", "aralink://**"]
 
 [api]
 enabled = true

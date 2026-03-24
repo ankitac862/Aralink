@@ -134,37 +134,72 @@ export default function TenantLeaseStep5Screen() {
           const fileExt = asset.name?.split('.').pop() || 'pdf';
           const fileName = `${user.id}/${docType}_${Date.now()}.${fileExt}`;
 
-          // Read file as base64 for React Native
+          // Read file in a React Native compatible way
           const response = await fetch(asset.uri);
           const blob = await response.blob();
-          const arrayBuffer = await blob.arrayBuffer();
-          const fileData = new Uint8Array(arrayBuffer);
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.onloadend = () => {
+              const dataUrl = reader.result as string;
+              if (!dataUrl || !dataUrl.includes(',')) {
+                reject(new Error('Invalid file data'));
+                return;
+              }
+              resolve(dataUrl.split(',')[1]);
+            };
+            reader.readAsDataURL(blob);
+          });
 
-          // Upload to Supabase Storage
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('application-documents')
-            .upload(fileName, fileData, {
-              contentType: asset.mimeType || 'application/pdf',
-              upsert: false,
-            });
+          const binaryString = atob(base64);
+          const fileData = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            fileData[i] = binaryString.charCodeAt(i);
+          }
 
-          if (uploadError) {
-            console.error('Upload error:', uploadError);
-            Alert.alert('Upload Failed', 'Failed to upload document. Please try again.');
+          // Upload to Supabase Storage (fallback across known buckets)
+          const candidateBuckets = ['documents', 'lease-documents', 'application-documents'];
+          let uploadedBucket: string | null = null;
+          let uploadedPath: string | null = null;
+          let lastUploadError: any = null;
+
+          for (const bucket of candidateBuckets) {
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from(bucket)
+              .upload(fileName, fileData, {
+                contentType: asset.mimeType || 'application/pdf',
+                upsert: false,
+              });
+
+            if (!uploadError && uploadData?.path) {
+              uploadedBucket = bucket;
+              uploadedPath = uploadData.path;
+              break;
+            }
+
+            lastUploadError = uploadError;
+
+            const message = (uploadError?.message || '').toLowerCase();
+            if (!message.includes('bucket not found')) {
+              break;
+            }
+          }
+
+          if (!uploadedBucket || !uploadedPath) {
+            console.error('Upload error:', lastUploadError);
+            Alert.alert(
+              'Upload Failed',
+              'Document storage bucket is missing or inaccessible. Please contact support to create/configure the documents bucket.'
+            );
             return;
           }
 
-          // Get public URL
-          const { data: urlData } = supabase.storage
-            .from('application-documents')
-            .getPublicUrl(fileName);
+          const documentRef = `${uploadedBucket}/${uploadedPath}`;
+          console.log('Document uploaded successfully:', documentRef);
 
-          const publicUrl = urlData.publicUrl;
-          console.log('Document uploaded successfully:', publicUrl);
-
-          // Update state and store with public URL
+          // Update state and store with bucket/path reference
           setDocuments({ ...documents, [docType]: true });
-          updateDraft('documents', { [docType]: publicUrl });
+          updateDraft('documents', { [docType]: documentRef });
           
           Alert.alert('Success', 'Document uploaded successfully');
         } catch (uploadError) {

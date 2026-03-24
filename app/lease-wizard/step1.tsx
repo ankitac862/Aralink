@@ -17,7 +17,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -41,9 +41,17 @@ export default function LeaseWizardStep1() {
     removeTenantName,
     updateTenantName,
     setTenantId,
+    setPropertyContext,
     nextStep,
     resetWizard,
   } = useOntarioLeaseStore();
+
+  // Extract route params for context initialization
+  const routeParams = useLocalSearchParams<{
+    applicationId?: string;
+    propertyId?: string;
+    tenantName?: string;
+  }>();
 
   // Combined interface for both tenants and applicants
   interface PersonOption {
@@ -68,7 +76,30 @@ export default function LeaseWizardStep1() {
   const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
   const primaryColor = '#137fec';
 
-  // Load existing tenants and approved applicants for autocomplete
+  // Initialize store with route params (applicationId, propertyId)
+  useEffect(() => {
+    if (routeParams.propertyId || routeParams.applicationId) {
+      console.log('📋 Initializing lease wizard with route params:', {
+        propertyId: routeParams.propertyId,
+        applicationId: routeParams.applicationId,
+        tenantName: routeParams.tenantName,
+      });
+
+      if (routeParams.propertyId) {
+        setPropertyContext({ propertyId: routeParams.propertyId });
+      }
+
+      if (routeParams.applicationId) {
+        setTenantId(null, 'applicant', routeParams.applicationId);
+      }
+
+      if (routeParams.tenantName) {
+        updateFormData('tenantNames', [routeParams.tenantName]);
+      }
+    }
+  }, [routeParams.propertyId, routeParams.applicationId]);
+
+  // Load existing tenants and applicants for autocomplete
   useEffect(() => {
     loadPersonOptions();
   }, [user?.id]);
@@ -77,7 +108,7 @@ export default function LeaseWizardStep1() {
     if (!user?.id) return;
     setIsLoadingPersons(true);
     try {
-      // Fetch both tenants and approved applicants
+      // Fetch both tenants and applicants
       const [tenants, applicants] = await Promise.all([
         fetchTenants(user.id),
         fetchApprovedApplicants(user.id),
@@ -113,7 +144,7 @@ export default function LeaseWizardStep1() {
           email: t.email,
           type: 'tenant' as const,
         })),
-        // Add approved applicants
+        // Add applicants
         ...applicantsWithCoApplicants,
       ];
       
@@ -138,6 +169,14 @@ export default function LeaseWizardStep1() {
 
   const handleSelectPerson = async (person: PersonOption, index: number) => {
     updateTenantName(index, person.fullName);
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+    updatedEmails[index] = person.email || '';
+    updateFormData('tenantEmails', updatedEmails);
+
     // Set the person ID and type in the store
     if (index === 0) {
       if (person.type === 'tenant') {
@@ -152,8 +191,16 @@ export default function LeaseWizardStep1() {
           // Add co-applicants to the tenant list
           person.coApplicants.forEach((coApp) => {
             addTenantName(); // Add empty slot
-            const currentNames = useOntarioLeaseStore.getState().formData.tenantNames;
-            updateTenantName(currentNames.length - 1, coApp.full_name);
+            const currentState = useOntarioLeaseStore.getState().formData;
+            const coIndex = currentState.tenantNames.length - 1;
+            updateTenantName(coIndex, coApp.full_name);
+
+            const coEmails = [...(currentState.tenantEmails || currentState.tenantNames.map(() => ''))];
+            while (coEmails.length < currentState.tenantNames.length) {
+              coEmails.push('');
+            }
+            coEmails[coIndex] = coApp.email || '';
+            updateFormData('tenantEmails', coEmails);
           });
         }
       }
@@ -170,6 +217,26 @@ export default function LeaseWizardStep1() {
   const handleTenantInputChange = (text: string, index: number) => {
     updateTenantName(index, text);
     setTenantSearchQuery(text);
+
+    const normalizedText = text.trim().toLowerCase();
+    const matchedPerson = personOptions.find(
+      (p) => (p.fullName || '').trim().toLowerCase() === normalizedText
+    );
+
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+
+    if (matchedPerson?.email) {
+      updatedEmails[index] = matchedPerson.email;
+    } else if (!text.trim()) {
+      updatedEmails[index] = '';
+    }
+
+    updateFormData('tenantEmails', updatedEmails);
+
     // If user is editing the first tenant and it no longer matches a selected person, clear the IDs
     if (index === 0) {
       const matchesPerson = personOptions.some(p => p.fullName === text);
@@ -190,6 +257,16 @@ export default function LeaseWizardStep1() {
 
     nextStep();
     router.push('/lease-wizard/step2');
+  };
+
+  const updateTenantEmail = (index: number, value: string) => {
+    const currentFormData = useOntarioLeaseStore.getState().formData;
+    const updatedEmails = [...(currentFormData.tenantEmails || currentFormData.tenantNames.map(() => ''))];
+    while (updatedEmails.length < currentFormData.tenantNames.length) {
+      updatedEmails.push('');
+    }
+    updatedEmails[index] = value;
+    updateFormData('tenantEmails', updatedEmails);
   };
 
   const handleClose = () => {
@@ -275,7 +352,7 @@ export default function LeaseWizardStep1() {
               </ThemedText>
             </View>
             <ThemedText style={[styles.sectionDescription, { color: secondaryTextColor }]}>
-              Select from existing tenants/approved applicants or enter names manually. You can add multiple tenants.
+              Select from existing tenants/applicants or enter names manually. You can add multiple tenants.
             </ThemedText>
 
             {formData.tenantNames.map((name, index) => (
@@ -368,6 +445,31 @@ export default function LeaseWizardStep1() {
                     </View>
                   )}
                 </View>
+
+                {(() => {
+                  const normalizedName = name.trim().toLowerCase();
+                  const matchedPerson = personOptions.find(
+                    (p) => (p.fullName || '').trim().toLowerCase() === normalizedName
+                  );
+                  const isManualTenant = !!name.trim() && !matchedPerson;
+
+                  if (!isManualTenant) return null;
+
+                  return (
+                    <View style={{ marginTop: 10 }}>
+                      <ThemedText style={[styles.label, { color: textColor, marginBottom: 6 }]}>Tenant Email</ThemedText>
+                      <TextInput
+                        style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                        placeholder={`Enter tenant ${index + 1}'s email`}
+                        placeholderTextColor={secondaryTextColor}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={(formData.tenantEmails && formData.tenantEmails[index]) || ''}
+                        onChangeText={(text) => updateTenantEmail(index, text)}
+                      />
+                    </View>
+                  );
+                })()}
               </View>
             ))}
 

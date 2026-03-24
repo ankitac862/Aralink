@@ -7,13 +7,15 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getApplicationById, approveApplication, rejectApplication, supabase } from '@/lib/supabase';
+import { getApplicationById, approveApplication, rejectApplication, approveMoveInDate, supabase } from '@/lib/supabase';
+import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 export default function LandlordApplicationReviewScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
+  const { resetWizard, updateFormData, setTenantId, setPropertyContext } = useOntarioLeaseStore();
 
   const [application, setApplication] = useState<any>(null);
   const [coApplicants, setCoApplicants] = useState<any[]>([]);
@@ -87,37 +89,60 @@ export default function LandlordApplicationReviewScreen() {
       const result = await approveApplication(id as string, action);
       
       if (result.success) {
-        Alert.alert(
-          'Application Approved',
-          'The applicant has been notified of approval.',
-          [
-            {
+        if (action === 'now') {
+          // Fetch fresh co-applicants right now (async, before navigating)
+          let freshCoApplicants: Array<{ full_name: string }> = [];
+          try {
+            const { data } = await supabase
+              .from('co_applicants')
+              .select('full_name')
+              .eq('application_id', id as string)
+              .order('applicant_order', { ascending: true });
+            freshCoApplicants = data || [];
+          } catch (_) {}
+
+          const allTenantNames = [
+            application.applicant_name || '',
+            ...freshCoApplicants.map(ca => ca.full_name).filter(Boolean),
+          ];
+
+          console.log('🏠 Setting lease tenant names before navigation:', allTenantNames);
+
+          // Pre-fill store BEFORE navigating so step1 shows correct names immediately
+          resetWizard();
+          setTenantId(null, 'applicant', id as string);
+          setPropertyContext({
+            propertyId: application.property_id,
+            unitId: application.unit_id || undefined,
+            subUnitId: application.sub_unit_id || undefined,
+          });
+          updateFormData('tenantNames', allTenantNames);
+
+          Alert.alert(
+            'Application Approved',
+            'The applicant has been notified. Navigating to lease wizard...',
+            [{
               text: 'OK',
               onPress: () => {
-                if (action === 'now') {
-                  // Prepare co-applicant names for lease
-                  const coApplicantNames = coApplicants.map(ca => ca.full_name);
-                  
-                  // Navigate to lease wizard with prefilled data from application
-                  router.replace({
-                    pathname: '/lease-wizard',
-                    params: { 
-                      applicationId: id,
-                      propertyId: application.property_id,
-                      unitId: application.unit_id,
-                      subUnitId: application.sub_unit_id,
-                      tenantName: application.applicant_name,
-                      coApplicantNames: JSON.stringify(coApplicantNames), // Pass as JSON string
-                    }
-                  });
-                } else {
-                  // Go back to applications list
-                  router.back();
-                }
+                router.replace({
+                  pathname: '/lease-wizard/step1',
+                  params: {
+                    applicationId: id,
+                    propertyId: application.property_id,
+                    unitId: application.unit_id,
+                    subUnitId: application.sub_unit_id,
+                  }
+                });
               }
-            }
-          ]
-        );
+            }]
+          );
+        } else {
+          Alert.alert(
+            'Application Approved',
+            'The applicant has been notified of approval.',
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+        }
       } else {
         Alert.alert('Error', result.error || 'Failed to approve application');
       }
@@ -183,29 +208,60 @@ export default function LandlordApplicationReviewScreen() {
         return;
       }
 
-      // Otherwise, try to get signed URL from storage
+      // Otherwise, try to get signed URL from storage with fallback buckets
       // Extract bucket and path from the URL
       // Expected format: bucket-name/path/to/file
       const parts = documentUrl.split('/');
-      if (parts.length < 2) {
-        throw new Error('Invalid document path');
+      // Relaxed length check so raw filenames have a chance.
+
+      const primaryBucket = parts[0] || 'documents';
+      const rawFilePath = parts.length > 1 ? parts.slice(1).join('/') : parts[0];
+      const decodedFilePath = rawFilePath ? decodeURIComponent(rawFilePath) : '';
+
+      // Handle malformed keys where bucket is duplicated in path
+      const normalizedFilePaths = [
+        documentUrl,
+        decodeURIComponent(documentUrl),
+        rawFilePath,
+        decodedFilePath,
+        rawFilePath.startsWith(`${primaryBucket}/`) ? rawFilePath.slice(primaryBucket.length + 1) : rawFilePath,
+        decodedFilePath.startsWith(`${primaryBucket}/`) ? decodedFilePath.slice(primaryBucket.length + 1) : decodedFilePath,
+      ].filter(Boolean);
+
+      // Try fallback buckets: start with primary, then try remaining buckets
+      const candidateBuckets = [primaryBucket, ...['documents', 'lease-documents', 'application-documents'].filter(b => b && b !== primaryBucket)];
+      let lastError: any = null;
+      let signedUrl: string | null = null;
+
+      for (const bucket of candidateBuckets) {
+        for (const pathToTry of normalizedFilePaths) {
+          try {
+            const { data, error } = await supabase
+              .storage
+              .from(bucket)
+              .createSignedUrl(pathToTry, 3600); // 1 hour expiry
+
+            if (!error && data?.signedUrl) {
+              signedUrl = data.signedUrl;
+              break;
+            }
+
+            lastError = error;
+          } catch (e) {
+            lastError = e;
+          }
+        }
+
+        if (signedUrl) {
+          break;
+        }
       }
 
-      const bucket = parts[0];
-      const filePath = parts.slice(1).join('/');
-
-      const { data, error } = await supabase
-        .storage
-        .from(bucket)
-        .createSignedUrl(filePath, 3600); // 1 hour expiry
-
-      if (error) throw error;
-
-      if (data?.signedUrl) {
-        await Linking.openURL(data.signedUrl);
-      } else {
-        Alert.alert('Error', 'Unable to open document');
+      if (!signedUrl) {
+        throw lastError || new Error('Unable to locate document in any storage bucket');
       }
+
+      await Linking.openURL(signedUrl);
     } catch (error: any) {
       console.error('Error opening document:', error);
       Alert.alert(
@@ -555,8 +611,36 @@ export default function LandlordApplicationReviewScreen() {
           </View>
         )}
 
+        {application.status === 'lease_signed' && (
+          <View style={styles.actionsContainer}>
+            <ThemedText style={[styles.actionsTitle, { color: textPrimaryColor }]}>Move-In Approval Required</ThemedText>
+            <ThemedText style={[styles.statusText, { color: textSecondaryColor, marginBottom: 15 }]}>
+              The applicant has signed the lease. Please approve the Move-In Date to finalize their transition.
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.approveButton, { backgroundColor: primaryColor }]}
+              onPress={async () => {
+                try {
+                  setIsProcessing(true);
+                  const res = await approveMoveInDate(application.id);
+                  if (res.success) {
+                    Alert.alert('Success', 'Move-in approved!');
+                    loadApplication(); // Reload to see move_in_approved status
+                  } else throw new Error(res.error);
+                } catch(e: any) {
+                  Alert.alert('Error', e.message);
+                } finally {
+                  setIsProcessing(false);
+                }
+              }}
+              disabled={isProcessing}>
+              <ThemedText style={styles.approveButtonText}>Approve Move-In</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Status Info - show if already processed */}
-        {application.status !== 'submitted' && (
+        {application.status !== 'submitted' && application.status !== 'lease_signed' && (
           <View style={[styles.statusCard, { backgroundColor: cardBgColor, borderColor }]}>
             <ThemedText style={[styles.statusTitle, { color: textPrimaryColor }]}>
               Status: {application.status.toUpperCase()}
