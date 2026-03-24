@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS tenant_invitations ( id uuid default gen_random_uuid() primary key, token text unique not null, email text not null, tenant_name text, application_id uuid references applications(id), lease_id uuid references leases(id), user_id uuid references auth.users(id), property_id uuid references properties(id), created_by_user_id uuid references auth.users(id), status text check (status in ('pending', 'activated', 'expired')) default 'pending', created_at timestamp with time zone default now(), activated_at timestamp with time zone, expires_at timestamp with time zone default (now() + interval '30 days'), created_at_original timestamp with time zone default now() );
+CREATE INDEX IF NOT EXISTS tenant_invitations_token_email_idx on tenant_invitations(token, email);
+CREATE INDEX IF NOT EXISTS tenant_invitations_status_idx on tenant_invitations(status);
+CREATE INDEX IF NOT EXISTS tenant_invitations_user_id_idx on tenant_invitations(user_id);
+CREATE INDEX IF NOT EXISTS tenant_invitations_application_id_idx on tenant_invitations(application_id);
+ALTER TABLE tenant_invitations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view their own invitations" ON tenant_invitations;
+DROP POLICY IF EXISTS "Landlords can create invitations for their properties" ON tenant_invitations;
+DROP POLICY IF EXISTS "Landlords can view their invitations" ON tenant_invitations;
+CREATE POLICY "Users can view their own invitations" ON tenant_invitations FOR SELECT USING (email = (auth.jwt() ->> 'email'));
+CREATE POLICY "Landlords can create invitations for their properties" ON tenant_invitations FOR INSERT WITH CHECK (created_by_user_id = auth.uid() and property_id in (select id from properties where user_id = auth.uid()));
+CREATE POLICY "Landlords can view their invitations" ON tenant_invitations FOR SELECT USING (created_by_user_id = auth.uid());

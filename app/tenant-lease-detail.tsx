@@ -24,14 +24,14 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, handleLeaseSigning, DbLease } from '@/lib/supabase';
+import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, handleLeaseSigning, requestArrivalDateChange, DbLease } from '@/lib/supabase';
 
 export default function TenantLeaseDetailScreen() {
   const colorScheme = useColorScheme();
@@ -45,6 +45,8 @@ export default function TenantLeaseDetailScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSignModal, setShowSignModal] = useState(false);
   const [signature, setSignature] = useState('');
+  const [showArrivalModal, setShowArrivalModal] = useState(false);
+  const [arrivalDateInput, setArrivalDateInput] = useState('');
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -136,15 +138,18 @@ export default function TenantLeaseDetailScreen() {
       );
 
       if (uploadResult.success) {
-        // Update lease status to signed
+        // Update lease status to signed, keeping original URL intact and adding new signed version
         await updateLeaseInDb(lease!.id, { 
-          status: 'signed',
+          status: 'signed', // Changed to standard 'signed' indicating Tenant signed it
           signed_date: new Date().toISOString(),
+          document_url: uploadResult.url, // Override main URL for display if needed
+          signed_pdf_url: uploadResult.url, // Store the signed URL explicitly
+          version: 2, // Increment version to v2 (user signed)
         });
 
-        // If this was from an application, convert to tenant
+        // Update application to show lease is signed
         if (lease!.application_id) {
-          await handleLeaseSigning({
+          const result = await handleLeaseSigning({
             leaseId: lease!.id,
             applicationId: lease!.application_id,
             propertyId: lease!.property_id,
@@ -152,6 +157,11 @@ export default function TenantLeaseDetailScreen() {
             subUnitId: undefined,
             startDate: lease!.effective_date,
           });
+
+          if (!result.success) {
+            Alert.alert('Error', result.error || 'Failed to complete signing process');
+            return;
+          }
         }
 
         Alert.alert(
@@ -171,6 +181,45 @@ export default function TenantLeaseDetailScreen() {
 
   const handleSign = () => {
     setShowSignModal(true);
+  };
+
+  const handleRequestArrivalDateChange = () => {
+    setArrivalDateInput(lease?.effective_date || '');
+    setShowArrivalModal(true);
+  };
+
+  const submitArrivalDateRequest = async () => {
+    const requested = arrivalDateInput.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) {
+      Alert.alert('Invalid Date', 'Please enter date as YYYY-MM-DD (example: 2026-03-02).');
+      return;
+    }
+
+    if (!lease?.id || !user?.id) {
+      Alert.alert('Error', 'Missing lease or user information.');
+      return;
+    }
+
+    setShowArrivalModal(false);
+    setIsProcessing(true);
+
+    const result = await requestArrivalDateChange({
+      leaseId: lease.id,
+      tenantUserId: user.id,
+      requestedDate: requested,
+    });
+
+    setIsProcessing(false);
+
+    if (!result.success) {
+      Alert.alert('Error', result.error || 'Failed to request move-in date change.');
+      return;
+    }
+
+    Alert.alert(
+      'Request Sent',
+      'Your move-in date request was sent to the landlord for review.'
+    );
   };
 
   const confirmSign = async () => {
@@ -201,9 +250,17 @@ export default function TenantLeaseDetailScreen() {
         });
 
         if (result.success) {
+          const moveInDateText = lease?.effective_date
+            ? ` Move-in date: ${formatDate(lease.effective_date)}.`
+            : '';
+
+          const message = result.activationStatus === 'pending_move_in'
+            ? `Your lease has been signed. Your tenancy will become active on your move-in date.${moveInDateText}`
+            : 'Your lease has been signed and you are now an active tenant.';
+
           Alert.alert(
             'Lease Signed!',
-            'Your lease has been signed and you are now an active tenant.',
+            message,
             [{ text: 'OK', onPress: () => router.back() }]
           );
         } else {
@@ -374,7 +431,9 @@ export default function TenantLeaseDetailScreen() {
           <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
             <View style={[styles.cardHeader, { borderBottomColor: borderColor }]}>
               <MaterialCommunityIcons name="file-pdf-box" size={20} color={primaryColor} />
-              <ThemedText style={[styles.cardTitle, { color: textColor }]}>Lease Document</ThemedText>
+              <ThemedText style={[styles.cardTitle, { color: textColor }]}>
+                Lease Document (v{lease.version || 1})
+              </ThemedText>
             </View>
             
             <View style={styles.documentActions}>
@@ -434,11 +493,11 @@ export default function TenantLeaseDetailScreen() {
           </>
         )}
 
-        {isSigned && (
+{lease?.status !== 'sent' && (
           <View style={[styles.signedBadge, { backgroundColor: `${successColor}20` }]}>
             <MaterialCommunityIcons name="check-circle" size={20} color={successColor} />
             <ThemedText style={[styles.signedText, { color: successColor }]}>
-              Lease Signed on {formatDate(lease.signed_date || '')}
+              Lease processing (v{lease?.version || 1})
             </ThemedText>
           </View>
         )}
@@ -478,6 +537,46 @@ export default function TenantLeaseDetailScreen() {
                 onPress={confirmSign}
               >
                 <ThemedText style={[styles.modalButtonText, { color: '#fff' }]}>Sign</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Arrival Date Request Modal */}
+      <Modal visible={showArrivalModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}> 
+            <ThemedText style={[styles.modalTitle, { color: textColor }]}>Request Move-in Date Change</ThemedText>
+            <ThemedText style={[styles.modalMessage, { color: secondaryTextColor }]}> 
+              Current landlord move-in date is {formatDate(lease.effective_date || '')}. Enter your requested date (YYYY-MM-DD).
+            </ThemedText>
+
+            <TextInput
+              style={[styles.signatureInput, { backgroundColor: bgColor, borderColor, color: textColor }]}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={secondaryTextColor}
+              value={arrivalDateInput}
+              onChangeText={setArrivalDateInput}
+              autoCapitalize="none"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: borderColor }]}
+                onPress={() => {
+                  setShowArrivalModal(false);
+                  setArrivalDateInput('');
+                }}
+              >
+                <ThemedText style={[styles.modalButtonText, { color: textColor }]}>Cancel</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: primaryColor }]}
+                onPress={submitArrivalDateRequest}
+              >
+                <ThemedText style={[styles.modalButtonText, { color: '#fff' }]}>Send Request</ThemedText>
               </TouchableOpacity>
             </View>
           </View>

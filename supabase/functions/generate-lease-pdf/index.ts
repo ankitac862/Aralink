@@ -627,6 +627,8 @@ async function storePdf(
       .from('leases')
       .update({
         document_url: urlData.signedUrl,
+        original_pdf_url: urlData.signedUrl,
+        version: 1,
         document_storage_key: storagePath,
         status: 'generated',
         updated_at: new Date().toISOString(),

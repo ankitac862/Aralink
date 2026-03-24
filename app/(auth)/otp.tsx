@@ -1,27 +1,100 @@
 import React, { useState } from 'react';
+import { Alert, ActivityIndicator } from 'react-native';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { supabase } from '@/lib/supabase';
 
 export default function OTPScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
+  const params = useLocalSearchParams<{ phone?: string; email?: string; type?: string }>();
   const [otp, setOtp] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResending, setIsResending] = useState(false);
 
-  const handleVerifyOTP = () => {
-    // TODO: Verify OTP with Supabase
-    router.replace('/(tabs)');
+  const phone = params.phone || '';
+  const email = params.email || '';
+  const verificationType = params.type || 'signup';
+
+  const startResendTimer = () => {
+    setResendTimer(60);
+    const interval = setInterval(() => {
+      setResendTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   };
 
-  const handleResendOTP = () => {
-    setResendTimer(60);
-    // TODO: Call resend OTP API
-    setTimeout(() => setResendTimer(0), 60000);
+  const handleVerifyOTP = async () => {
+    if (otp.length < 6) {
+      Alert.alert('Invalid code', 'Please enter the 6-digit OTP code.');
+      return;
+    }
+
+    if (!phone && !email) {
+      Alert.alert('Missing contact', 'Phone or email is missing. Please sign up again.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const payload = phone
+        ? { phone, token: otp, type: 'sms' as const }
+        : { email, token: otp, type: verificationType as 'signup' | 'recovery' | 'invite' | 'email_change' | 'magiclink' };
+
+      const { error } = await supabase.auth.verifyOtp(payload);
+
+      if (error) {
+        Alert.alert('Verification failed', error.message);
+        return;
+      }
+
+      Alert.alert('Success', 'Verification successful. You can now log in.', [
+        { text: 'Go to Login', onPress: () => router.replace('/(auth)') },
+      ]);
+    } catch (error) {
+      Alert.alert('Verification failed', 'Unable to verify OTP. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResendOTP = async () => {
+    if (!phone && !email) {
+      Alert.alert('Missing contact', 'Phone or email is missing. Please sign up again.');
+      return;
+    }
+
+    setIsResending(true);
+    try {
+      const { error } = await supabase.auth.resend(
+        phone
+          ? { type: 'signup', phone }
+          : { type: verificationType as 'signup' | 'email_change', email }
+      );
+
+      if (error) {
+        Alert.alert('Resend failed', error.message);
+        return;
+      }
+
+      startResendTimer();
+      Alert.alert('OTP Sent', phone ? 'A new OTP has been sent to your phone.' : 'A new verification code has been sent to your email.');
+    } catch (error) {
+      Alert.alert('Resend failed', 'Unable to resend OTP. Please try again.');
+    } finally {
+      setIsResending(false);
+    }
   };
 
   return (
@@ -49,16 +122,25 @@ export default function OTPScreen() {
 
           <TouchableOpacity
             style={[styles.verifyBtn, { backgroundColor: Colors[colorScheme ?? 'light'].tint }]}
+            disabled={isSubmitting}
             onPress={handleVerifyOTP}>
-            <ThemedText style={styles.verifyBtnText}>Verify OTP</ThemedText>
+            {isSubmitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <ThemedText style={styles.verifyBtnText}>Verify OTP</ThemedText>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
-            disabled={resendTimer > 0}
+            disabled={resendTimer > 0 || isResending}
             onPress={handleResendOTP}>
-            <ThemedText style={[styles.link, resendTimer > 0 && styles.disabledLink]}>
-              {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
-            </ThemedText>
+            {isResending ? (
+              <ActivityIndicator size="small" color={Colors[colorScheme ?? 'light'].tint} />
+            ) : (
+              <ThemedText style={[styles.link, resendTimer > 0 && styles.disabledLink]}>
+                {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
+              </ThemedText>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => router.back()}>

@@ -17,7 +17,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchTenantNotifications } from '@/lib/supabase';
+import { activateScheduledTenancyForUser, fetchTenantNotifications, fetchLeasesByTenant, DbLease } from '@/lib/supabase';
 
 interface Announcement {
   id: string;
@@ -36,6 +36,15 @@ interface QuickLink {
   route: string;
 }
 
+interface PendingInvite {
+  id: string;
+  inviteId?: string;
+  propertyId: string;
+  propertyAddress: string;
+  unitId?: string;
+  subUnitId?: string;
+}
+
 export default function TenantDashboardScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -46,6 +55,8 @@ export default function TenantDashboardScreen() {
   const [propertyInfo, setPropertyInfo] = useState<any>(null);
   const [rentStatus, setRentStatus] = useState<any>(null);
   const [coTenants, setCoTenants] = useState<any[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [pendingLeases, setPendingLeases] = useState<DbLease[]>([]);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -54,6 +65,7 @@ export default function TenantDashboardScreen() {
   const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
   const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
   const warningColor = '#F5A623';
+  const isApplicantOnly = !propertyInfo;
 
   // Load notifications when screen comes into focus
   useFocusEffect(
@@ -61,9 +73,24 @@ export default function TenantDashboardScreen() {
       if (user?.id) {
         loadNotifications();
         loadTenantData();
+        loadPendingLeases();
       }
     }, [user])
   );
+
+  const loadPendingLeases = async () => {
+    if (!user?.id) return;
+    try {
+      const leases = await fetchLeasesByTenant(user.id);
+      if (leases) {
+        // Find leases that are generated or sent to the tenant but not signed yet
+        const pending = leases.filter(l => l.status === 'sent' || l.status === 'generated' || l.status === 'pending_signature');
+        setPendingLeases(pending);
+      }
+    } catch (err) {
+      console.error('Error loading pending leases:', err);
+    }
+  };
 
   const loadTenantData = async () => {
     if (!user?.id) {
@@ -72,6 +99,8 @@ export default function TenantDashboardScreen() {
     }
     
     try {
+      await activateScheduledTenancyForUser(user.id);
+
       const { supabase } = await import('@/lib/supabase');
       
       console.log('🏠 Loading tenant data for user:', user.id);
@@ -152,40 +181,8 @@ export default function TenantDashboardScreen() {
       console.log('🏠 Active tenant link data:', tenantLink);
       if (linkError) console.log('❌ Tenant link error:', linkError);
       
-      // If no active link found, try to get any link (including pending_invite or inactive)
       if (!tenantLink) {
-        console.log('⚠️ No active link found, trying to get any status...');
-        const { data: anyLink, error: anyLinkError } = await supabase
-          .from('tenant_property_links')
-          .select(`
-            *,
-            properties (
-              id,
-              name,
-              property_type,
-              address1,
-              address2,
-              city,
-              state,
-              zip_code
-            ),
-            units (
-              id,
-              name
-            ),
-            sub_units (
-              id,
-              name
-            )
-          `)
-          .eq('tenant_id', tenantIdToUse)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        
-        tenantLink = anyLink;
-        console.log('🏠 Any status tenant link data:', tenantLink);
-        if (anyLinkError) console.log('❌ Any status link error:', anyLinkError);
+        console.log('ℹ️ No active property link found. User remains in applicant/pending mode.');
       }
       
       // Set tenant info regardless of property link
@@ -319,6 +316,33 @@ export default function TenantDashboardScreen() {
       type: notif.type,
       data: notif.data, // Store the full notification data
     }));
+
+    const inviteSummaries = notifications
+      .filter((notif: any) => notif.type === 'invite')
+      .map((notif: any) => {
+        const notifData = notif.data || {};
+        const propertyId = notifData.propertyId || '';
+        const unitId = notifData.unitId || '';
+        const subUnitId = notifData.subUnitId || '';
+        const fallbackAddress = propertyId ? `Property ID: ${propertyId.substring(0, 8)}...` : 'Property invite';
+
+        return {
+          id: `${propertyId}-${unitId}-${subUnitId}-${notif.id}`,
+          inviteId: notifData.inviteId || '',
+          propertyId,
+          propertyAddress: notifData.propertyAddress || fallbackAddress,
+          unitId,
+          subUnitId,
+        } as PendingInvite;
+      })
+      .filter((invite) => !!invite.propertyId);
+
+    const uniqueInvites = inviteSummaries.filter((invite, index, all) => {
+      const inviteKey = `${invite.propertyId}-${invite.unitId || ''}-${invite.subUnitId || ''}`;
+      return index === all.findIndex((item) => `${item.propertyId}-${item.unitId || ''}-${item.subUnitId || ''}` === inviteKey);
+    });
+
+    setPendingInvites(uniqueInvites);
 
     console.log('🔔 Notification announcements:', notificationAnnouncements.length);
 
@@ -494,6 +518,35 @@ export default function TenantDashboardScreen() {
     </TouchableOpacity>
   );
 
+  const handleStartApplicationPress = () => {
+    if (pendingInvites.length === 1) {
+      const invite = pendingInvites[0];
+      router.push({
+        pathname: '/tenant-lease-start',
+        params: {
+          propertyId: invite.propertyId,
+          address: invite.propertyAddress,
+          unitId: invite.unitId || '',
+          subUnitId: invite.subUnitId || '',
+          inviteId: invite.inviteId || '',
+          fromInvite: 'true',
+        },
+      });
+      return;
+    }
+
+    if (pendingInvites.length > 1) {
+      Alert.alert(
+        'Multiple Applications',
+        'You have invites for multiple properties. Open an invite from Announcements/Notifications to continue for a specific address.',
+        [{ text: 'Open Notifications', onPress: () => router.push('/notifications') }, { text: 'Cancel', style: 'cancel' }]
+      );
+      return;
+    }
+
+    router.push('/tenant-lease-start');
+  };
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
@@ -523,7 +576,7 @@ export default function TenantDashboardScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Property Card */}
+        {/* Property / Applicant Card */}
         <TouchableOpacity
           style={[
             styles.propertyCard,
@@ -545,10 +598,10 @@ export default function TenantDashboardScreen() {
           </View>
           <View style={styles.propertyInfo}>
             <ThemedText style={[styles.propertyLabel, { color: textSecondaryColor }]}>
-              YOUR HOME
+              {isApplicantOnly ? 'APPLICATION STATUS' : 'YOUR HOME'}
             </ThemedText>
             <ThemedText style={[styles.propertyAddress, { color: textPrimaryColor }]}>
-              {propertyInfo?.address || 'No property assigned'}
+              {propertyInfo?.address || 'Invite accepted. Complete your rental application.'}
             </ThemedText>
             {propertyInfo?.unitName && (
               <ThemedText style={[styles.propertyCity, { color: textSecondaryColor }]}>
@@ -559,7 +612,7 @@ export default function TenantDashboardScreen() {
         </TouchableOpacity>
 
         {/* Co-Tenants Card */}
-        {coTenants.length > 0 && (
+        {!isApplicantOnly && coTenants.length > 0 && (
           <View
             style={[
               styles.coTenantsCard,
@@ -608,7 +661,7 @@ export default function TenantDashboardScreen() {
         )}
 
         {/* Rent Status Card */}
-        <View
+        {!isApplicantOnly && <View
           style={[
             styles.rentStatusCard,
             {
@@ -640,20 +693,50 @@ export default function TenantDashboardScreen() {
               <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
             </TouchableOpacity>
           </View>
-        </View>
+        </View>}
 
         {/* Start Application Button */}
         <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
-          onPress={() => router.push('/tenant-lease-start')}>
+          onPress={handleStartApplicationPress}>
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
           </View>
           <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
         </TouchableOpacity>
 
+        {isApplicantOnly && pendingInvites.length > 0 && (
+          <View style={[styles.inviteAddressCard, { backgroundColor: cardBgColor }]}> 
+            <ThemedText style={[styles.inviteAddressTitle, { color: textSecondaryColor }]}>APPLICATION ADDRESSES</ThemedText>
+            {pendingInvites.map((invite, index) => (
+              <ThemedText key={invite.id} style={[styles.inviteAddressText, { color: textPrimaryColor }]}>
+                {pendingInvites.length > 1 ? `${index + 1}. ` : ''}{invite.propertyAddress}
+              </ThemedText>
+            ))}
+          </View>
+        )}
+
+        {/* Pending Leases Card */}
+        {pendingLeases.length > 0 && (
+          <View style={[styles.welcomeCard, { backgroundColor: isDark ? '#451a03' : '#FEF3C7', borderColor: isDark ? '#b45309' : '#F59E0B', borderWidth: 1, marginTop: 16 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <MaterialCommunityIcons name="file-document-edit-outline" size={24} color={isDark ? '#FCD34D' : '#D97706'} style={{ marginRight: 8 }} />
+              <ThemedText type="subtitle" style={{ color: isDark ? '#FDE68A' : '#92400E' }}>Lease Signature Required</ThemedText>
+            </View>
+            <ThemedText style={{ color: isDark ? '#FCD34D' : '#B45309', marginBottom: 16, lineHeight: 20 }}>
+              You have {pendingLeases.length} lease agreement(s) waiting for your signature. Please review and sign to proceed.
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.maintenanceButton, { backgroundColor: '#F59E0B', paddingVertical: 12, marginTop: 0 }]}
+              onPress={() => router.push('/tenant-leases')}
+            >
+              <ThemedText style={[styles.maintenanceButtonText, { color: '#ffffff' }]}>Review & Sign Leases</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Generate Lease Button - Show only if tenant has property assigned */}
-        {propertyInfo && (
+        {!isApplicantOnly && propertyInfo && (
           <TouchableOpacity
             style={[styles.maintenanceButton, { backgroundColor: '#10b981', marginBottom: 12 }]}
             onPress={() => {
@@ -682,26 +765,26 @@ export default function TenantDashboardScreen() {
         )}
 
         {/* Maintenance Request Button */}
-        <TouchableOpacity
+        {!isApplicantOnly && <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor }]}
           onPress={() => router.push('/tenant-maintenance-request')}>
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="wrench" size={20} color="#fff" />
           </View>
           <ThemedText style={styles.maintenanceButtonText}>Submit Maintenance Request</ThemedText>
-        </TouchableOpacity>
+        </TouchableOpacity>}
 
-        <TouchableOpacity
+        {!isApplicantOnly && <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: primaryColor }]}
           onPress={() => router.push('/tenant-maintenance-status')}>
           <View style={[styles.maintenanceButtonIcon, { backgroundColor: primaryColor + '20' }]}>
             <MaterialCommunityIcons name="clipboard-text" size={20} color={primaryColor} />
           </View>
           <ThemedText style={[styles.maintenanceButtonText, { color: primaryColor }]}>View My Requests</ThemedText>
-        </TouchableOpacity>
+        </TouchableOpacity>}
 
         {/* Quick Links */}
-        <View>
+        {!isApplicantOnly && <View>
           <FlatList
             data={quickLinks}
             keyExtractor={(item) => item.id}
@@ -710,7 +793,7 @@ export default function TenantDashboardScreen() {
             scrollEnabled={false}
             columnWrapperStyle={styles.quickLinksRow}
           />
-        </View>
+        </View>}
 
         {/* Announcements Section */}
         <View style={styles.announcementsSection}>
@@ -728,6 +811,15 @@ export default function TenantDashboardScreen() {
 
         {/* Bottom Padding */}
         <View style={{ height: 20 }} />
+
+        {isApplicantOnly && (!propertyInfo && !pendingInvites.length && !pendingLeases.length) && (
+           <View style={[styles.welcomeCard, { backgroundColor: cardBgColor, borderColor: isDark ? '#374151' : '#e5e7eb', borderWidth: 1, marginTop: 16 }]}>
+            <ThemedText type="subtitle" style={{ color: textPrimaryColor, marginBottom: 8 }}>Application Status</ThemedText>
+            <ThemedText style={{ color: textSecondaryColor, marginBottom: 16, lineHeight: 20 }}>
+              You are currently registered as an applicant. If you recently signed a lease, your move-in date is pending final landlord approval. Once approved, your active property view will open automatically on your move-in date.
+            </ThemedText>
+          </View>
+        )}
       </ScrollView>
     </ThemedView>
   );
@@ -882,6 +974,24 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  inviteAddressCard: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+  },
+  inviteAddressTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  inviteAddressText: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    marginBottom: 4,
   },
   quickLinksRow: {
     gap: 12,

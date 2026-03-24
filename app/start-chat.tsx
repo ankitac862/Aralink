@@ -19,6 +19,7 @@ import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import messageService from '@/services/messageService';
 import { useAuthStore } from '@/store/authStore';
+import { supabase } from '@/lib/supabase';
 
 interface TenantListItem {
   id: string;
@@ -29,6 +30,8 @@ interface TenantListItem {
   propertyId: string;
   propertyName?: string;
   phone?: string;
+  source: 'tenant' | 'applicant';
+  applicationId?: string;
 }
 
 export default function StartChatScreen() {
@@ -36,8 +39,8 @@ export default function StartChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [tenants, setTenants] = useState<TenantListItem[]>([]);
-  const [filteredTenants, setFilteredTenants] = useState<TenantListItem[]>([]);
+  const [people, setPeople] = useState<TenantListItem[]>([]);
+  const [filteredPeople, setFilteredPeople] = useState<TenantListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [messagingId, setMessagingId] = useState<string | null>(null);
@@ -76,9 +79,9 @@ export default function StartChatScreen() {
 
   useEffect(() => {
     if (searchText.trim() === '') {
-      setFilteredTenants(tenants);
+      setFilteredPeople(people);
     } else {
-      const filtered = tenants.filter((tenant) => {
+      const filtered = people.filter((tenant) => {
         const fullName = `${tenant.firstName} ${tenant.lastName}`.toLowerCase();
         const search = searchText.toLowerCase();
         return (
@@ -87,13 +90,14 @@ export default function StartChatScreen() {
           tenant.propertyName?.toLowerCase().includes(search)
         );
       });
-      setFilteredTenants(filtered);
+      setFilteredPeople(filtered);
     }
-  }, [searchText, tenants]);
+  }, [searchText, people]);
 
-  const loadTenants = () => {
+  const loadTenants = async () => {
     try {
       setLoading(true);
+
       const tenantList: TenantListItem[] = allTenants.map((tenant) => {
         const property = getPropertyById(tenant.propertyId);
         return {
@@ -105,10 +109,50 @@ export default function StartChatScreen() {
           phone: tenant.phone,
           propertyId: tenant.propertyId,
           propertyName: property?.name || property?.address1 || 'Unknown Property',
+          source: 'tenant',
         };
       });
-      setTenants(tenantList);
-      setFilteredTenants(tenantList);
+
+      let applicantList: TenantListItem[] = [];
+      if (user?.id) {
+        const { data: propertyRows } = await supabase
+          .from('properties')
+          .select('id')
+          .eq('user_id', user.id);
+
+        const propertyIds = (propertyRows || []).map((p: any) => p.id);
+
+        const { data: applicants } = await supabase
+          .from('applications')
+          .select('id, user_id, property_id, property_address, applicant_name, applicant_email, status')
+          .in('status', ['submitted', 'under_review', 'approved', 'lease_ready'])
+          .in('property_id', propertyIds.length > 0 ? propertyIds : ['00000000-0000-0000-0000-000000000000'])
+          .order('created_at', { ascending: false });
+
+        applicantList = (applicants || [])
+          .filter((app: any) => !!app.applicant_email)
+          .map((app: any) => {
+            const property = app.property_id ? getPropertyById(app.property_id) : null;
+            const names = (app.applicant_name || '').trim().split(/\s+/);
+            const firstName = names[0] || app.applicant_email;
+            const lastName = names.slice(1).join(' ') || '';
+            return {
+              id: `app-${app.id}`,
+              userId: app.user_id || undefined,
+              firstName,
+              lastName,
+              email: app.applicant_email,
+              propertyId: app.property_id,
+              propertyName: property?.name || app.property_address || property?.address1 || 'Unknown Property',
+              source: 'applicant',
+              applicationId: app.id,
+            };
+          });
+      }
+
+      const merged = [...tenantList, ...applicantList];
+      setPeople(merged);
+      setFilteredPeople(merged);
     } catch (error) {
       console.error('Error loading tenants:', error);
     } finally {
@@ -122,10 +166,12 @@ export default function StartChatScreen() {
     }
 
     try {
-      console.log('💬 handleStartChat - Starting conversation with tenant:', {
+      console.log('💬 handleStartChat - Starting conversation with person:', {
         tenantRecordId: tenant.id,
         tenantUserId: tenant.userId,
         tenantName: `${tenant.firstName} ${tenant.lastName}`,
+        source: tenant.source,
+        applicationId: tenant.applicationId,
         propertyId: tenant.propertyId,
         landlordId: user.id,
       });
@@ -146,9 +192,14 @@ export default function StartChatScreen() {
         
         if (profile) {
           tenantUserId = profile.id;
-          console.log('✅ Found tenant user_id from email:', tenantUserId);
+          console.log('✅ Found user_id from email:', tenantUserId);
         } else {
-          Alert.alert('Error', 'Tenant has not signed up yet. They need to create an account first.');
+          Alert.alert(
+            'Account Not Activated',
+            tenant.source === 'applicant'
+              ? 'Applicant has not activated their account yet. Send invitation first from the lease flow.'
+              : 'Tenant has not signed up yet. They need to create an account first.'
+          );
           setMessagingId(null);
           return;
         }
@@ -194,6 +245,9 @@ export default function StartChatScreen() {
           <ThemedText style={[styles.tenantName, { color: textPrimaryColor }]}>
             {item.firstName} {item.lastName}
           </ThemedText>
+          <ThemedText style={[styles.tenantProperty, { color: item.source === 'applicant' ? '#f59e0b' : textSecondaryColor }]}> 
+            {item.source === 'applicant' ? 'Applicant' : 'Tenant'}
+          </ThemedText>
           <ThemedText style={[styles.tenantEmail, { color: textSecondaryColor }]}>
             {item.email}
           </ThemedText>
@@ -223,11 +277,11 @@ export default function StartChatScreen() {
         color={textSecondaryColor}
       />
       <ThemedText style={[styles.emptyText, { color: textSecondaryColor }]}>
-        {searchText ? 'No tenants found' : 'No tenants available'}
+        {searchText ? 'No people found' : 'No tenants or applicants available'}
       </ThemedText>
       {!searchText && (
         <ThemedText style={[styles.emptySubtext, { color: textSecondaryColor }]}>
-          Add tenants to start messaging
+          Add or approve applicants to start messaging
         </ThemedText>
       )}
     </View>
@@ -324,7 +378,7 @@ export default function StartChatScreen() {
       {/* Tenants List */}
       {filteredTenants.length > 0 ? (
         <FlatList
-          data={filteredTenants}
+            data={filteredPeople}
           renderItem={renderTenant}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}

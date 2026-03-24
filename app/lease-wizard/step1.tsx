@@ -17,7 +17,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -41,9 +41,17 @@ export default function LeaseWizardStep1() {
     removeTenantName,
     updateTenantName,
     setTenantId,
+    setPropertyContext,
     nextStep,
     resetWizard,
   } = useOntarioLeaseStore();
+
+  // Extract route params for context initialization
+  const routeParams = useLocalSearchParams<{
+    applicationId?: string;
+    propertyId?: string;
+    tenantName?: string;
+  }>();
 
   // Combined interface for both tenants and applicants
   interface PersonOption {
@@ -68,7 +76,30 @@ export default function LeaseWizardStep1() {
   const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
   const primaryColor = '#137fec';
 
-  // Load existing tenants and approved applicants for autocomplete
+  // Initialize store with route params (applicationId, propertyId)
+  useEffect(() => {
+    if (routeParams.propertyId || routeParams.applicationId) {
+      console.log('📋 Initializing lease wizard with route params:', {
+        propertyId: routeParams.propertyId,
+        applicationId: routeParams.applicationId,
+        tenantName: routeParams.tenantName,
+      });
+
+      if (routeParams.propertyId) {
+        setPropertyContext({ propertyId: routeParams.propertyId });
+      }
+
+      if (routeParams.applicationId) {
+        setTenantId(null, 'applicant', routeParams.applicationId);
+      }
+
+      if (routeParams.tenantName) {
+        updateFormData('tenantNames', [routeParams.tenantName]);
+      }
+    }
+  }, [routeParams.propertyId, routeParams.applicationId]);
+
+  // Load existing tenants and applicants for autocomplete
   useEffect(() => {
     loadPersonOptions();
   }, [user?.id]);
@@ -77,7 +108,7 @@ export default function LeaseWizardStep1() {
     if (!user?.id) return;
     setIsLoadingPersons(true);
     try {
-      // Fetch both tenants and approved applicants
+      // Fetch both tenants and applicants
       const [tenants, applicants] = await Promise.all([
         fetchTenants(user.id),
         fetchApprovedApplicants(user.id),
@@ -113,7 +144,7 @@ export default function LeaseWizardStep1() {
           email: t.email,
           type: 'tenant' as const,
         })),
-        // Add approved applicants
+        // Add applicants
         ...applicantsWithCoApplicants,
       ];
       
@@ -321,7 +352,7 @@ export default function LeaseWizardStep1() {
               </ThemedText>
             </View>
             <ThemedText style={[styles.sectionDescription, { color: secondaryTextColor }]}>
-              Select from existing tenants/approved applicants or enter names manually. You can add multiple tenants.
+              Select from existing tenants/applicants or enter names manually. You can add multiple tenants.
             </ThemedText>
 
             {formData.tenantNames.map((name, index) => (

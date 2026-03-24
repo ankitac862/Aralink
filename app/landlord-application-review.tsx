@@ -7,7 +7,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getApplicationById, approveApplication, rejectApplication, supabase } from '@/lib/supabase';
+import { getApplicationById, approveApplication, rejectApplication, approveMoveInDate, supabase } from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 export default function LandlordApplicationReviewScreen() {
@@ -208,29 +208,60 @@ export default function LandlordApplicationReviewScreen() {
         return;
       }
 
-      // Otherwise, try to get signed URL from storage
+      // Otherwise, try to get signed URL from storage with fallback buckets
       // Extract bucket and path from the URL
       // Expected format: bucket-name/path/to/file
       const parts = documentUrl.split('/');
-      if (parts.length < 2) {
-        throw new Error('Invalid document path');
+      // Relaxed length check so raw filenames have a chance.
+
+      const primaryBucket = parts[0] || 'documents';
+      const rawFilePath = parts.length > 1 ? parts.slice(1).join('/') : parts[0];
+      const decodedFilePath = rawFilePath ? decodeURIComponent(rawFilePath) : '';
+
+      // Handle malformed keys where bucket is duplicated in path
+      const normalizedFilePaths = [
+        documentUrl,
+        decodeURIComponent(documentUrl),
+        rawFilePath,
+        decodedFilePath,
+        rawFilePath.startsWith(`${primaryBucket}/`) ? rawFilePath.slice(primaryBucket.length + 1) : rawFilePath,
+        decodedFilePath.startsWith(`${primaryBucket}/`) ? decodedFilePath.slice(primaryBucket.length + 1) : decodedFilePath,
+      ].filter(Boolean);
+
+      // Try fallback buckets: start with primary, then try remaining buckets
+      const candidateBuckets = [primaryBucket, ...['documents', 'lease-documents', 'application-documents'].filter(b => b && b !== primaryBucket)];
+      let lastError: any = null;
+      let signedUrl: string | null = null;
+
+      for (const bucket of candidateBuckets) {
+        for (const pathToTry of normalizedFilePaths) {
+          try {
+            const { data, error } = await supabase
+              .storage
+              .from(bucket)
+              .createSignedUrl(pathToTry, 3600); // 1 hour expiry
+
+            if (!error && data?.signedUrl) {
+              signedUrl = data.signedUrl;
+              break;
+            }
+
+            lastError = error;
+          } catch (e) {
+            lastError = e;
+          }
+        }
+
+        if (signedUrl) {
+          break;
+        }
       }
 
-      const bucket = parts[0];
-      const filePath = parts.slice(1).join('/');
-
-      const { data, error } = await supabase
-        .storage
-        .from(bucket)
-        .createSignedUrl(filePath, 3600); // 1 hour expiry
-
-      if (error) throw error;
-
-      if (data?.signedUrl) {
-        await Linking.openURL(data.signedUrl);
-      } else {
-        Alert.alert('Error', 'Unable to open document');
+      if (!signedUrl) {
+        throw lastError || new Error('Unable to locate document in any storage bucket');
       }
+
+      await Linking.openURL(signedUrl);
     } catch (error: any) {
       console.error('Error opening document:', error);
       Alert.alert(
@@ -580,8 +611,36 @@ export default function LandlordApplicationReviewScreen() {
           </View>
         )}
 
+        {application.status === 'lease_signed' && (
+          <View style={styles.actionsContainer}>
+            <ThemedText style={[styles.actionsTitle, { color: textPrimaryColor }]}>Move-In Approval Required</ThemedText>
+            <ThemedText style={[styles.statusText, { color: textSecondaryColor, marginBottom: 15 }]}>
+              The applicant has signed the lease. Please approve the Move-In Date to finalize their transition.
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.approveButton, { backgroundColor: primaryColor }]}
+              onPress={async () => {
+                try {
+                  setIsProcessing(true);
+                  const res = await approveMoveInDate(application.id);
+                  if (res.success) {
+                    Alert.alert('Success', 'Move-in approved!');
+                    loadApplication(); // Reload to see move_in_approved status
+                  } else throw new Error(res.error);
+                } catch(e: any) {
+                  Alert.alert('Error', e.message);
+                } finally {
+                  setIsProcessing(false);
+                }
+              }}
+              disabled={isProcessing}>
+              <ThemedText style={styles.approveButtonText}>Approve Move-In</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Status Info - show if already processed */}
-        {application.status !== 'submitted' && (
+        {application.status !== 'submitted' && application.status !== 'lease_signed' && (
           <View style={[styles.statusCard, { backgroundColor: cardBgColor, borderColor }]}>
             <ThemedText style={[styles.statusTitle, { color: textPrimaryColor }]}>
               Status: {application.status.toUpperCase()}

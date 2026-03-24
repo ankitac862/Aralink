@@ -218,8 +218,7 @@ export default function LeaseWizardStep6() {
       );
 
       if (result.success) {
-        // Store leaseId before reset
-        const leaseId = draftLeaseId;
+        const leaseId = (result as any).leaseId || draftLeaseId;
         
         Alert.alert(
           'Lease Sent',
@@ -229,7 +228,11 @@ export default function LeaseWizardStep6() {
               text: 'View Lease Details',
               onPress: () => {
                 resetWizard();
-                router.replace(`/lease-detail?id=${leaseId}`);
+                if (leaseId) {
+                  router.replace(`/lease-detail?id=${leaseId}`);
+                } else {
+                  router.replace('/properties');
+                }
               },
             },
             {

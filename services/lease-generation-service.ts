@@ -39,6 +39,9 @@ export interface GeneratePdfResponse {
 export interface SendLeaseRequest {
   leaseId: string;
   tenantEmail?: string;
+  propertyId?: string;
+  applicationId?: string;
+  tenantId?: string;
   sendEmail?: boolean;
   sendNotification?: boolean;
   message?: string;
@@ -310,6 +313,9 @@ export async function sendLeaseToTenant(
   leaseId: string,
   options?: {
     tenantEmail?: string;
+    propertyId?: string;
+    applicationId?: string;
+    tenantId?: string;
     message?: string;
     skipEmail?: boolean;
     skipNotification?: boolean;
@@ -336,6 +342,9 @@ export async function sendLeaseToTenant(
       body: JSON.stringify({
         leaseId,
         tenantEmail: options?.tenantEmail,
+        propertyId: options?.propertyId,
+        applicationId: options?.applicationId,
+        tenantId: options?.tenantId,
         sendEmail: !options?.skipEmail,
         sendNotification: !options?.skipNotification,
         message: options?.message,

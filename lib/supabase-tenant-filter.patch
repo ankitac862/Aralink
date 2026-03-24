@@ -1,0 +1,8 @@
+--- lib/supabase.ts
++++ lib/supabase.ts
+@@ -896,7 +896,7 @@
+         .select('tenant_id, status, property_id')
+         .in('property_id', propertyIdsAsStrings)
++        .eq('status', 'active');
+-        // .in('property_id', propertyIdsAsStrings);
+@@ -1000,0 +1000,0 @@

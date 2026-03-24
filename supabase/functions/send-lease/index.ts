@@ -14,6 +14,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 interface SendLeaseRequest {
   leaseId: string;
   tenantEmail?: string; // Override email if different from tenant profile
+  propertyId?: string;
+  applicationId?: string;
+  tenantId?: string;
   sendEmail?: boolean; // Default true
   sendNotification?: boolean; // Default true
   message?: string; // Optional custom message
@@ -276,6 +279,9 @@ serve(async (req) => {
     const {
       leaseId,
       tenantEmail: overrideEmail,
+      propertyId,
+      applicationId,
+      tenantId,
       sendEmail = true,
       sendNotification = true,
       message,
@@ -289,11 +295,11 @@ serve(async (req) => {
     }
     
     // Fetch lease with property info (but not tenant - it might be null for applicants)
-    const { data: lease, error: leaseError } = await supabase
+    const { data: directLease, error: leaseError } = await supabase
       .from('leases')
       .select(`
         *,
-        properties:property_id (
+        properties (
           address1,
           city,
           state,
@@ -302,8 +308,40 @@ serve(async (req) => {
       `)
       .eq('id', leaseId)
       .single();
+
+    let lease = directLease as any;
+
+    // Fallback: resolve latest matching lease using context when leaseId is stale
+    if (!lease || leaseError) {
+      let fallbackQuery = supabase
+        .from('leases')
+        .select(`
+          *,
+          properties (
+            address1,
+            city,
+            state,
+            zip_code
+          )
+        `)
+        .order('updated_at', { ascending: false })
+        .limit(10);
+
+      if (applicationId) {
+        fallbackQuery = fallbackQuery.eq('application_id', applicationId);
+      } else if (tenantId) {
+        fallbackQuery = fallbackQuery.eq('tenant_id', tenantId);
+      } else if (propertyId) {
+        fallbackQuery = fallbackQuery.eq('property_id', propertyId);
+      }
+
+      const { data: fallbackLeases, error: fallbackError } = await fallbackQuery;
+      if (!fallbackError && fallbackLeases && fallbackLeases.length > 0) {
+        lease = fallbackLeases.find((item: any) => !!item.document_url) || fallbackLeases[0];
+      }
+    }
     
-    if (leaseError || !lease) {
+    if (!lease) {
       console.error('Lease fetch error:', leaseError);
       return new Response(
         JSON.stringify({ success: false, error: 'Lease not found' }),
@@ -316,40 +354,82 @@ serve(async (req) => {
     let recipientName = 'Tenant';
     let recipientId: string | null = null;
     
-    if (lease.tenant_id) {
-      // This is for an existing tenant
-      const { data: tenant } = await supabase
-        .from('tenants')
-        .select('id, first_name, last_name, email')
-        .eq('id', lease.tenant_id)
-        .single();
-      
-      if (tenant) {
-        recipientEmail = recipientEmail || tenant.email;
-        recipientName = `${tenant.first_name} ${tenant.last_name}`;
-        recipientId = tenant.id;
-      }
-    } else if (lease.application_id) {
-      // This is for an applicant
-      const { data: application } = await supabase
-        .from('applications')
-        .select('id, applicant_name, applicant_email, user_id')
-        .eq('id', lease.application_id)
-        .single();
-      
-      if (application) {
-        recipientEmail = recipientEmail || application.applicant_email;
-        recipientName = application.applicant_name;
-        recipientId = application.user_id;
-      }
-    }
+    // START: CRITICAL REQUIREMENT 1 - USER TYPE HANDLING
+    // Extract target email from explicit override, or fallback to lease form data, or existing bindings
+    let finalTargetEmail = overrideEmail || (lease.form_data && lease.form_data.tenantEmails && lease.form_data.tenantEmails.length > 0 ? lease.form_data.tenantEmails[0] : null);
     
-    if (!recipientEmail) {
+    if (!finalTargetEmail && lease.tenant_id) {
+      const { data: t } = await supabase.from('tenants').select('email').eq('id', lease.tenant_id).single();
+      if (t) finalTargetEmail = t.email;
+    }
+    if (!finalTargetEmail && lease.application_id) {
+      const { data: a } = await supabase.from('applications').select('applicant_email').eq('id', lease.application_id).single();
+      if (a) finalTargetEmail = a.applicant_email;
+    }
+
+    if (!finalTargetEmail) {
       return new Response(
         JSON.stringify({ success: false, error: 'No recipient email found. Please provide an email address.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    recipientEmail = finalTargetEmail;
+    let updatesToLease: any = {};
+
+    // Fetch both records if they exist to link them accurately
+    const { data: tenantFound } = await supabase
+      .from('tenants')
+      .select('id, first_name, last_name, user_id')
+      .eq('email', finalTargetEmail)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { data: applicantFound } = await supabase
+      .from('applications')
+      .select('id, applicant_name, user_id')
+      .eq('applicant_email', finalTargetEmail)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (applicantFound) {
+      // Bind application side
+      updatesToLease.application_id = applicantFound.id;
+      lease.application_id = applicantFound.id;
+      recipientId = applicantFound.user_id;
+      recipientName = applicantFound.applicant_name;
+    }
+
+    if (tenantFound) {
+      // Override recipientId via tenant, bind tenant_id
+      updatesToLease.tenant_id = tenantFound.id;
+      lease.tenant_id = tenantFound.id;
+      recipientId = tenantFound.user_id; 
+      recipientName = `${tenantFound.first_name || ''} ${tenantFound.last_name || ''}`.trim() || 'Tenant';
+    }
+
+    if (!tenantFound && !applicantFound) {
+        // 3. User does not exist at all -> Create Applicant Invite record.
+        const inviteToken = crypto.randomUUID();
+        console.log('⚠️ Recipient not found in tenants or applications. Creating Applicant invitation record.');
+        await supabase.from('tenant_invitations').insert({
+          email: finalTargetEmail,
+          property_id: lease.property_id || propertyId,
+          lease_id: lease.id,
+          tenant_name: lease.form_data?.tenantNames?.[0] || 'Prospective Tenant',
+          status: 'pending',
+          token: inviteToken
+        });
+        recipientName = lease.form_data?.tenantNames?.[0] || 'Applicant';
+    }
+
+    // Apply mappings to DB immediately so the system knows what this lease belongs to
+    if (Object.keys(updatesToLease).length > 0) {
+      await supabase.from('leases').update(updatesToLease).eq('id', lease.id);
+    }
+    // END: CRITICAL REQUIREMENT 1 LOGIC
     
     // Verify user owns this lease
     if (lease.user_id !== user.id) {
@@ -401,7 +481,7 @@ serve(async (req) => {
     if (sendNotification && recipientId) {
       notificationSent = await createInAppNotification(
         recipientId,
-        leaseId,
+        lease.id,
         landlordName,
         propertyAddress
       );
@@ -414,7 +494,7 @@ serve(async (req) => {
         status: 'sent',
         updated_at: new Date().toISOString(),
       })
-      .eq('id', leaseId);
+      .eq('id', lease.id);
     
     if (updateError) {
       console.error('Error updating lease status:', updateError);
