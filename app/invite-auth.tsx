@@ -46,6 +46,27 @@ const readQueryParams = () => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const getInviteAuthRedirectUrl = (): string => {
+  const configuredBase = process.env.EXPO_PUBLIC_APP_URL?.trim();
+
+  // Support both localhost (for local web dev) and real domains.
+  // When running on web, prefer the current browser origin so local and hosted
+  // environments both work naturally.
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    return `${origin.replace(/\/+$/, '')}/invite-auth`;
+  }
+
+  if (configuredBase) {
+    return configuredBase.endsWith('/invite-auth')
+      ? configuredBase
+      : `${configuredBase.replace(/\/+$/, '')}/invite-auth`;
+  }
+
+  // Safe fallback for mobile deep-link handling.
+  return 'aralink://invite-auth';
+};
+
 export default function InviteAuthScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
@@ -278,13 +299,8 @@ export default function InviteAuthScreen() {
     try {
       setIsResending(true);
 
-      // Build app redirect URL
-      const webBase =
-        Platform.OS === 'web' && typeof window !== 'undefined'
-          ? `${window.location.origin}/invite-auth`
-          : 'aralink://invite-auth';
-
-      const redirectTo = webBase; // No custom params needed; Supabase handles the auth tokens
+      // Build invite-auth redirect URL.
+      const redirectTo = getInviteAuthRedirectUrl();
 
       // Send password reset email to the user
       // This will include a fresh magic link with access_token & refresh_token

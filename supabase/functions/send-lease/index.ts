@@ -14,6 +14,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 interface SendLeaseRequest {
   leaseId: string;
   tenantEmail?: string; // Override email if different from tenant profile
+  /** Supabase auth user id — primary recipient for in-app notification (applicants may have no tenant row) */
+  recipientUserId?: string;
   propertyId?: string;
   applicationId?: string;
   tenantId?: string;
@@ -279,6 +281,7 @@ serve(async (req) => {
     const {
       leaseId,
       tenantEmail: overrideEmail,
+      recipientUserId: overrideRecipientUserId,
       propertyId,
       applicationId,
       tenantId,
@@ -352,19 +355,36 @@ serve(async (req) => {
     // Fetch tenant or applicant info separately
     let recipientEmail = overrideEmail;
     let recipientName = 'Tenant';
-    let recipientId: string | null = null;
-    
-    // START: CRITICAL REQUIREMENT 1 - USER TYPE HANDLING
-    // Extract target email from explicit override, or fallback to lease form data, or existing bindings
-    let finalTargetEmail = overrideEmail || (lease.form_data && lease.form_data.tenantEmails && lease.form_data.tenantEmails.length > 0 ? lease.form_data.tenantEmails[0] : null);
-    
-    if (!finalTargetEmail && lease.tenant_id) {
-      const { data: t } = await supabase.from('tenants').select('email').eq('id', lease.tenant_id).single();
-      if (t) finalTargetEmail = t.email;
-    }
+    let recipientId: string | null = overrideRecipientUserId || null;
+
+    // Resolve email: override → form → linked application (applicant) → tenant row — NOT tenantId-first
+    let finalTargetEmail =
+      overrideEmail ||
+      (lease.form_data?.tenantEmails?.length
+        ? lease.form_data.tenantEmails.find((e: string) => e?.trim())
+        : null) ||
+      null;
+
     if (!finalTargetEmail && lease.application_id) {
-      const { data: a } = await supabase.from('applications').select('applicant_email').eq('id', lease.application_id).single();
-      if (a) finalTargetEmail = a.applicant_email;
+      const { data: a } = await supabase
+        .from('applications')
+        .select('applicant_email, applicant_name, user_id')
+        .eq('id', lease.application_id)
+        .maybeSingle();
+      if (a?.applicant_email) {
+        finalTargetEmail = a.applicant_email;
+        if (!recipientId && a.user_id) recipientId = a.user_id;
+        if (a.applicant_name) recipientName = a.applicant_name;
+      }
+    }
+
+    if (!finalTargetEmail && lease.tenant_id) {
+      const { data: t } = await supabase.from('tenants').select('email, user_id, first_name, last_name').eq('id', lease.tenant_id).maybeSingle();
+      if (t?.email) {
+        finalTargetEmail = t.email;
+        if (!recipientId && t.user_id) recipientId = t.user_id;
+        recipientName = `${t.first_name || ''} ${t.last_name || ''}`.trim() || 'Tenant';
+      }
     }
 
     if (!finalTargetEmail) {
@@ -377,7 +397,7 @@ serve(async (req) => {
     recipientEmail = finalTargetEmail;
     let updatesToLease: any = {};
 
-    // Fetch both records if they exist to link them accurately
+    // Link tenant/application rows by email — prefer lease.application_id when set (do not swap to wrong application)
     const { data: tenantFound } = await supabase
       .from('tenants')
       .select('id, first_name, last_name, user_id')
@@ -394,23 +414,34 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (applicantFound) {
-      // Bind application side
+    if (lease.application_id) {
+      const { data: leaseApp } = await supabase
+        .from('applications')
+        .select('id, applicant_name, user_id')
+        .eq('id', lease.application_id)
+        .maybeSingle();
+      if (leaseApp) {
+        updatesToLease.application_id = leaseApp.id;
+        lease.application_id = leaseApp.id;
+        recipientId = leaseApp.user_id ?? recipientId;
+        recipientName = leaseApp.applicant_name || recipientName;
+      }
+    } else if (applicantFound) {
       updatesToLease.application_id = applicantFound.id;
       lease.application_id = applicantFound.id;
-      recipientId = applicantFound.user_id;
-      recipientName = applicantFound.applicant_name;
+      recipientId = applicantFound.user_id ?? recipientId;
+      recipientName = applicantFound.applicant_name || recipientName;
     }
 
     if (tenantFound) {
-      // Override recipientId via tenant, bind tenant_id
       updatesToLease.tenant_id = tenantFound.id;
       lease.tenant_id = tenantFound.id;
-      recipientId = tenantFound.user_id; 
-      recipientName = `${tenantFound.first_name || ''} ${tenantFound.last_name || ''}`.trim() || 'Tenant';
+      recipientId = tenantFound.user_id ?? recipientId;
+      recipientName = `${tenantFound.first_name || ''} ${tenantFound.last_name || ''}`.trim() || recipientName;
     }
 
-    if (!tenantFound && !applicantFound) {
+    // Only create cold-invite row when no tenant/application row matched this email AND lease is not already tied to an application
+    if (!tenantFound && !applicantFound && !lease.application_id) {
         // 3. User does not exist at all -> Create Applicant Invite record.
         const inviteToken = crypto.randomUUID();
         console.log('⚠️ Recipient not found in tenants or applications. Creating Applicant invitation record.');
@@ -423,6 +454,16 @@ serve(async (req) => {
           token: inviteToken
         });
         recipientName = lease.form_data?.tenantNames?.[0] || 'Applicant';
+
+        // Try to resolve userId from profiles table by email for in-app notification
+        const { data: profileByEmail } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', finalTargetEmail)
+          .maybeSingle();
+        if (profileByEmail?.id) {
+          recipientId = profileByEmail.id;
+        }
     }
 
     // Apply mappings to DB immediately so the system knows what this lease belongs to

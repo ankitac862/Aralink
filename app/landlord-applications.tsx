@@ -245,14 +245,20 @@ export default function LandlordApplicationsScreen() {
                 landlordName: landlordProfile?.full_name || landlordProfile?.name || 'Your Landlord',
               });
 
-              console.log('✅ Invitation sent successfully');
-              
+              console.log('✅ Invitation flow completed:', result);
+
               // Refresh applications list
               await loadApplications();
-              
+
+              const emailed = (result as { emailSent?: boolean }).emailSent === true;
+              const link = (result as { activationLink?: string }).activationLink;
+              const warn = (result as { emailWarning?: string }).emailWarning;
+
               Alert.alert(
-                'Success',
-                `Invitation sent to ${application.applicant_name} at ${application.applicant_email}. They will need to create their account to begin their tenancy.`
+                emailed ? 'Success' : 'Lease marked sent — email issue',
+                emailed
+                  ? `Invitation sent to ${application.applicant_name} at ${application.applicant_email}. They will need to create their account to begin their tenancy.`
+                  : `The lease is marked as sent, but the email could not be delivered.\n\n${warn || 'Configure RESEND_API_KEY on the send-tenant-invitation Edge Function.'}\n\nShare this link manually:\n${link || '(open lease detail for link)'}`
               );
             } catch (error) {
               console.error('❌ Error sending invitation:', error);
@@ -374,10 +380,12 @@ export default function LandlordApplicationsScreen() {
                 styles.leaseExistsContainer, 
                 { 
                   backgroundColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b15' : 
-                                   applicationLeases[item.id].status === 'signed' ? '#10b98115' : 
+                                   applicationLeases[item.id].status === 'signed' ? '#f59e0b15' :
+                                   applicationLeases[item.id].status === 'signed_pending_move_in' ? '#10b98115' :
                                    `${primaryColor}15`, 
                   borderColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                               applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                               applicationLeases[item.id].status === 'signed' ? '#f59e0b' :
+                               applicationLeases[item.id].status === 'signed_pending_move_in' ? '#10b981' :
                                primaryColor, 
                   flex: 1 
                 }
@@ -388,12 +396,14 @@ export default function LandlordApplicationsScreen() {
               }}
             >
               <MaterialCommunityIcons 
-                name={applicationLeases[item.id].status === 'sent' ? "clock-outline" : 
-                      applicationLeases[item.id].status === 'signed' ? "check-circle" : 
+                name={applicationLeases[item.id].status === 'sent' ? "clock-outline" :
+                      applicationLeases[item.id].status === 'signed' ? "clock-outline" :
+                      applicationLeases[item.id].status === 'signed_pending_move_in' ? "check-circle" :
                       "file-document-check"} 
                 size={16} 
-                color={applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                       applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                color={applicationLeases[item.id].status === 'sent' ? '#f59e0b' :
+                       applicationLeases[item.id].status === 'signed' ? '#f59e0b' :
+                       applicationLeases[item.id].status === 'signed_pending_move_in' ? '#10b981' :
                        primaryColor} 
               />
               <ThemedText 
@@ -401,13 +411,15 @@ export default function LandlordApplicationsScreen() {
                   styles.leaseExistsText, 
                   { 
                     color: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                           applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                           applicationLeases[item.id].status === 'signed' ? '#f59e0b' :
+                           applicationLeases[item.id].status === 'signed_pending_move_in' ? '#10b981' :
                            primaryColor 
                   }
                 ]}
               >
-                {applicationLeases[item.id].status === 'sent' ? 'Awaiting Signature (Sent)' : 
-                 applicationLeases[item.id].status === 'signed' ? 'Lease Signed (View)' : 
+                {applicationLeases[item.id].status === 'sent' ? 'Awaiting Tenant Signature (Sent)' :
+                 applicationLeases[item.id].status === 'signed' ? 'Pending Landlord Signature' :
+                 applicationLeases[item.id].status === 'signed_pending_move_in' ? 'Fully Signed (View)' :
                  'View Lease Details'}
               </ThemedText>
             </TouchableOpacity>

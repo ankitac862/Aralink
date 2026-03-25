@@ -31,22 +31,6 @@ import {
 } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 
-const STATUS_COLORS = {
-  draft: '#6b7280',
-  generated: '#f59e0b',
-  uploaded: '#3b82f6',
-  sent: '#8b5cf6',
-  signed: '#10b981',
-};
-
-const STATUS_LABELS = {
-  draft: 'Draft',
-  generated: 'Generated',
-  uploaded: 'Uploaded',
-  sent: 'Sent to Tenant',
-  signed: 'Signed',
-};
-
 export default function LeasesScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -66,8 +50,81 @@ export default function LeasesScreen() {
   const textColor = isDark ? '#f3f4f6' : '#1f2937';
   const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
   const primaryColor = '#137fec';
+  const warningColor = '#f59e0b';
 
   const property = params.propertyId ? getPropertyById(params.propertyId) : null;
+
+  const getLeaseStatusColor = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return '#6b7280';
+      case 'generated':
+        return '#f59e0b';
+      case 'uploaded':
+        return '#3b82f6';
+      case 'sent':
+        return '#8b5cf6';
+      case 'signed':
+        return '#f59e0b';
+      case 'signed_pending_move_in':
+        return '#10b981';
+      case 'active':
+        return '#10b981';
+      case 'terminated':
+        return '#ef4444';
+      default:
+        return '#6b7280';
+    }
+  };
+
+  const getLeaseStatusLabel = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return 'Draft';
+      case 'generated':
+        return 'Created (PDF ready)';
+      case 'uploaded':
+        return 'Uploaded';
+      case 'sent':
+        return 'Waiting for tenant signature';
+      case 'signed':
+        return 'Waiting for landlord signature';
+      case 'signed_pending_move_in':
+        return 'Fully signed (pending move-in)';
+      case 'active':
+        return 'Active';
+      case 'terminated':
+        return 'Terminated';
+      default:
+        return status || 'Unknown';
+    }
+  };
+
+  const canEditLease = (lease: DbLease) => {
+    if (user?.role !== 'landlord') return false;
+    if (lease.status === 'signed_pending_move_in' || lease.status === 'active') return false;
+    return true;
+  };
+
+  const handleEditLease = (lease: DbLease) => {
+    if (!canEditLease(lease)) return;
+
+    Alert.alert(
+      'Edit lease?',
+      'This will reset signing progress and generate a new lease document when you re-generate the PDF.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: () =>
+            router.push({
+              pathname: '/lease-wizard/step1',
+              params: { leaseId: lease.id, edit: '1' },
+            }),
+        },
+      ]
+    );
+  };
 
   useEffect(() => {
     loadLeases();
@@ -210,25 +267,30 @@ export default function LeasesScreen() {
                 </ThemedText>
                   <View style={[
                   styles.statusBadge,
-                    { backgroundColor: `${STATUS_COLORS[lease.status]}20` }
+                    { backgroundColor: `${getLeaseStatusColor(lease.status)}20` }
                   ]}>
                     <View style={[
                       styles.statusDot, 
-                      { backgroundColor: STATUS_COLORS[lease.status] }
+                      { backgroundColor: getLeaseStatusColor(lease.status) }
                     ]} />
                     <ThemedText style={[
                     styles.statusText,
-                      { color: STATUS_COLORS[lease.status] }
+                      { color: getLeaseStatusColor(lease.status) }
                   ]}>
-                      {STATUS_LABELS[lease.status]}
+                      {getLeaseStatusLabel(lease.status)}
                 </ThemedText>
               </View>
             </View>
+                <TouchableOpacity 
+                  onPress={() => router.push(`/lease-detail?id=${lease.id}`)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
                 <MaterialCommunityIcons 
                   name="chevron-right" 
                   size={24} 
                   color={secondaryTextColor} 
                 />
+                </TouchableOpacity>
               </View>
 
               <View style={[styles.leaseDates, { borderTopColor: borderColor }]}>
@@ -259,6 +321,17 @@ export default function LeasesScreen() {
               </View>
 
               <View style={styles.leaseActions}>
+                {canEditLease(lease) && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: `${warningColor}15` }]}
+                    onPress={() => handleEditLease(lease)}
+                  >
+                    <MaterialCommunityIcons name="pencil-outline" size={18} color={warningColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: warningColor }]}>
+                      Edit
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
                 {lease.document_url && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: `${primaryColor}15` }]}

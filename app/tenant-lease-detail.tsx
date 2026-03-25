@@ -31,7 +31,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, handleLeaseSigning, requestArrivalDateChange, DbLease } from '@/lib/supabase';
+import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, handleLeaseSigning, notifyLandlordLeaseCountersign, DbLease } from '@/lib/supabase';
 
 export default function TenantLeaseDetailScreen() {
   const colorScheme = useColorScheme();
@@ -45,8 +45,6 @@ export default function TenantLeaseDetailScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSignModal, setShowSignModal] = useState(false);
   const [signature, setSignature] = useState('');
-  const [showArrivalModal, setShowArrivalModal] = useState(false);
-  const [arrivalDateInput, setArrivalDateInput] = useState('');
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -164,9 +162,16 @@ export default function TenantLeaseDetailScreen() {
           }
         }
 
+        // Notify the property owner (landlord) that countersign is pending.
+        // Non-blocking: signing should still succeed even if notifications fail.
+        await notifyLandlordLeaseCountersign({
+          leaseId: lease!.id,
+          tenantNames: lease!.form_data?.tenantNames,
+        });
+
         Alert.alert(
-          'Success',
-          'Signed lease uploaded successfully!',
+          'Uploaded',
+          'Your signed lease was uploaded. The lease is NOT fully complete until the landlord uploads the countersigned (final) copy.',
           [{ text: 'OK', onPress: () => router.back() }]
         );
       } else {
@@ -181,45 +186,6 @@ export default function TenantLeaseDetailScreen() {
 
   const handleSign = () => {
     setShowSignModal(true);
-  };
-
-  const handleRequestArrivalDateChange = () => {
-    setArrivalDateInput(lease?.effective_date || '');
-    setShowArrivalModal(true);
-  };
-
-  const submitArrivalDateRequest = async () => {
-    const requested = arrivalDateInput.trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) {
-      Alert.alert('Invalid Date', 'Please enter date as YYYY-MM-DD (example: 2026-03-02).');
-      return;
-    }
-
-    if (!lease?.id || !user?.id) {
-      Alert.alert('Error', 'Missing lease or user information.');
-      return;
-    }
-
-    setShowArrivalModal(false);
-    setIsProcessing(true);
-
-    const result = await requestArrivalDateChange({
-      leaseId: lease.id,
-      tenantUserId: user.id,
-      requestedDate: requested,
-    });
-
-    setIsProcessing(false);
-
-    if (!result.success) {
-      Alert.alert('Error', result.error || 'Failed to request move-in date change.');
-      return;
-    }
-
-    Alert.alert(
-      'Request Sent',
-      'Your move-in date request was sent to the landlord for review.'
-    );
   };
 
   const confirmSign = async () => {
@@ -255,11 +221,11 @@ export default function TenantLeaseDetailScreen() {
             : '';
 
           const message = result.activationStatus === 'pending_move_in'
-            ? `Your lease has been signed. Your tenancy will become active on your move-in date.${moveInDateText}`
-            : 'Your lease has been signed and you are now an active tenant.';
+            ? `Your signature is recorded. The lease is NOT fully complete until the landlord countersigns. After the landlord signs, your tenancy can become active on your move-in date.${moveInDateText}`
+            : `Your signature is recorded. The lease is NOT fully complete until the landlord countersigns.`;
 
           Alert.alert(
-            'Lease Signed!',
+            'Signature recorded',
             message,
             [{ text: 'OK', onPress: () => router.back() }]
           );
@@ -268,11 +234,18 @@ export default function TenantLeaseDetailScreen() {
         }
       } else {
         Alert.alert(
-          'Lease Signed!',
-          'Your lease has been signed successfully.',
+          'Signature recorded',
+          'Your signature is recorded. The lease is NOT fully complete until the landlord countersigns.',
           [{ text: 'OK', onPress: () => router.back() }]
         );
       }
+
+      // Notify the property owner (landlord) that countersign is pending.
+      // Non-blocking: signing should still succeed even if notifications fail.
+      await notifyLandlordLeaseCountersign({
+        leaseId: lease!.id,
+        tenantNames: lease!.form_data?.tenantNames,
+      });
     } catch (error) {
       Alert.alert('Error', 'Failed to sign lease');
     } finally {
@@ -300,7 +273,12 @@ export default function TenantLeaseDetailScreen() {
   };
 
   const canSign = lease?.status === 'sent';
-  const isSigned = lease?.status === 'signed';
+  const isUserSigned = lease?.status === 'signed';
+  const isFullySigned = lease?.status === 'signed_pending_move_in' || lease?.status === 'active';
+  const isCreatedPhase =
+    lease?.status === 'draft' ||
+    lease?.status === 'generated' ||
+    lease?.status === 'uploaded';
 
   if (isLoading) {
     return (
@@ -348,36 +326,76 @@ export default function TenantLeaseDetailScreen() {
           style={[
             styles.statusBanner,
             {
-              backgroundColor: isSigned
+              backgroundColor: isFullySigned
                 ? `${successColor}20`
                 : canSign
                 ? `${warningColor}20`
+                : isUserSigned
+                ? `${warningColor}20`
+                : isCreatedPhase
+                ? `${primaryColor}20`
                 : `${primaryColor}20`,
             },
           ]}
         >
           <MaterialCommunityIcons
-            name={isSigned ? 'check-circle' : canSign ? 'alert-circle' : 'file-document'}
+            name={
+              isFullySigned
+                ? 'check-circle'
+                : canSign
+                ? 'alert-circle'
+                : isUserSigned
+                ? 'clock-outline'
+                : isCreatedPhase
+                ? 'file-document'
+                : 'file-document'
+            }
             size={24}
-            color={isSigned ? successColor : canSign ? warningColor : primaryColor}
+            color={
+              isFullySigned
+                ? successColor
+                : canSign
+                ? warningColor
+                : isUserSigned
+                ? warningColor
+                : primaryColor
+            }
           />
           <View style={styles.statusContent}>
             <ThemedText
               style={[
                 styles.statusLabel,
                 {
-                  color: isSigned ? successColor : canSign ? warningColor : primaryColor,
+                  color: isFullySigned
+                    ? successColor
+                    : canSign
+                    ? warningColor
+                    : isUserSigned
+                    ? warningColor
+                    : primaryColor,
                 },
               ]}
             >
-              {isSigned ? 'Lease Signed' : canSign ? 'Awaiting Your Signature' : 'Lease Ready'}
+              {isFullySigned
+                ? 'Lease fully signed'
+                : canSign
+                ? 'Waiting for your signature'
+                : isUserSigned
+                ? 'Waiting for landlord approval'
+                : isCreatedPhase
+                ? 'Lease being prepared'
+                : 'Lease status'}
             </ThemedText>
             <ThemedText style={[styles.statusDate, { color: secondaryTextColor }]}>
-              {isSigned && lease.signed_date
-                ? `Signed on ${formatDate(lease.signed_date)}`
+              {isFullySigned
+                ? 'Landlord has countersigned. This lease is complete.'
+                : isUserSigned
+                ? 'You have signed. The landlord still needs to countersign.'
                 : canSign
-                ? 'Please review and sign this lease'
-                : `Created ${formatDate(lease.created_at)}`}
+                ? 'Please review and sign this lease.'
+                : isCreatedPhase
+                ? 'The landlord is still preparing/finalizing this lease. You’ll be notified when it’s ready to sign.'
+                : `Updated ${formatDate(lease.updated_at)}`}
             </ThemedText>
           </View>
         </View>
@@ -493,11 +511,27 @@ export default function TenantLeaseDetailScreen() {
           </>
         )}
 
-{lease?.status !== 'sent' && (
+{lease?.status === 'signed' && (
           <View style={[styles.signedBadge, { backgroundColor: `${successColor}20` }]}>
             <MaterialCommunityIcons name="check-circle" size={20} color={successColor} />
             <ThemedText style={[styles.signedText, { color: successColor }]}>
-              Lease processing (v{lease?.version || 1})
+              Signed (v{lease?.version || 2}) — awaiting landlord countersign
+            </ThemedText>
+          </View>
+        )}
+        {lease?.status === 'signed_pending_move_in' && (
+          <View style={[styles.signedBadge, { backgroundColor: `${successColor}20` }]}>
+            <MaterialCommunityIcons name="check-circle" size={20} color={successColor} />
+            <ThemedText style={[styles.signedText, { color: successColor }]}>
+              Fully signed — move-in date: {formatDate(lease?.effective_date || '')}
+            </ThemedText>
+          </View>
+        )}
+        {lease?.status === 'active' && (
+          <View style={[styles.signedBadge, { backgroundColor: `${successColor}20` }]}>
+            <MaterialCommunityIcons name="home-variant" size={20} color={successColor} />
+            <ThemedText style={[styles.signedText, { color: successColor }]}>
+              Tenancy Active
             </ThemedText>
           </View>
         )}
@@ -543,45 +577,6 @@ export default function TenantLeaseDetailScreen() {
         </View>
       </Modal>
 
-      {/* Arrival Date Request Modal */}
-      <Modal visible={showArrivalModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}> 
-            <ThemedText style={[styles.modalTitle, { color: textColor }]}>Request Move-in Date Change</ThemedText>
-            <ThemedText style={[styles.modalMessage, { color: secondaryTextColor }]}> 
-              Current landlord move-in date is {formatDate(lease.effective_date || '')}. Enter your requested date (YYYY-MM-DD).
-            </ThemedText>
-
-            <TextInput
-              style={[styles.signatureInput, { backgroundColor: bgColor, borderColor, color: textColor }]}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={secondaryTextColor}
-              value={arrivalDateInput}
-              onChangeText={setArrivalDateInput}
-              autoCapitalize="none"
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: borderColor }]}
-                onPress={() => {
-                  setShowArrivalModal(false);
-                  setArrivalDateInput('');
-                }}
-              >
-                <ThemedText style={[styles.modalButtonText, { color: textColor }]}>Cancel</ThemedText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: primaryColor }]}
-                onPress={submitArrivalDateRequest}
-              >
-                <ThemedText style={[styles.modalButtonText, { color: '#fff' }]}>Send Request</ThemedText>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ThemedView>
   );
 }

@@ -2238,7 +2238,15 @@ export async function getRentCollectionSummary(userId: string): Promise<RentColl
 // LEASE API FUNCTIONS
 // =====================================================
 
-export type LeaseStatus = 'draft' | 'generated' | 'uploaded' | 'sent' | 'signed';
+export type LeaseStatus =
+  | 'draft'
+  | 'generated'
+  | 'uploaded'
+  | 'sent'
+  | 'signed'
+  | 'signed_pending_move_in'
+  | 'active'
+  | 'terminated';
 
 // Ontario Lease Form Data Structure (maps to standard lease sections)
 export interface OntarioLeaseFormData {
@@ -2327,6 +2335,88 @@ export interface OntarioLeaseFormData {
   signatureDate?: string;
 }
 
+export function normalizeOntarioLeaseFormData(
+  partial?: Partial<OntarioLeaseFormData> | null
+): OntarioLeaseFormData {
+  const base: OntarioLeaseFormData = {
+    landlordName: '',
+    landlordAddress: '',
+    tenantNames: [''],
+    tenantEmails: [''],
+    unitAddress: {
+      unit: '',
+      streetNumber: '',
+      streetName: '',
+      city: '',
+      province: 'ON',
+      postalCode: '',
+    },
+    parkingDescription: '',
+    isCondo: false,
+    landlordNoticeAddress: '',
+    allowEmailNotices: true,
+    landlordEmail: '',
+    emergencyContactPhone: '',
+    tenancyStartDate: '',
+    tenancyEndDate: '',
+    tenancyType: 'month_to_month',
+    paymentFrequency: 'monthly',
+    rentPaymentDay: 1,
+    baseRent: 0,
+    parkingRent: 0,
+    otherServicesRent: 0,
+    otherServicesDescription: '',
+    rentPayableTo: '',
+    paymentMethod: 'etransfer',
+    chequeBounceCharge: 20,
+    partialRentAmount: 0,
+    partialRentFromDate: '',
+    partialRentToDate: '',
+    utilities: {
+      electricity: 'landlord',
+      heat: 'landlord',
+      water: 'landlord',
+      gas: false,
+      airConditioning: false,
+      additionalStorage: false,
+      laundry: 'none',
+      guestParking: 'none',
+    },
+    servicesDescription: '',
+    utilitiesDescription: '',
+    hasRentDiscount: false,
+    rentDiscountDescription: '',
+    requiresRentDeposit: false,
+    rentDepositAmount: 0,
+    requiresKeyDeposit: false,
+    keyDepositAmount: 0,
+    keyDepositDescription: '',
+    smokingRules: 'none',
+    smokingRulesDescription: '',
+    requiresTenantInsurance: false,
+    additionalTerms: '',
+    specialConditions: '',
+    signatureDate: '',
+  };
+
+  if (!partial) return base;
+
+  return {
+    ...base,
+    ...partial,
+    tenantNames: partial.tenantNames?.length ? partial.tenantNames : base.tenantNames,
+    tenantEmails: partial.tenantEmails?.length ? partial.tenantEmails : base.tenantEmails,
+    unitAddress: {
+      ...base.unitAddress,
+      ...(partial.unitAddress || {}),
+    },
+    utilities: {
+      ...base.utilities,
+      ...(partial.utilities || {}),
+    },
+  };
+}
+
 // Lease document metadata
 export interface DbLeaseDocument {
   id: string;
@@ -2372,6 +2462,63 @@ export interface DbLease {
   
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Resolve recipient email + auth userId for sending a lease.
+ * Does NOT depend on tenant_id — applicants may have no tenant row yet.
+ * Priority: form_data.tenantEmails → linked application → tenant row → none
+ */
+export async function resolveLeaseRecipientEmail(
+  lease: Pick<DbLease, 'form_data' | 'application_id' | 'tenant_id'>
+): Promise<{
+  email: string | null;
+  userId: string | null;
+  source: 'form' | 'application' | 'tenant' | 'none';
+}> {
+  const rawEmails = lease.form_data?.tenantEmails || [];
+  const firstFormEmail = rawEmails.map((e) => (typeof e === 'string' ? e.trim() : '')).find(Boolean);
+  if (firstFormEmail) {
+    const email = firstFormEmail.toLowerCase();
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    return { email, userId: profile?.id ?? null, source: 'form' };
+  }
+
+  if (lease.application_id) {
+    const { data: app } = await supabase
+      .from('applications')
+      .select('applicant_email, user_id')
+      .eq('id', lease.application_id)
+      .maybeSingle();
+    if (app?.applicant_email) {
+      return {
+        email: app.applicant_email.trim().toLowerCase(),
+        userId: app.user_id ?? null,
+        source: 'application',
+      };
+    }
+  }
+
+  if (lease.tenant_id) {
+    const { data: t } = await supabase
+      .from('tenants')
+      .select('email, user_id')
+      .eq('id', lease.tenant_id)
+      .maybeSingle();
+    if (t?.email) {
+      return {
+        email: t.email.trim().toLowerCase(),
+        userId: t.user_id ?? null,
+        source: 'tenant',
+      };
+    }
+  }
+
+  return { email: null, userId: null, source: 'none' };
 }
 
 // Fetch all leases for a user
@@ -2793,13 +2940,14 @@ export async function convertApplicantToTenant(params: {
       console.log('ℹ️ No co-applicants found for this application');
     }
 
-    // 5. Update lease with tenant_id AND mark as signed_pending_move_in
-    console.log('🔄 Updating lease with tenant_id and signed_pending_move_in status...');
+    // 5. Update lease with tenant_id and keep it as "user signed, landlord pending"
+    // Landlord countersign should happen separately (v3 upload) in the landlord UI.
+    console.log('🔄 Updating lease with tenant_id and signed (tenant signed) status...');
     const { error: leaseUpdateError } = await supabase
       .from('leases')
       .update({ 
         tenant_id: tenant.id,
-        status: 'signed_pending_move_in',
+        status: 'signed',
         signed_date: new Date().toISOString(),
       })
       .eq('id', params.leaseId);
@@ -2986,8 +3134,10 @@ export async function updateLeaseInDb(leaseId: string, updates: Partial<DbLease>
     console.log('✅ Lease updated successfully:', data.id);
 
     // Auto-update tenant status based on lease status
+    // IMPORTANT: tenant-side signing uses lease.status = 'signed' but that is NOT a finalized lease yet.
+    // Only treat the tenant as "active" once the lease is truly active (or at least landlord-finalized).
     if (data && updates.status && data.tenant_id) {
-      const tenantStatus = ['active', 'signed'].includes(updates.status) ? 'active' : 'inactive';
+      const tenantStatus = updates.status === 'active' ? 'active' : 'inactive';
       
       console.log(`🔄 Auto-updating tenant status to '${tenantStatus}' based on lease status: ${updates.status}`);
       
@@ -3319,6 +3469,69 @@ export async function fetchLeaseDocuments(leaseId: string): Promise<DbLeaseDocum
   }
 }
 
+/**
+ * Landlord edits: discard in-progress signing + regenerate a fresh document.
+ * - Keeps the same lease row/id (active lease is always "latest")
+ * - Resets status back to pre-send ("draft") until PDF regen marks it "generated"
+ * - Clears signature fields + PDF pointers
+ *
+ * NOTE: Final landlord countersign is represented as lease.status = 'signed_pending_move_in' in this codebase.
+ */
+export async function resetLeaseForEditing(leaseId: string): Promise<DbLease | null> {
+  const existing = await fetchLeaseById(leaseId);
+  if (!existing) return null;
+
+  if (existing.status === 'signed_pending_move_in' || existing.status === 'active') {
+    throw new Error('This lease is already fully signed and cannot be edited.');
+  }
+
+  // Mark historical generated docs as not current (best-effort)
+  try {
+    await supabase
+      .from('lease_documents')
+      .update({ is_current: false, updated_at: new Date().toISOString() })
+      .eq('lease_id', leaseId)
+      .eq('is_current', true);
+  } catch (_) {
+    // ignore if table/policy not available
+  }
+
+  // If applicant flow advanced to "lease_signed", roll it back to a pre-final state
+  if (existing.application_id) {
+    try {
+      const { data: app } = await supabase
+        .from('applications')
+        .select('id,status')
+        .eq('id', existing.application_id)
+        .maybeSingle();
+
+      if (app?.status === 'lease_signed') {
+        const nextStatus =
+          existing.status === 'sent' || existing.status === 'signed' ? 'lease_sent' : 'lease_ready';
+
+        await supabase
+          .from('applications')
+          .update({ status: nextStatus, updated_at: new Date().toISOString() })
+          .eq('id', app.id);
+      }
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+  return await updateLeaseInDb(leaseId, {
+    status: 'draft',
+    // Use nulls so PostgREST clears nullable columns
+    signed_date: null as any,
+    signed_pdf_url: null as any,
+    original_pdf_url: null as any,
+    document_url: null as any,
+    document_storage_key: null as any,
+    version: 0,
+    updated_at: new Date().toISOString(),
+  });
+}
+
 // =====================================================
 // TENANT-PROPERTY RELATIONSHIP & TRANSACTION ANALYTICS
 // =====================================================
@@ -3361,8 +3574,7 @@ export async function getTenantPropertyAssociation(
       .from('leases')
       .select('*')
       .eq('property_id', propertyId)
-      .eq('status', 'signed')
-      .gte('expiry_date', new Date().toISOString());
+      .in('status', ['active', 'signed_pending_move_in']);
 
     if (unitId) {
       leaseQuery = leaseQuery.eq('unit_id', unitId);
@@ -3743,6 +3955,38 @@ export async function fetchLandlordNotifications(userId: string) {
   } catch (error) {
     console.error('❌ Error fetching landlord notifications:', error);
     return [];
+  }
+}
+
+/**
+ * Notify the actual property owner (landlord) that the tenant/user has signed
+ * and landlord countersign is now pending.
+ *
+ * This is intentionally "landlord-only" (not property manager) by resolving
+ * the landlord_id from `properties.user_id`.
+ */
+export async function notifyLandlordLeaseCountersign(params: {
+  leaseId: string;
+  tenantNames?: string[];
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      'notify-landlord-lease-countersign',
+      {
+        body: {
+          leaseId: params.leaseId,
+          tenantNames: params.tenantNames || [],
+        },
+      }
+    );
+
+    if (error) {
+      return { success: false, error: error.message || 'Edge function error' };
+    }
+
+    return { success: (data as any)?.success !== false };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
   }
 }
 
@@ -4509,7 +4753,9 @@ export async function createTenantInvitation(params: {
     return {
       success: true,
       invitation: data,
-      activationLink: `${process.env.EXPO_PUBLIC_APP_URL || 'https://aaralink.app'}/activate-tenant?token=${token}&email=${encodeURIComponent(params.email)}`,
+      // Use the custom URL scheme so the link opens the app instead of a browser.
+      // The (auth)/activate-tenant screen handles the token + email params.
+      activationLink: `aralink://activate-tenant?token=${token}&email=${encodeURIComponent(params.email)}`,
     };
   } catch (error) {
     console.error('Error creating tenant invitation:', error);
@@ -4526,7 +4772,7 @@ export async function sendTenantInvitationEmail(params: {
   activationLink: string;
   propertyName: string;
   landlordName: string;
-}) {
+}): Promise<{ success: boolean; emailSent?: boolean; warning?: string; data?: unknown }> {
   try {
     const { data, error } = await supabase.functions.invoke('send-tenant-invitation', {
       body: {
@@ -4538,11 +4784,24 @@ export async function sendTenantInvitationEmail(params: {
       },
     });
 
-    if (error) throw error;
-    return { success: true, data };
+    if (error) {
+      console.error('send-tenant-invitation invoke error:', error);
+      return { success: false, warning: (error as Error)?.message || 'Edge function error' };
+    }
+
+    const payload = data as { emailSent?: boolean; warning?: string; success?: boolean } | null;
+    return {
+      success: payload?.success !== false,
+      emailSent: payload?.emailSent === true,
+      warning: payload?.warning,
+      data,
+    };
   } catch (error) {
     console.error('Error sending invitation email:', error);
-    throw error;
+    return {
+      success: false,
+      warning: error instanceof Error ? error.message : 'Failed to send invitation email',
+    };
   }
 }
 
@@ -4573,8 +4832,8 @@ export async function handleInviteBasedLeaseSigning(params: {
 
     console.log('✅ Invitation created:', invitationResult.invitation.id);
 
-    // 2. Send the invitation email
-    await sendTenantInvitationEmail({
+    // 2. Send the invitation email (non-blocking for lease flow)
+    const emailResult = await sendTenantInvitationEmail({
       email: params.applicantEmail,
       tenantName: params.applicantName,
       activationLink: invitationResult.activationLink,
@@ -4582,14 +4841,22 @@ export async function handleInviteBasedLeaseSigning(params: {
       landlordName: params.landlordName,
     });
 
-    console.log('✅ Invitation email sent');
+    if (emailResult.emailSent) {
+      console.log('✅ Invitation email sent');
+    } else {
+      console.warn(
+        '⚠️ Invitation email not delivered:',
+        emailResult.warning || 'see send-tenant-invitation logs'
+      );
+    }
 
-    // 3. Update lease status to 'sent' (awaiting tenant activation)
+    // 3. Always update lease to sent — tenant can use deep link / invitation row even if email failed
     const { error: leaseError } = await supabase
       .from('leases')
-      .update({ 
+      .update({
         status: 'sent',
-        sent_date: new Date().toISOString(),
+        // `leases.sent_date` does not exist in the current schema (see LEASE_SCHEMA_MIGRATION.sql).
+        // `updated_at` is handled by DB trigger.
       })
       .eq('id', params.leaseId);
 
@@ -4599,7 +4866,12 @@ export async function handleInviteBasedLeaseSigning(params: {
 
     return {
       success: true,
-      message: 'Invitation sent successfully. Tenant can now activate their account.',
+      message: emailResult.emailSent
+        ? 'Invitation sent successfully. Tenant can now activate their account.'
+        : `Lease marked as sent. Email delivery failed — share this link manually: ${invitationResult.activationLink}`,
+      emailSent: emailResult.emailSent === true,
+      activationLink: invitationResult.activationLink,
+      emailWarning: emailResult.warning,
     };
   } catch (error) {
     console.error('Error in invitation-based lease signing:', error);

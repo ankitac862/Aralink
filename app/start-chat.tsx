@@ -376,7 +376,7 @@ export default function StartChatScreen() {
       </View>
 
       {/* Tenants List */}
-      {filteredTenants.length > 0 ? (
+      {filteredPeople.length > 0 ? (
         <FlatList
             data={filteredPeople}
           renderItem={renderTenant}
