@@ -183,7 +183,11 @@ interface OntarioLeaseWizardState {
   generateLease: (userId: string) => Promise<{ leaseId: string; documentUrl?: string } | null>;
   generateOfficialPdf: (userId: string) => Promise<GeneratePdfResponse>;
   uploadLease: (uri: string, userId: string) => Promise<{ leaseId: string; documentUrl: string } | null>;
-  sendLease: (tenantEmail?: string, message?: string) => Promise<SendLeaseResponse>;
+  sendLease: (
+    tenantEmail?: string,
+    message?: string,
+    opts?: { leaseUpdatedResign?: boolean }
+  ) => Promise<SendLeaseResponse>;
   
   // Document state
   documentUrl: string | null;
@@ -617,7 +621,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   /**
    * Send the generated lease to tenant
    */
-  sendLease: async (tenantEmail, message) => {
+  sendLease: async (tenantEmail, message, opts) => {
     const { draftLeaseId, documentUrl, propertyId, tenantId, applicationId, personType, formData } = get();
     
     console.log('📤 sendLease called with:', {
@@ -805,6 +809,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
         applicationId: applicationId || undefined,
         tenantId: tenantId || undefined,
         message,
+        leaseUpdatedResign: opts?.leaseUpdatedResign,
       });
 
       console.log('📨 sendLeaseApi result:', result);
@@ -836,6 +841,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
             applicationId: applicationId || undefined,
             tenantId: tenantId || undefined,
             message,
+            leaseUpdatedResign: opts?.leaseUpdatedResign,
           });
           console.log('📨 Retry result:', result);
         }

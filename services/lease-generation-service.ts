@@ -47,6 +47,8 @@ export interface SendLeaseRequest {
   sendEmail?: boolean;
   sendNotification?: boolean;
   message?: string;
+  /** Landlord edited lease; tenant must sign again (notification + email copy). */
+  leaseUpdatedResign?: boolean;
 }
 
 export interface SendLeaseResponse {
@@ -322,6 +324,7 @@ export async function sendLeaseToTenant(
     message?: string;
     skipEmail?: boolean;
     skipNotification?: boolean;
+    leaseUpdatedResign?: boolean;
   }
 ): Promise<SendLeaseResponse> {
   try {
@@ -352,6 +355,7 @@ export async function sendLeaseToTenant(
         sendEmail: !options?.skipEmail,
         sendNotification: !options?.skipNotification,
         message: options?.message,
+        leaseUpdatedResign: options?.leaseUpdatedResign,
       } as SendLeaseRequest),
     });
     

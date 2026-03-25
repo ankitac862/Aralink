@@ -22,6 +22,8 @@ interface SendLeaseRequest {
   sendEmail?: boolean; // Default true
   sendNotification?: boolean; // Default true
   message?: string; // Optional custom message
+  /** True when landlord edited the lease and tenant must sign again (distinct notification copy). */
+  leaseUpdatedResign?: boolean;
 }
 
 interface SendLeaseResponse {
@@ -51,7 +53,8 @@ async function sendEmailNotification(
   landlordName: string,
   propertyAddress: string,
   documentUrl: string,
-  customMessage?: string
+  customMessage?: string,
+  opts?: { isUpdatedLeaseResign?: boolean }
 ): Promise<boolean> {
   if (!emailServiceUrl || !emailApiKey) {
     console.log('Email service not configured');
@@ -65,7 +68,7 @@ async function sendEmailNotification(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your Lease Agreement is Ready</title>
+  <title>${opts?.isUpdatedLeaseResign ? 'Updated lease — please review and sign' : 'Your Lease Agreement is Ready'}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -130,13 +133,15 @@ async function sendEmailNotification(
 </head>
 <body>
   <div class="header">
-    <h1>📄 Your Lease Agreement is Ready</h1>
+    <h1>📄 ${opts?.isUpdatedLeaseResign ? 'Updated Lease — Please Review & Sign' : 'Your Lease Agreement is Ready'}</h1>
   </div>
   
   <div class="content">
     <p>Dear ${tenantName || 'Tenant'},</p>
     
-    <p>${landlordName} has sent you a lease agreement for review.</p>
+    <p>${opts?.isUpdatedLeaseResign
+      ? `${landlordName} has updated your lease agreement. Please review the new version and sign when you are ready.`
+      : `${landlordName} has sent you a lease agreement for review.`}</p>
     
     <div class="property-card">
       <strong>Property:</strong><br>
@@ -183,7 +188,9 @@ async function sendEmailNotification(
       body: JSON.stringify({
         from: fromEmail,
         to: tenantEmail,
-        subject: `Lease Agreement Ready for Review - ${propertyAddress}`,
+        subject: opts?.isUpdatedLeaseResign
+          ? `Updated lease — please review and sign - ${propertyAddress}`
+          : `Lease Agreement Ready for Review - ${propertyAddress}`,
         html: emailHtml,
       }),
     });
@@ -208,19 +215,27 @@ async function createInAppNotification(
   tenantId: string,
   leaseId: string,
   landlordName: string,
-  propertyAddress: string
+  propertyAddress: string,
+  opts?: { isUpdatedLeaseResign?: boolean }
 ): Promise<boolean> {
   try {
+    const title = opts?.isUpdatedLeaseResign
+      ? 'Lease updated — please sign'
+      : 'New Lease Agreement';
+    const message = opts?.isUpdatedLeaseResign
+      ? `${landlordName} updated the lease for ${propertyAddress}. Please review and sign the new version.`
+      : `${landlordName} has sent you a lease agreement for ${propertyAddress}`;
     const { error } = await supabase
       .from('notifications')
       .insert({
         user_id: tenantId,
         type: 'lease_received',
-        title: 'New Lease Agreement',
-        message: `${landlordName} has sent you a lease agreement for ${propertyAddress}`,
+        title,
+        message,
         data: {
           lease_id: leaseId,
           action: 'view_lease',
+          lease_updated_resign: opts?.isUpdatedLeaseResign === true,
         },
         is_read: false,
         created_at: new Date().toISOString(),
@@ -288,6 +303,7 @@ serve(async (req) => {
       sendEmail = true,
       sendNotification = true,
       message,
+      leaseUpdatedResign: leaseUpdatedResignBody,
     } = body;
     
     if (!leaseId) {
@@ -502,6 +518,12 @@ serve(async (req) => {
       .single();
     
     const landlordName = landlordProfile?.full_name || 'Your Landlord';
+
+    const formData = (lease.form_data && typeof lease.form_data === 'object'
+      ? lease.form_data
+      : {}) as Record<string, unknown>;
+    const isUpdatedLeaseResign =
+      leaseUpdatedResignBody === true || formData._resignAfterEdit === true;
     
     let emailSent = false;
     let notificationSent = false;
@@ -514,7 +536,8 @@ serve(async (req) => {
         landlordName,
         propertyAddress,
         lease.document_url,
-        message
+        message,
+        { isUpdatedLeaseResign }
       );
     }
     
@@ -524,16 +547,23 @@ serve(async (req) => {
         recipientId,
         lease.id,
         landlordName,
-        propertyAddress
+        propertyAddress,
+        { isUpdatedLeaseResign }
       );
     }
     
-    // Update lease status to 'sent'
+    const clearedForm = { ...formData };
+    if ('_resignAfterEdit' in clearedForm) {
+      delete clearedForm._resignAfterEdit;
+    }
+
+    // Update lease status to 'sent' and clear one-shot resign flag from wizard/edit flow
     const { error: updateError } = await supabase
       .from('leases')
       .update({
         status: 'sent',
         updated_at: new Date().toISOString(),
+        ...('_resignAfterEdit' in formData ? { form_data: clearedForm } : {}),
       })
       .eq('id', lease.id);
     

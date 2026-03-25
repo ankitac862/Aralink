@@ -27,7 +27,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, DbLease, updateLeaseInDb, uploadLeaseDocument, addTenantToProperty, supabase, resolveLeaseRecipientEmail } from '@/lib/supabase';
+import {
+  fetchLeaseById,
+  DbLease,
+  updateLeaseInDb,
+  uploadLeaseDocument,
+  addTenantToProperty,
+  supabase,
+  resolveLeaseRecipientEmail,
+  convertApplicantToTenant,
+} from '@/lib/supabase';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   sendLeaseToTenant,
@@ -77,8 +86,69 @@ export default function LeaseDetailScreen() {
           signed_pdf_url: uploadResult.url, // Store the final signed URL
           version: 3, // Increment version to v3 (landlord signed)
         });
-        Alert.alert('Success', 'Final signed lease (v3) uploaded successfully.');
-        loadLease();
+
+        const runApplicantTenantLink = async () => {
+          if (!lease?.application_id) return;
+          setIsProcessing(true);
+          try {
+            const conv = await convertApplicantToTenant({
+              applicationId: lease.application_id,
+              propertyId: lease.property_id,
+              unitId: lease.unit_id,
+              subUnitId: undefined,
+              leaseId: lease.id,
+              startDate: lease.effective_date,
+              landlordFinalize: true,
+            });
+            if (conv?.tenant) {
+              Alert.alert('Success', 'Applicant linked as a tenant on this lease.');
+            } else {
+              Alert.alert(
+                'Notice',
+                'Final PDF saved, but tenant linking did not complete. Use Convert to tenant from this screen, Applications, or All Leases.',
+              );
+            }
+          } catch (convErr) {
+            console.error('convertApplicantToTenant after v3:', convErr);
+            Alert.alert(
+              'Lease saved',
+              'Final PDF uploaded, but linking failed. You can tap Convert to tenant when ready.',
+            );
+          } finally {
+            setIsProcessing(false);
+            loadLease();
+          }
+        };
+
+        // Applicant leases: landlord chooses to link tenant_id now or later (not automatic).
+        if (lease.application_id) {
+          Alert.alert(
+            'Lease finalized',
+            'Link the applicant as a tenant on this lease now? This sets tenant_id so they appear in your tenant list. You can do it later from this screen, Applications, or All Leases.',
+            [
+              {
+                text: 'Later',
+                style: 'cancel',
+                onPress: () => {
+                  Alert.alert(
+                    'Saved',
+                    'Final signed lease (v3) uploaded. Link the tenant whenever you are ready.',
+                  );
+                  loadLease();
+                },
+              },
+              {
+                text: 'Convert now',
+                onPress: () => {
+                  void runApplicantTenantLink();
+                },
+              },
+            ],
+          );
+        } else {
+          Alert.alert('Success', 'Final signed lease (v3) uploaded successfully.');
+          loadLease();
+        }
       } else {
         throw new Error(uploadResult.error || 'Failed to upload lease');
       }

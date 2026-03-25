@@ -31,7 +31,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, handleLeaseSigning, notifyLandlordLeaseCountersign, DbLease } from '@/lib/supabase';
+import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, notifyLandlordLeaseCountersign, DbLease } from '@/lib/supabase';
 
 export default function TenantLeaseDetailScreen() {
   const colorScheme = useColorScheme();
@@ -145,22 +145,7 @@ export default function TenantLeaseDetailScreen() {
           version: 2, // Increment version to v2 (user signed)
         });
 
-        // Update application to show lease is signed
-        if (lease!.application_id) {
-          const result = await handleLeaseSigning({
-            leaseId: lease!.id,
-            applicationId: lease!.application_id,
-            propertyId: lease!.property_id,
-            unitId: lease!.unit_id,
-            subUnitId: undefined,
-            startDate: lease!.effective_date,
-          });
-
-          if (!result.success) {
-            Alert.alert('Error', result.error || 'Failed to complete signing process');
-            return;
-          }
-        }
+        // Applicant → tenant conversion runs only after landlord finalizes (v3), not here.
 
         // Notify the property owner (landlord) that countersign is pending.
         // Non-blocking: signing should still succeed even if notifications fail.
@@ -204,34 +189,16 @@ export default function TenantLeaseDetailScreen() {
         signed_date: new Date().toISOString(),
       });
 
-      // If this was from an application, convert to tenant
+      const moveInDateText = lease?.effective_date
+        ? ` Move-in date: ${formatDate(lease.effective_date)}.`
+        : '';
+
       if (lease!.application_id) {
-        const result = await handleLeaseSigning({
-          leaseId: lease!.id,
-          applicationId: lease!.application_id,
-          propertyId: lease!.property_id,
-          unitId: lease!.unit_id,
-          subUnitId: undefined,
-          startDate: lease!.effective_date,
-        });
-
-        if (result.success) {
-          const moveInDateText = lease?.effective_date
-            ? ` Move-in date: ${formatDate(lease.effective_date)}.`
-            : '';
-
-          const message = result.activationStatus === 'pending_move_in'
-            ? `Your signature is recorded. The lease is NOT fully complete until the landlord countersigns. After the landlord signs, your tenancy can become active on your move-in date.${moveInDateText}`
-            : `Your signature is recorded. The lease is NOT fully complete until the landlord countersigns.`;
-
-          Alert.alert(
-            'Signature recorded',
-            message,
-            [{ text: 'OK', onPress: () => router.back() }]
-          );
-        } else {
-          Alert.alert('Error', result.error || 'Failed to complete signing process');
-        }
+        Alert.alert(
+          'Signature recorded',
+          `Your signature is recorded. The lease is NOT fully complete until the landlord countersigns.${moveInDateText}`,
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
       } else {
         Alert.alert(
           'Signature recorded',

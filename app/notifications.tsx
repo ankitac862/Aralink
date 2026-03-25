@@ -218,7 +218,13 @@ export default function NotificationsScreen() {
     );
   };
 
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = (type: string, data?: Record<string, any>) => {
+    if (
+      (type === 'lease' || type === 'lease_received') &&
+      data?.lease_updated_resign === true
+    ) {
+      return 'draw-pen';
+    }
     switch (type) {
       case 'invite':
         return 'email-outline';
@@ -298,7 +304,14 @@ export default function NotificationsScreen() {
               </ThemedText>
             </View>
           ) : (
-            notifications.map((notification) => (
+            notifications.map((notification) => {
+              const nData = parseNotifData(notification.data);
+              const leaseUpdatedResign =
+                nData.lease_updated_resign === true ||
+                (notification.type === 'lease_received' &&
+                  (notification.title || '').toLowerCase().includes('lease updated'));
+
+              return (
               <TouchableOpacity
                 key={notification.id}
                 style={[
@@ -311,16 +324,36 @@ export default function NotificationsScreen() {
                 onPress={() => handleNotificationPress(notification)}>
                 <View style={[styles.iconContainer, { backgroundColor: `${primaryColor}20` }]}>
                   <MaterialCommunityIcons
-                    name={getNotificationIcon(notification.type) as any}
+                    name={getNotificationIcon(notification.type, nData) as any}
                     size={24}
                     color={primaryColor}
                   />
                 </View>
                 <View style={styles.notificationContent}>
                   <View style={styles.notificationHeader}>
-                    <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
-                      {notification.title}
-                    </ThemedText>
+                    <View style={styles.titleRow}>
+                      <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
+                        {notification.title}
+                      </ThemedText>
+                      {leaseUpdatedResign && (
+                        <View
+                          style={[
+                            styles.resignLabel,
+                            {
+                              backgroundColor: isDark ? '#422006' : '#fef3c7',
+                              borderColor: isDark ? '#a16207' : '#fcd34d',
+                            },
+                          ]}>
+                          <ThemedText
+                            style={[
+                              styles.resignLabelText,
+                              { color: isDark ? '#fde68a' : '#92400e' },
+                            ]}>
+                            Sign again
+                          </ThemedText>
+                        </View>
+                      )}
+                    </View>
                     {!notification.is_read && (
                       <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
                     )}
@@ -333,7 +366,8 @@ export default function NotificationsScreen() {
                   </ThemedText>
                 </View>
               </TouchableOpacity>
-            ))
+            );
+            })
           )}
         </ScrollView>
       )}
@@ -418,13 +452,34 @@ const styles = StyleSheet.create({
   },
   notificationHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 4,
+  },
+  titleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    paddingRight: 4,
+  },
+  resignLabel: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginTop: 1,
+    marginLeft: 8,
+  },
+  resignLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   notificationTitle: {
     fontSize: 16,
     fontWeight: '600',
-    flex: 1,
+    flexShrink: 1,
   },
   unreadDot: {
     width: 8,

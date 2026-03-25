@@ -1,27 +1,71 @@
-import React from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useLeaseStore, LeaseApplicationStatus } from '@/store/leaseStore';
+import { useAuthStore } from '@/store/authStore';
+import { fetchApplicantLeaseOverview, DbLease } from '@/lib/supabase';
 
-const statusSteps: { status: LeaseApplicationStatus; label: string; icon: string }[] = [
-  { status: 'submitted', label: 'Application Submitted', icon: 'file-document-outline' },
-  { status: 'under_review', label: 'Under Review', icon: 'clock-outline' },
-  { status: 'approved', label: 'Approved', icon: 'check-circle-outline' },
-  { status: 'lease_ready', label: 'Lease Ready', icon: 'file-document' },
-  { status: 'lease_signed', label: 'Lease Signed', icon: 'check-circle' },
-];
+function leaseStatusLabel(status: string): string {
+  switch (status) {
+    case 'draft':
+      return 'Draft — landlord preparing';
+    case 'generated':
+    case 'uploaded':
+      return 'Lease document ready — not sent yet';
+    case 'sent':
+      return 'With you — signature needed';
+    case 'signed':
+      return 'You signed — awaiting landlord countersign';
+    case 'signed_pending_move_in':
+      return 'Fully signed — tenancy can be activated next';
+    case 'active':
+      return 'Active tenancy';
+    default:
+      return status.replace(/_/g, ' ');
+  }
+}
+
+function leaseStatusDetail(lease: DbLease): string {
+  switch (lease.status) {
+    case 'draft':
+      return 'The landlord is still preparing or regenerating the lease PDF.';
+    case 'generated':
+    case 'uploaded':
+      return 'The lease file exists but may not have been sent to you yet. Check notifications.';
+    case 'sent':
+      return 'Please open the lease, review it, and sign when you are ready.';
+    case 'signed':
+      return 'Your signature is recorded. The landlord still needs to upload their final countersignature.';
+    case 'signed_pending_move_in':
+      return lease.tenant_id
+        ? 'All signatures are complete. Your landlord may convert you to a tenant record and set move-in when ready.'
+        : 'All signatures are complete. Your landlord will link your tenant profile when they are ready.';
+    default:
+      return 'Open the lease for full details and documents.';
+  }
+}
 
 export default function TenantLeaseStatusScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { tenantApplication, getTenantStatus } = useLeaseStore();
+  const { user } = useAuthStore();
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [application, setApplication] = useState<Record<string, unknown> | null>(null);
+  const [lease, setLease] = useState<DbLease | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -31,14 +75,29 @@ export default function TenantLeaseStatusScreen() {
   const primaryColor = '#2A64F5';
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
 
-  const currentStatus = getTenantStatus() || 'submitted';
-  const applicationId = tenantApplication?.id || 'RNT-' + Date.now().toString().slice(-5);
+  const load = useCallback(async () => {
+    if (!user?.id) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const { application: app, lease: l } = await fetchApplicantLeaseOverview(user.id);
+      setApplication(app);
+      setLease(l);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.id]);
 
-  const getStatusIndex = (status: LeaseApplicationStatus) => {
-    return statusSteps.findIndex((s) => s.status === status);
-  };
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
-  const currentIndex = getStatusIndex(currentStatus);
+  const appStatus = (application?.status as string) || '';
+  const applicationId = (application?.id as string) || '';
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -46,90 +105,79 @@ export default function TenantLeaseStatusScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Application Status</ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Application & lease</ThemedText>
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.idLabel, { color: textSecondaryColor }]}>Application ID</ThemedText>
-          <ThemedText style={[styles.idValue, { color: textPrimaryColor }]}>{applicationId}</ThemedText>
+      {isLoading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={primaryColor} />
         </View>
-
-        <View style={[styles.statusCard, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.statusTitle, { color: textPrimaryColor }]}>Current Status</ThemedText>
-          <ThemedText style={[styles.statusValue, { color: primaryColor }]}>
-            {statusSteps.find((s) => s.status === currentStatus)?.label || currentStatus.toUpperCase()}
-          </ThemedText>
-        </View>
-
-        <View style={styles.stepsContainer}>
-          {statusSteps.map((step, index) => {
-            const isCompleted = index <= currentIndex;
-            const isCurrent = index === currentIndex;
-
-            return (
-              <View key={step.status} style={styles.stepRow}>
-                <View style={styles.stepIconContainer}>
-                  <View
-                    style={[
-                      styles.stepIcon,
-                      {
-                        backgroundColor: isCompleted ? primaryColor : 'transparent',
-                        borderColor: isCompleted ? primaryColor : borderColor,
-                      },
-                    ]}>
-                    <MaterialCommunityIcons
-                      name={step.icon as any}
-                      size={20}
-                      color={isCompleted ? '#ffffff' : textSecondaryColor}
-                    />
-                  </View>
-                  {index < statusSteps.length - 1 && (
-                    <View
-                      style={[
-                        styles.stepLine,
-                        {
-                          backgroundColor: isCompleted ? primaryColor : borderColor,
-                        },
-                      ]}
-                    />
-                  )}
-                </View>
-                <View style={styles.stepContent}>
-                  <ThemedText
-                    style={[
-                      styles.stepLabel,
-                      {
-                        color: isCurrent ? primaryColor : isCompleted ? textPrimaryColor : textSecondaryColor,
-                        fontWeight: isCurrent ? '700' : '400',
-                      },
-                    ]}>
-                    {step.label}
-                  </ThemedText>
-                </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.content}>
+          {application && (
+            <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={[styles.idLabel, { color: textSecondaryColor }]}>Application ID</ThemedText>
+              <ThemedText style={[styles.idValue, { color: textPrimaryColor }]}>
+                {applicationId || '—'}
+              </ThemedText>
+              <View style={styles.rowBetween}>
+                <ThemedText style={[styles.muted, { color: textSecondaryColor }]}>Status</ThemedText>
+                <ThemedText style={[styles.statusBadgeText, { color: primaryColor }]}>
+                  {appStatus.replace(/_/g, ' ').toUpperCase()}
+                </ThemedText>
               </View>
-            );
-          })}
-        </View>
+            </View>
+          )}
 
-        {currentStatus === 'lease_ready' && (
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: primaryColor }]}
-            onPress={() => router.push('/tenant-lease-review-sign')}>
-            <ThemedText style={styles.actionButtonText}>Review & Sign Lease</ThemedText>
-          </TouchableOpacity>
-        )}
+          {lease && (
+            <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Your lease</ThemedText>
+              <ThemedText style={[styles.leaseHeadline, { color: primaryColor }]}>
+                {leaseStatusLabel(lease.status)}
+              </ThemedText>
+              <ThemedText style={[styles.bodyText, { color: textSecondaryColor }]}>
+                {leaseStatusDetail(lease)}
+              </ThemedText>
+              <TouchableOpacity
+                style={[styles.primaryButton, { backgroundColor: primaryColor }]}
+                onPress={() => router.push(`/tenant-lease-detail?id=${lease.id}`)}>
+                <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
+                <ThemedText style={[styles.primaryButtonText, { marginLeft: 8 }]}>
+                  View lease & current status
+                </ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryLink}
+                onPress={() => router.push('/tenant-leases')}>
+                <ThemedText style={[styles.secondaryLinkText, { color: primaryColor }]}>
+                  All my leases
+                </ThemedText>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={primaryColor} />
+              </TouchableOpacity>
+            </View>
+          )}
 
-        {currentStatus === 'rejected' && (
-          <View style={[styles.rejectedCard, { backgroundColor: cardBgColor, borderColor }]}>
-            <MaterialCommunityIcons name="close-circle" size={32} color="#ff3b30" />
-            <ThemedText style={[styles.rejectedText, { color: textPrimaryColor }]}>
-              Your application has been rejected. Please contact the property manager for more information.
-            </ThemedText>
-          </View>
-        )}
-      </ScrollView>
+          {!application && !lease && (
+            <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
+              <MaterialCommunityIcons name="information-outline" size={40} color={textSecondaryColor} />
+              <ThemedText style={[styles.bodyText, { color: textSecondaryColor, marginTop: 12 }]}>
+                No application linked to this account yet. After you apply for a property, your status and lease will
+                appear here.
+              </ThemedText>
+            </View>
+          )}
+
+          {application && !lease && (
+            <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={[styles.bodyText, { color: textSecondaryColor }]}>
+                No lease has been created for this application yet. When the landlord generates and sends the lease,
+                you will see it here and under My Leases.
+              </ThemedText>
+            </View>
+          )}
+        </ScrollView>
+      )}
     </ThemedView>
   );
 }
@@ -156,6 +204,11 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   card: {
     padding: 16,
     borderRadius: 12,
@@ -167,78 +220,58 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   idValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
+    marginBottom: 12,
   },
-  statusCard: {
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 24,
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
   },
-  statusTitle: {
+  muted: {
     fontSize: 14,
+  },
+  statusBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
     marginBottom: 8,
   },
-  statusValue: {
-    fontSize: 24,
+  leaseHeadline: {
+    fontSize: 18,
     fontWeight: '700',
+    marginBottom: 8,
   },
-  stepsContainer: {
-    marginBottom: 24,
+  bodyText: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
   },
-  stepRow: {
+  primaryButton: {
     flexDirection: 'row',
-    marginBottom: 24,
-  },
-  stepIconContainer: {
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  stepIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  stepLine: {
-    width: 2,
-    height: 40,
-    marginTop: 4,
-  },
-  stepContent: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  stepLabel: {
-    fontSize: 16,
-  },
-  actionButton: {
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 8,
   },
-  actionButtonText: {
+  primaryButtonText: {
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
   },
-  rejectedCard: {
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
+  secondaryLink: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 16,
   },
-  rejectedText: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 12,
-    lineHeight: 20,
+  secondaryLinkText: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginRight: 4,
   },
 });
-

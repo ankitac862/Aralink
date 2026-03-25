@@ -23,11 +23,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { 
-  DbLease, 
-  fetchLeases, 
+import { useTenantStore } from '@/store/tenantStore';
+import {
+  DbLease,
+  fetchLeases,
   fetchLeasesByProperty,
   sendLeaseToTenant,
+  supabase,
+  convertApplicantToTenant,
 } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 
@@ -39,9 +42,11 @@ export default function LeasesScreen() {
   
   const { user } = useAuthStore();
   const { getPropertyById } = usePropertyStore();
-  
+  const { loadFromSupabase: loadTenants } = useTenantStore();
+
   const [leases, setLeases] = useState<DbLease[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [convertingLeaseId, setConvertingLeaseId] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -155,6 +160,58 @@ export default function LeasesScreen() {
     } else {
       Alert.alert('No Document', 'This lease does not have a document attached yet.');
     }
+  };
+
+  const handleConvertApplicantToTenant = async (lease: DbLease) => {
+    if (!lease.application_id || lease.tenant_id) return;
+    if (!lease.property_id) {
+      Alert.alert('Error', 'This lease is missing property information.');
+      return;
+    }
+
+    const { data: app } = await supabase
+      .from('applications')
+      .select('applicant_name')
+      .eq('id', lease.application_id)
+      .maybeSingle();
+    const name = app?.applicant_name || 'this applicant';
+
+    Alert.alert(
+      'Convert to tenant',
+      `Link ${name} as a tenant on this lease (sets tenant_id)? You can do this later from here or Applications.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Convert now',
+          onPress: async () => {
+            if (convertingLeaseId === lease.id) return;
+            setConvertingLeaseId(lease.id);
+            try {
+              const result = await convertApplicantToTenant({
+                applicationId: lease.application_id!,
+                propertyId: lease.property_id,
+                unitId: lease.unit_id || undefined,
+                leaseId: lease.id,
+                startDate: lease.effective_date || undefined,
+                landlordFinalize: true,
+              });
+              if (result?.tenant) {
+                if (user?.id) await loadTenants(user.id);
+                await loadLeases();
+                Alert.alert('Success', `${name} is linked as a tenant.`);
+              } else {
+                Alert.alert('Notice', 'Could not complete linking. Open the lease and try again.');
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'Conversion failed';
+              Alert.alert('Error', msg);
+            } finally {
+              setConvertingLeaseId(null);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleSendToTenant = async (lease: DbLease) => {
@@ -367,6 +424,20 @@ export default function LeasesScreen() {
                 </ThemedText>
                   </TouchableOpacity>
                 )}
+
+                {lease.status === 'signed_pending_move_in' &&
+                  lease.application_id &&
+                  !lease.tenant_id && (
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: '#10b98118' }]}
+                      onPress={() => handleConvertApplicantToTenant(lease)}
+                      disabled={convertingLeaseId === lease.id}>
+                      <MaterialCommunityIcons name="account-switch-outline" size={18} color="#10b981" />
+                      <ThemedText style={[styles.actionButtonText, { color: '#10b981' }]}>
+                        {convertingLeaseId === lease.id ? 'Converting…' : 'Convert to tenant'}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  )}
               </View>
             </View>
         ))}
