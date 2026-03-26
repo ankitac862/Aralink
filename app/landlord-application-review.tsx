@@ -7,7 +7,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getApplicationById, approveApplication, rejectApplication, approveMoveInDate, supabase } from '@/lib/supabase';
+import { getApplicationById, approveApplication, rejectApplication, approveMoveInDate, supabase, DbLease } from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 export default function LandlordApplicationReviewScreen() {
@@ -15,7 +15,7 @@ export default function LandlordApplicationReviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
-  const { resetWizard, updateFormData, setTenantId, setPropertyContext } = useOntarioLeaseStore();
+  const { resetWizard, updateFormData, setTenantId, setPropertyContext, beginLeaseEdit } = useOntarioLeaseStore();
 
   const [application, setApplication] = useState<any>(null);
   const [coApplicants, setCoApplicants] = useState<any[]>([]);
@@ -24,6 +24,7 @@ export default function LandlordApplicationReviewScreen() {
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [showCoApplicantModal, setShowCoApplicantModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [applicationLease, setApplicationLease] = useState<DbLease | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -46,6 +47,8 @@ export default function LandlordApplicationReviewScreen() {
     try {
       const data = await getApplicationById(id as string);
       setApplication(data);
+
+      await loadLeaseForApplication(id as string);
       
       // Load co-applicants for this application
       await loadCoApplicants(id as string);
@@ -75,6 +78,81 @@ export default function LandlordApplicationReviewScreen() {
     } catch (error) {
       console.error('Error fetching co-applicants:', error);
     }
+  };
+
+  const loadLeaseForApplication = async (applicationId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('leases')
+        .select('*')
+        .eq('application_id', applicationId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error('Error loading lease for application:', error);
+        setApplicationLease(null);
+        return;
+      }
+
+      setApplicationLease(data?.[0] || null);
+    } catch (e) {
+      console.error('Error loading lease for application:', e);
+      setApplicationLease(null);
+    }
+  };
+
+  const getLeaseStatusLabel = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return 'Draft';
+      case 'generated':
+        return 'Created (PDF ready)';
+      case 'uploaded':
+        return 'Uploaded';
+      case 'sent':
+        return 'Waiting for tenant signature';
+      case 'signed':
+        return 'Waiting for landlord signature';
+      case 'signed_pending_move_in':
+        return 'Fully signed (pending move-in)';
+      case 'active':
+        return 'Active';
+      default:
+        return status;
+    }
+  };
+
+  const canEditLease = (lease: DbLease | null) => {
+    if (!lease) return false;
+    if (lease.status === 'signed_pending_move_in' || lease.status === 'active') return false;
+    return true;
+  };
+
+  const handleEditLease = (lease: DbLease) => {
+    if (!canEditLease(lease)) return;
+
+    Alert.alert(
+      'Edit lease?',
+      'This will reset signing progress. After you save changes, generate a new PDF to replace the previous lease document.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: async () => {
+            const ok = await beginLeaseEdit(lease.id);
+            if (!ok) {
+              Alert.alert('Error', 'Could not open lease editor.');
+              return;
+            }
+            router.push({
+              pathname: '/lease-wizard/step1',
+              params: { leaseId: lease.id, edit: '0' },
+            });
+          },
+        },
+      ]
+    );
   };
 
   const handleApprove = () => {
@@ -208,27 +286,34 @@ export default function LandlordApplicationReviewScreen() {
         return;
       }
 
-      // Otherwise, try to get signed URL from storage with fallback buckets
-      // Extract bucket and path from the URL
-      // Expected format: bucket-name/path/to/file
-      const parts = documentUrl.split('/');
-      // Relaxed length check so raw filenames have a chance.
+      // Otherwise, try to get signed URL from storage with fallback buckets.
+      // documentUrl is usually saved as: "<bucket>/<path>".
+      const cleanedRef = decodeURIComponent(documentUrl).replace(/^\/+/, '').trim();
+      const parts = cleanedRef.split('/').filter(Boolean);
+      const knownBuckets = ['documents', 'lease-documents', 'application-documents'];
+      const detectedBucket = parts[0] && knownBuckets.includes(parts[0]) ? parts[0] : null;
+      const primaryBucket = detectedBucket || 'documents';
+      const rawFilePath = detectedBucket ? parts.slice(1).join('/') : cleanedRef;
+      const fileName = rawFilePath.includes('/') ? rawFilePath.split('/').pop() || rawFilePath : rawFilePath;
 
-      const primaryBucket = parts[0] || 'documents';
-      const rawFilePath = parts.length > 1 ? parts.slice(1).join('/') : parts[0];
-      const decodedFilePath = rawFilePath ? decodeURIComponent(rawFilePath) : '';
+      // Build path candidates and remove duplicates/invalids.
+      const normalizedFilePaths = Array.from(
+        new Set(
+          [
+            rawFilePath,
+            rawFilePath.replace(/^\/+/, ''),
+            // Handle malformed rows where bucket was duplicated in path
+            rawFilePath.startsWith(`${primaryBucket}/`) ? rawFilePath.slice(primaryBucket.length + 1) : rawFilePath,
+            cleanedRef.startsWith(`${primaryBucket}/`) ? cleanedRef.slice(primaryBucket.length + 1) : cleanedRef,
+            cleanedRef,
+            fileName, // last-chance fallback
+          ]
+            .map((p) => p?.trim())
+            .filter((p): p is string => !!p && !p.startsWith('http://') && !p.startsWith('https://'))
+        )
+      );
 
-      // Handle malformed keys where bucket is duplicated in path
-      const normalizedFilePaths = [
-        documentUrl,
-        decodeURIComponent(documentUrl),
-        rawFilePath,
-        decodedFilePath,
-        rawFilePath.startsWith(`${primaryBucket}/`) ? rawFilePath.slice(primaryBucket.length + 1) : rawFilePath,
-        decodedFilePath.startsWith(`${primaryBucket}/`) ? decodedFilePath.slice(primaryBucket.length + 1) : decodedFilePath,
-      ].filter(Boolean);
-
-      // Try fallback buckets: start with primary, then try remaining buckets
+      // Try fallback buckets: start with primary, then remaining known buckets.
       const candidateBuckets = [primaryBucket, ...['documents', 'lease-documents', 'application-documents'].filter(b => b && b !== primaryBucket)];
       let lastError: any = null;
       let signedUrl: string | null = null;
@@ -242,6 +327,7 @@ export default function LandlordApplicationReviewScreen() {
               .createSignedUrl(pathToTry, 3600); // 1 hour expiry
 
             if (!error && data?.signedUrl) {
+              console.log(`✅ Signed URL resolved from ${bucket}/${pathToTry}`);
               signedUrl = data.signedUrl;
               break;
             }
@@ -258,6 +344,8 @@ export default function LandlordApplicationReviewScreen() {
       }
 
       if (!signedUrl) {
+        console.log('❌ Failed storage resolution with buckets:', candidateBuckets);
+        console.log('❌ Tried storage paths:', normalizedFilePaths);
         throw lastError || new Error('Unable to locate document in any storage bucket');
       }
 
@@ -323,6 +411,40 @@ export default function LandlordApplicationReviewScreen() {
             </View>
           </View>
         </View>
+
+        {/* Lease (linked to this application) */}
+        {applicationLease && (
+          <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Lease</ThemedText>
+            <View style={styles.sectionContent}>
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: textSecondaryColor }]}>Status</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textPrimaryColor }]}>
+                  {getLeaseStatusLabel(applicationLease.status)}
+                </ThemedText>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+                <TouchableOpacity
+                  style={[styles.approveButton, { backgroundColor: primaryColor, paddingVertical: 10, flex: 1, minWidth: 140 }]}
+                  onPress={() => router.push(`/lease-detail?id=${applicationLease.id}`)}>
+                  <ThemedText style={styles.approveButtonText}>Open Lease</ThemedText>
+                </TouchableOpacity>
+
+                {canEditLease(applicationLease) && (
+                  <TouchableOpacity
+                    style={[
+                      styles.rejectButton,
+                      { borderColor: primaryColor, paddingVertical: 10, flex: 1, minWidth: 140, alignItems: 'center' },
+                    ]}
+                    onPress={() => handleEditLease(applicationLease)}>
+                    <ThemedText style={[styles.modalButtonTextOutline, { color: textPrimaryColor }]}>Edit Lease</ThemedText>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Personal Information */}
         <View style={[styles.sectionCard, { backgroundColor: cardBgColor, borderColor }]}>

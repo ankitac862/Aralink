@@ -14,6 +14,8 @@ import {
   updateLeaseInDb,
   uploadLeaseDocument,
   fetchLeaseById,
+  resetLeaseForEditing,
+  normalizeOntarioLeaseFormData,
   handleInviteBasedLeaseSigning,
 } from '@/lib/supabase';
 import {
@@ -174,12 +176,18 @@ interface OntarioLeaseWizardState {
   // Persistence
   saveDraft: (userId: string) => Promise<string | null>;
   loadDraft: (leaseId: string) => Promise<boolean>;
+  hydrateFromLease: (lease: DbLease) => void;
+  beginLeaseEdit: (leaseId: string) => Promise<boolean>;
   
   // Generate/Upload/Send
   generateLease: (userId: string) => Promise<{ leaseId: string; documentUrl?: string } | null>;
   generateOfficialPdf: (userId: string) => Promise<GeneratePdfResponse>;
   uploadLease: (uri: string, userId: string) => Promise<{ leaseId: string; documentUrl: string } | null>;
-  sendLease: (tenantEmail?: string, message?: string) => Promise<SendLeaseResponse>;
+  sendLease: (
+    tenantEmail?: string,
+    message?: string,
+    opts?: { leaseUpdatedResign?: boolean }
+  ) => Promise<SendLeaseResponse>;
   
   // Document state
   documentUrl: string | null;
@@ -364,19 +372,21 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
     
     try {
       if (draftLeaseId) {
-        // Update existing draft
+        // Update existing draft — always persist moveInDate as effective_date
         const updated = await updateLeaseInDb(draftLeaseId, {
           form_data: formData,
           property_id: propertyId,
           unit_id: unitId || undefined,
           tenant_id: personType === 'tenant' ? tenantId || undefined : undefined,
           application_id: personType === 'applicant' ? applicationId || undefined : undefined,
+          effective_date: formData.tenancyStartDate || undefined,
+          expiry_date: formData.tenancyEndDate || undefined,
         });
         
         set({ isSaving: false });
         return updated?.id || null;
       } else {
-        // Create new draft
+        // Create new draft — always persist moveInDate as effective_date
         const created = await createLease({
           user_id: userId,
           property_id: propertyId,
@@ -385,6 +395,8 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           application_id: personType === 'applicant' ? applicationId || undefined : undefined,
           status: 'draft',
           form_data: formData,
+          effective_date: formData.tenancyStartDate || undefined,
+          expiry_date: formData.tenancyEndDate || undefined,
         });
         
         if (created) {
@@ -406,13 +418,60 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
     set({ isLoading: true, error: null });
     
     try {
-      // This would fetch from Supabase
-      // For now, just set the ID
-      set({ draftLeaseId: leaseId, isLoading: false });
+      const lease = await fetchLeaseById(leaseId);
+      if (!lease) {
+        set({ isLoading: false, error: 'Lease not found' });
+        return false;
+      }
+
+      get().hydrateFromLease(lease);
+      set({ isLoading: false });
       return true;
     } catch (error) {
       console.error('Error loading draft:', error);
       set({ isLoading: false, error: 'Failed to load draft' });
+      return false;
+    }
+  },
+
+  hydrateFromLease: (lease) => {
+    const formData = normalizeOntarioLeaseFormData(lease.form_data);
+
+    set({
+      draftLeaseId: lease.id,
+      propertyId: lease.property_id,
+      unitId: lease.unit_id || null,
+      tenantId: lease.tenant_id || null,
+      applicationId: lease.application_id || null,
+      personType: lease.application_id ? 'applicant' : lease.tenant_id ? 'tenant' : null,
+      formData,
+      documentUrl: lease.document_url || null,
+      documentVersion: lease.version ?? null,
+      engineUsed: null,
+      isSent: lease.status === 'sent' || lease.status === 'signed' || lease.status === 'signed_pending_move_in',
+    });
+  },
+
+  beginLeaseEdit: async (leaseId) => {
+    set({ isLoading: true, error: null });
+    try {
+      // Clear any in-memory wizard state before hydrating from DB
+      get().resetWizard();
+      await resetLeaseForEditing(leaseId);
+      const ok = await get().loadDraft(leaseId);
+      set({
+        isLoading: false,
+        isSent: false,
+        documentUrl: null,
+        documentVersion: null,
+      });
+      return ok;
+    } catch (e) {
+      console.error('beginLeaseEdit failed:', e);
+      set({
+        isLoading: false,
+        error: e instanceof Error ? e.message : 'Failed to prepare lease edit',
+      });
       return false;
     }
   },
@@ -562,7 +621,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
   /**
    * Send the generated lease to tenant
    */
-  sendLease: async (tenantEmail, message) => {
+  sendLease: async (tenantEmail, message, opts) => {
     const { draftLeaseId, documentUrl, propertyId, tenantId, applicationId, personType, formData } = get();
     
     console.log('📤 sendLease called with:', {
@@ -697,8 +756,10 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
           .join(' ')
           .trim();
 
-          const propertyNameFromData = application.properties ? 
-            (application.properties.name || application.properties.address1) : null;
+          const propsRel: any = (application as any).properties;
+          const propertyNameFromData = Array.isArray(propsRel)
+            ? (propsRel[0]?.name || propsRel[0]?.address1 || null)
+            : (propsRel?.name || propsRel?.address1 || null);
 
           const invitationResult = await handleInviteBasedLeaseSigning({
             applicationId,
@@ -711,16 +772,17 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
         });
 
         if (invitationResult?.success) {
-          console.log('✅ Applicant invitation sent successfully');
+          const emailed = invitationResult.emailSent === true;
+          console.log(emailed ? '✅ Applicant invitation email sent' : '✅ Lease sent (email may need manual share)');
           set({
             isLoading: false,
             isSent: true,
-            error: null,
+            error: emailed ? null : (invitationResult.emailWarning || 'Email not delivered — share activation link manually.'),
           });
           return {
             success: true,
             status: 'sent',
-            emailSent: true,
+            emailSent: emailed,
             notificationSent: true,
             leaseId: activeLeaseId,
           } as SendLeaseResponse & { leaseId: string };
@@ -747,6 +809,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
         applicationId: applicationId || undefined,
         tenantId: tenantId || undefined,
         message,
+        leaseUpdatedResign: opts?.leaseUpdatedResign,
       });
 
       console.log('📨 sendLeaseApi result:', result);
@@ -778,6 +841,7 @@ export const useOntarioLeaseStore = create<OntarioLeaseWizardState>((set, get) =
             applicationId: applicationId || undefined,
             tenantId: tenantId || undefined,
             message,
+            leaseUpdatedResign: opts?.leaseUpdatedResign,
           });
           console.log('📨 Retry result:', result);
         }

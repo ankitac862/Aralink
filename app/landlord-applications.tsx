@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, View, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -10,7 +10,13 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
-import { fetchLandlordApplications, supabase, handleInviteBasedLeaseSigning } from '@/lib/supabase';
+import {
+  fetchLandlordApplications,
+  supabase,
+  convertApplicantToTenant,
+  leaseNeedsApplicantTenantConversion,
+  getApplicationLeaseCardPhase,
+} from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 interface Application {
@@ -34,7 +40,18 @@ export default function LandlordApplicationsScreen() {
   
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [applicationLeases, setApplicationLeases] = useState<Record<string, { id: string, status: string } | null>>({});
+  type ApplicationLeaseRow = {
+    id: string;
+    status: string;
+    tenant_id: string | null;
+    application_id: string | null;
+    version: number | null;
+    signed_pdf_url: string | null;
+  };
+
+  const [applicationLeases, setApplicationLeases] = useState<
+    Record<string, ApplicationLeaseRow | null>
+  >({});
   const [convertingApplicationId, setConvertingApplicationId] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
@@ -81,22 +98,30 @@ export default function LandlordApplicationsScreen() {
 
   const checkForLeases = async (apps: Application[]) => {
     try {
-      const leaseMap: Record<string, { id: string, status: string } | null> = {};
+      const leaseMap: Record<string, ApplicationLeaseRow | null> = {};
       
       for (const app of apps) {
         try {
-          // Check if a lease exists for this application (may be multiple)
           const { data, error } = await supabase
             .from('leases')
-            .select('id, status')
+            .select('id, status, tenant_id, application_id, version, signed_pdf_url')
             .eq('application_id', app.id)
+            .order('updated_at', { ascending: false })
             .limit(1);
           
           if (error) {
             console.error('Error checking lease for application:', app.id, error);
             leaseMap[app.id] = null; // Default to null on error
           } else if (data && data.length > 0) {
-            leaseMap[app.id] = { id: data[0].id, status: data[0].status };
+            const row = data[0] as any;
+            leaseMap[app.id] = {
+              id: row.id,
+              status: row.status,
+              tenant_id: row.tenant_id ?? null,
+              application_id: row.application_id ?? app.id,
+              version: row.version ?? null,
+              signed_pdf_url: row.signed_pdf_url ?? null,
+            };
           } else {
             leaseMap[app.id] = null;
           }
@@ -115,152 +140,67 @@ export default function LandlordApplicationsScreen() {
     }
   };
 
-  const handleConvertToTenant = async (application: Application) => {
+  /** After lease is fully signed (v3), create/link tenant record when not already linked. */
+  const handleDirectConvertToTenant = async (application: Application) => {
+    const leaseInfo = applicationLeases[application.id];
+    if (
+      !leaseInfo?.id ||
+      !leaseNeedsApplicantTenantConversion({
+        ...leaseInfo,
+        application_id: leaseInfo.application_id || application.id,
+      })
+    ) {
+      return;
+    }
     if (!application.property_id) {
       Alert.alert('Error', 'Property information is missing for this application.');
       return;
     }
 
-    // First check if a lease exists for this application
-    console.log('🔍 Checking for leases with application_id:', application.id);
-    const { data: leaseData, error: leaseError } = await supabase
-      .from('leases')
-      .select('id, unit_id, effective_date, form_data, status')
-      .eq('application_id', application.id)
-      .order('created_at', { ascending: false });
-
-    console.log('📋 Lease check result:', { 
-      found: leaseData?.length || 0, 
-      error: leaseError,
-      leases: leaseData 
-    });
-
-    if (leaseError) {
-      console.error('❌ Error checking for leases:', leaseError);
-      Alert.alert('Error', `Failed to check for leases: ${leaseError.message}`);
-      return;
-    }
-
-    if (!leaseData || leaseData.length === 0) {
-      Alert.alert(
-        'No Lease Found',
-        'A lease must be generated before converting to tenant. Would you like to generate a lease now?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Generate Lease',
-            onPress: async () => {
-              let coApplicantNames: string[] = [];
-              try {
-                const { data } = await supabase
-                  .from('co_applicants')
-                  .select('full_name')
-                  .eq('application_id', application.id)
-                  .order('applicant_order', { ascending: true });
-                coApplicantNames = (data || []).map((c: any) => c.full_name).filter(Boolean);
-              } catch (_) {}
-
-              const allTenantNames = [application.applicant_name || '', ...coApplicantNames];
-              resetWizard();
-              setTenantId(null, 'applicant', application.id);
-              setPropertyContext({ propertyId: application.property_id || '' });
-              updateFormData('tenantNames', allTenantNames);
-
-              router.push({
-                pathname: '/lease-wizard/step1',
-                params: {
-                  applicationId: application.id,
-                  propertyId: application.property_id,
-                  tenantName: application.applicant_name,
-                }
-              });
-            },
-          },
-        ]
-      );
-      return;
-    }
-
-    // If multiple leases exist, warn the user
-    if (leaseData.length > 1) {
-      console.warn('⚠️ Multiple leases found for application:', application.id, 'Count:', leaseData.length);
-      Alert.alert(
-        'Multiple Leases Found',
-        `Found ${leaseData.length} leases for this application. Using the most recent one. You may want to review and delete duplicate leases.`,
-        [{ text: 'OK' }]
-      );
-    }
-
-    const lease = leaseData[0];
-    const rentAmount = lease.form_data?.monthlyRent || lease.form_data?.rent || 0;
-
     Alert.alert(
-      'Convert to Tenant',
-      `Convert ${application.applicant_name} to a tenant?`,
+      'Convert to tenant',
+      `Create a tenant record for ${application.applicant_name} and link this lease? They can then appear in your tenant list and receive tenant access when you activate the tenancy.`,
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Convert',
           onPress: async () => {
-            // Prevent double conversion
-            if (convertingApplicationId === application.id) {
-              Alert.alert('Please Wait', 'Conversion already in progress...');
-              return;
-            }
-            
+            if (convertingApplicationId === application.id) return;
             setConvertingApplicationId(application.id);
-            
             try {
-              console.log('🔄 Sending tenant invitation for lease:', lease.id);
-              
-              // Get landlord info for invitation email
-              const { data: { user: currentUser } } = await supabase.auth.getUser();
-              const { data: landlordProfile } = await supabase
-                .from('profiles')
-                .select('name, full_name')
-                .eq('id', currentUser?.id)
-                .single();
+              const { data: lease, error: leaseErr } = await supabase
+                .from('leases')
+                .select('id, property_id, unit_id, effective_date, application_id')
+                .eq('id', leaseInfo.id)
+                .maybeSingle();
 
-              const unitLabel =
-                lease.unit_name ||
-                lease.form_data?.unitAddress?.unit ||
-                '';
+              if (leaseErr || !lease?.application_id) {
+                Alert.alert('Error', 'Could not load lease details.');
+                return;
+              }
 
-              const propertyBaseName = application.property_address || 'Property';
-              const propertyName = unitLabel
-                ? `${propertyBaseName} - ${unitLabel}`
-                : propertyBaseName;
-
-              // Send invitation-based activation instead of direct conversion
-              const result = await handleInviteBasedLeaseSigning({
-                applicationId: application.id,
-                leaseId: lease.id,
+              const result = await convertApplicantToTenant({
+                applicationId: lease.application_id,
                 propertyId: application.property_id!,
-                applicantEmail: application.applicant_email,
-                applicantName: application.applicant_name,
-                propertyName,
-                landlordName: landlordProfile?.full_name || landlordProfile?.name || 'Your Landlord',
+                unitId: lease.unit_id || undefined,
+                leaseId: lease.id,
+                startDate: lease.effective_date || undefined,
+                landlordFinalize: true,
               });
 
-              console.log('✅ Invitation sent successfully');
-              
-              // Refresh applications list
-              await loadApplications();
-              
-              Alert.alert(
-                'Success',
-                `Invitation sent to ${application.applicant_name} at ${application.applicant_email}. They will need to create their account to begin their tenancy.`
-              );
-            } catch (error) {
-              console.error('❌ Error sending invitation:', error);
-              const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-              Alert.alert(
-                'Conversion Failed',
-                errorMessage
-              );
+              if (result?.tenant) {
+                if (user?.id) await loadTenants(user.id);
+                await loadApplications();
+                Alert.alert(
+                  'Success',
+                  `${application.applicant_name} is linked as a tenant for this property.`
+                );
+              } else {
+                Alert.alert('Error', 'Conversion did not complete. Please try again from lease details.');
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'Conversion failed';
+              Alert.alert('Error', msg);
             } finally {
               setConvertingApplicationId(null);
             }
@@ -295,7 +235,30 @@ export default function LandlordApplicationsScreen() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const renderApplication = ({ item }: { item: Application }) => (
+  const renderApplication = ({ item }: { item: Application }) => {
+    const al = applicationLeases[item.id];
+    const phase = al ? getApplicationLeaseCardPhase(al) : 'other';
+    const needsConvert = al
+      ? leaseNeedsApplicantTenantConversion({ ...al, application_id: al.application_id || item.id })
+      : false;
+
+    const phaseAccent =
+      phase === 'sent' || phase === 'awaiting_landlord'
+        ? { bg: '#f59e0b15', border: '#f59e0b', color: '#f59e0b', icon: 'clock-outline' as const }
+        : phase === 'fully_signed'
+          ? { bg: '#10b98115', border: '#10b981', color: '#10b981', icon: 'check-circle' as const }
+          : { bg: `${primaryColor}15`, border: primaryColor, color: primaryColor, icon: 'file-document-check' as const };
+
+    const leaseLabel =
+      phase === 'sent'
+        ? 'Awaiting Tenant Signature (Sent)'
+        : phase === 'awaiting_landlord'
+          ? 'Pending Landlord Signature'
+          : phase === 'fully_signed'
+            ? 'Fully Signed (View)'
+            : 'View Lease Details';
+
+    return (
     <TouchableOpacity
       style={[styles.applicationCard, { backgroundColor: cardBgColor, borderColor }]}
       onPress={() => router.push(`/landlord-application-review?id=${item.id}`)}>
@@ -324,16 +287,14 @@ export default function LandlordApplicationsScreen() {
         <MaterialCommunityIcons name="chevron-right" size={20} color={textSecondaryColor} />
       </View>
       
-      {/* Action buttons for approved applications */}
-      {item.status === 'approved' && (
+      {/* Lease actions: show Generate for approved w/o lease; show lease row whenever a lease exists */}
+      {((item.status === 'approved' && !applicationLeases[item.id]) || applicationLeases[item.id]) && (
         <View style={styles.actionButtonsContainer}>
-          {/* Generate Lease button - only show if no lease exists */}
-          {!applicationLeases[item.id] && (
+          {item.status === 'approved' && !applicationLeases[item.id] && (
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: primaryColor, flex: 1 }]}
               onPress={async (e) => {
                 e.stopPropagation();
-                // Fetch co-applicants fresh before navigating
                 let coApplicantNames: string[] = [];
                 try {
                   const { data } = await supabase
@@ -345,9 +306,6 @@ export default function LandlordApplicationsScreen() {
                 } catch (_) {}
 
                 const allTenantNames = [item.applicant_name || '', ...coApplicantNames];
-                console.log('🏠 Generate Lease - setting tenant names:', allTenantNames);
-
-                // Pre-fill store BEFORE navigating
                 resetWizard();
                 setTenantId(null, 'applicant', item.id);
                 setPropertyContext({ propertyId: item.property_id || '' });
@@ -359,63 +317,75 @@ export default function LandlordApplicationsScreen() {
                     applicationId: item.id,
                     propertyId: item.property_id,
                     tenantName: item.applicant_name,
-                  }
+                  },
                 });
               }}>
               <MaterialCommunityIcons name="file-document-edit" size={16} color="#fff" />
               <ThemedText style={styles.actionButtonText}>Generate Lease</ThemedText>
             </TouchableOpacity>
           )}
-          
-          {/* Lease exists message */}
+
           {applicationLeases[item.id] && (
-            <TouchableOpacity 
-              style={[
-                styles.leaseExistsContainer, 
-                { 
-                  backgroundColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b15' : 
-                                   applicationLeases[item.id].status === 'signed' ? '#10b98115' : 
-                                   `${primaryColor}15`, 
-                  borderColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                               applicationLeases[item.id].status === 'signed' ? '#10b981' : 
-                               primaryColor, 
-                  flex: 1 
-                }
-              ]}
-              onPress={(e) => {
-                e.stopPropagation();
-                router.push(`/lease-detail?id=${applicationLeases[item.id].id}`);
-              }}
-            >
-              <MaterialCommunityIcons 
-                name={applicationLeases[item.id].status === 'sent' ? "clock-outline" : 
-                      applicationLeases[item.id].status === 'signed' ? "check-circle" : 
-                      "file-document-check"} 
-                size={16} 
-                color={applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                       applicationLeases[item.id].status === 'signed' ? '#10b981' : 
-                       primaryColor} 
-              />
-              <ThemedText 
+            <View style={styles.leaseBlock}>
+              <TouchableOpacity
                 style={[
-                  styles.leaseExistsText, 
-                  { 
-                    color: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                           applicationLeases[item.id].status === 'signed' ? '#10b981' : 
-                           primaryColor 
-                  }
+                  styles.leaseExistsContainer,
+                  {
+                    backgroundColor: phaseAccent.bg,
+                    borderColor: phaseAccent.border,
+                  },
                 ]}
-              >
-                {applicationLeases[item.id].status === 'sent' ? 'Awaiting Signature (Sent)' : 
-                 applicationLeases[item.id].status === 'signed' ? 'Lease Signed (View)' : 
-                 'View Lease Details'}
-              </ThemedText>
-            </TouchableOpacity>
+                onPress={(e) => {
+                  e.stopPropagation();
+                  router.push(`/lease-detail?id=${applicationLeases[item.id]!.id}`);
+                }}>
+                <MaterialCommunityIcons
+                  name={phaseAccent.icon}
+                  size={16}
+                  color={phaseAccent.color}
+                />
+                <ThemedText
+                  style={[
+                    styles.leaseExistsText,
+                    {
+                      color: phaseAccent.color,
+                    },
+                  ]}>
+                  {leaseLabel}
+                </ThemedText>
+              </TouchableOpacity>
+
+              {needsConvert && (
+                  <TouchableOpacity
+                    style={[styles.convertToTenantButton, { borderColor: primaryColor }]}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleDirectConvertToTenant(item);
+                    }}
+                    disabled={convertingApplicationId === item.id}>
+                    <MaterialCommunityIcons
+                      name="account-switch-outline"
+                      size={18}
+                      color={primaryColor}
+                    />
+                    <ThemedText style={[styles.convertToTenantText, { color: primaryColor }]}>
+                      {convertingApplicationId === item.id ? 'Converting…' : 'Convert to Tenant'}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
+
+              {!!al?.tenant_id && phase === 'fully_signed' && (
+                  <ThemedText style={[styles.tenantLinkedHint, { color: textSecondaryColor }]}>
+                    Tenant record linked
+                  </ThemedText>
+                )}
+            </View>
           )}
         </View>
       )}
     </TouchableOpacity>
-  );
+    );
+  };
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -579,6 +549,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: 12,
     gap: 8,
+    flexWrap: 'wrap',
+  },
+  leaseBlock: {
+    width: '100%',
+  },
+  convertToTenantButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    backgroundColor: 'transparent',
+    marginTop: 8,
+  },
+  convertToTenantText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  tenantLinkedHint: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginTop: 4,
   },
   actionButton: {
     flexDirection: 'row',

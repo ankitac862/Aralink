@@ -229,7 +229,10 @@ export default function LandlordDashboardScreen() {
       // OPTIMIZATION 7: Load notifications asynchronously (don't block main data)
       fetchLandlordNotifications(user.id)
         .then(notifs => {
-          const filtered = notifs.filter(n => n.type === 'application').slice(0, 3);
+          // Show recent lease-related notifications too (e.g. tenant signed; landlord countersign pending).
+          const filtered = notifs
+            .filter(n => n.type === 'application' || n.type === 'lease')
+            .slice(0, 3);
           setNotifications(filtered);
         })
         .catch(err => console.error('Notifications load error:', err));
@@ -482,7 +485,10 @@ export default function LandlordDashboardScreen() {
               <TouchableOpacity
                 key={notif.id}
                 style={[styles.notificationCard, { backgroundColor: cardBgColor }]}
-                onPress={() => router.push('/landlord-applications')}>
+                onPress={() => {
+                  const leaseId = (notif.data as any)?.leaseId as string | undefined;
+                  router.push(leaseId ? `/lease-detail?id=${leaseId}` : '/landlord-applications');
+                }}>
                 <View style={[styles.notificationIcon, { backgroundColor: `${primaryColor}20` }]}>
                   <MaterialCommunityIcons name="file-document" size={24} color={primaryColor} />
                 </View>

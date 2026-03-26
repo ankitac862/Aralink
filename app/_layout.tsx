@@ -37,7 +37,10 @@ export default function RootLayout() {
 
     const inAuthGroup = segments[0] === '(auth)';
 
-    const isInviteRoute = segments[0] === 'invite' || segments[0] === 'invite-auth';
+    const isInviteRoute =
+      segments[0] === 'invite' ||
+      segments[0] === 'invite-auth' ||
+      segments[0] === 'activate-tenant'; // public deep-link route for new tenant onboarding
 
     if (!user && !inAuthGroup && !isInviteRoute) {
       // User is not authenticated and not in auth group, redirect to auth

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -6,6 +6,7 @@ import {
   View,
   RefreshControl,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -16,7 +17,12 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchTenantNotifications, markNotificationAsRead, markAllNotificationsAsRead } from '@/lib/supabase';
+import {
+  fetchTenantNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  fetchPropertyById,
+} from '@/lib/supabase';
 
 interface Notification {
   id: string;
@@ -82,29 +88,156 @@ export default function NotificationsScreen() {
     setNotifications(notifications.map(n => ({ ...n, is_read: true, read_at: new Date().toISOString() })));
   };
 
-  const handleNotificationPress = (notification: Notification) => {
+  const parseNotifData = (raw: unknown): Record<string, any> => {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    if (typeof raw === 'object') return raw as Record<string, any>;
+    return {};
+  };
+
+  const handleNotificationPress = async (notification: Notification) => {
     if (!notification.is_read) {
       handleMarkAsRead(notification.id);
     }
 
-    // Navigate based on notification type
-    if (notification.type === 'invite') {
-      router.push('/invite');
-    } else if (notification.type === 'maintenance') {
-      router.push('/maintenance');
-    } else if (notification.type === 'lease') {
-      router.push('/leases');
+    const data = parseNotifData(notification.data);
+    const propertyId = data.propertyId || data.property_id;
+    const leaseId = data.leaseId || data.lease_id;
+    const inviteId = data.inviteId || data.invite_id;
+    const unitId = data.unitId || data.unit_id;
+    const subUnitId = data.subUnitId || data.sub_unit_id || data.roomId;
+    const requestId = data.requestId || data.request_id;
+    const applicationId = data.applicationId || data.application_id;
+    const type = (notification.type || '').toLowerCase();
+    const title = (notification.title || '').toLowerCase();
+
+    const openTenantLeaseStart = async (fromInviteFlow: boolean) => {
+      if (!propertyId) return false;
+      let address = data.propertyAddress || data.property_address || '';
+      if (!address) {
+        const p = await fetchPropertyById(propertyId);
+        if (p) {
+          address = [p.address1, p.city, p.state, p.zip_code].filter(Boolean).join(', ');
+        }
+      }
+      router.push({
+        pathname: '/tenant-lease-start',
+        params: {
+          propertyId,
+          address: address || '',
+          unitId: unitId || '',
+          subUnitId: subUnitId || '',
+          inviteId: inviteId || '',
+          fromInvite: fromInviteFlow || !!inviteId ? 'true' : 'false',
+        },
+      } as any);
+      return true;
+    };
+
+    // Maintenance (tenant): status updates use type maintenance_status_update + requestId
+    if (
+      requestId ||
+      type.includes('maintenance') ||
+      title.includes('maintenance')
+    ) {
+      if (requestId) {
+        router.push(`/tenant-maintenance-detail?id=${requestId}` as any);
+        return;
+      }
+      router.push('/tenant-maintenance-status' as any);
+      return;
     }
+
+    // Lease: send-lease edge uses type lease_received and data.lease_id
+    if (
+      leaseId ||
+      type === 'lease' ||
+      type === 'lease_received' ||
+      title.includes('lease agreement')
+    ) {
+      if (leaseId) {
+        router.push(`/tenant-lease-detail?id=${leaseId}` as any);
+        return;
+      }
+      router.push('/tenant-leases' as any);
+      return;
+    }
+
+    // Property invites
+    if (type === 'invite' || title.includes('invited to apply') || title.includes('invitation')) {
+      if (propertyId) {
+        await openTenantLeaseStart(true);
+        return;
+      }
+      router.push('/invite' as any);
+      return;
+    }
+
+    // Application decision
+    if (type === 'application_approved' || type === 'application_rejected') {
+      if (propertyId) {
+        await openTenantLeaseStart(false);
+        return;
+      }
+      if (applicationId) {
+        router.push('/tenant-lease-status' as any);
+        return;
+      }
+    }
+
+    // Assigned / generic — prefer dashboard when already a tenant; still honor propertyId for deep link
+    if (propertyId && (type === 'announcement' || title.includes('assigned'))) {
+      router.push('/(tabs)/tenant-dashboard' as any);
+      return;
+    }
+
+    if (propertyId) {
+      const ok = await openTenantLeaseStart(false);
+      if (ok) return;
+    }
+
+    if (applicationId) {
+      router.push('/tenant-lease-status' as any);
+      return;
+    }
+
+    if (title.includes('assigned') || title.includes('your property')) {
+      router.push('/(tabs)/tenant-dashboard' as any);
+      return;
+    }
+
+    Alert.alert(
+      'Unable to open',
+      'This notification does not include a link to a property or document.'
+    );
   };
 
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = (type: string, data?: Record<string, any>) => {
+    if (
+      (type === 'lease' || type === 'lease_received') &&
+      data?.lease_updated_resign === true
+    ) {
+      return 'draw-pen';
+    }
     switch (type) {
       case 'invite':
         return 'email-outline';
       case 'maintenance':
+      case 'maintenance_request':
+      case 'maintenance_status_update':
         return 'tools';
       case 'lease':
+      case 'lease_received':
         return 'file-document-outline';
+      case 'application_approved':
+      case 'application_rejected':
+        return 'clipboard-check-outline';
       case 'payment':
         return 'cash';
       case 'announcement':
@@ -171,7 +304,14 @@ export default function NotificationsScreen() {
               </ThemedText>
             </View>
           ) : (
-            notifications.map((notification) => (
+            notifications.map((notification) => {
+              const nData = parseNotifData(notification.data);
+              const leaseUpdatedResign =
+                nData.lease_updated_resign === true ||
+                (notification.type === 'lease_received' &&
+                  (notification.title || '').toLowerCase().includes('lease updated'));
+
+              return (
               <TouchableOpacity
                 key={notification.id}
                 style={[
@@ -184,16 +324,36 @@ export default function NotificationsScreen() {
                 onPress={() => handleNotificationPress(notification)}>
                 <View style={[styles.iconContainer, { backgroundColor: `${primaryColor}20` }]}>
                   <MaterialCommunityIcons
-                    name={getNotificationIcon(notification.type) as any}
+                    name={getNotificationIcon(notification.type, nData) as any}
                     size={24}
                     color={primaryColor}
                   />
                 </View>
                 <View style={styles.notificationContent}>
                   <View style={styles.notificationHeader}>
-                    <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
-                      {notification.title}
-                    </ThemedText>
+                    <View style={styles.titleRow}>
+                      <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
+                        {notification.title}
+                      </ThemedText>
+                      {leaseUpdatedResign && (
+                        <View
+                          style={[
+                            styles.resignLabel,
+                            {
+                              backgroundColor: isDark ? '#422006' : '#fef3c7',
+                              borderColor: isDark ? '#a16207' : '#fcd34d',
+                            },
+                          ]}>
+                          <ThemedText
+                            style={[
+                              styles.resignLabelText,
+                              { color: isDark ? '#fde68a' : '#92400e' },
+                            ]}>
+                            Sign again
+                          </ThemedText>
+                        </View>
+                      )}
+                    </View>
                     {!notification.is_read && (
                       <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
                     )}
@@ -206,7 +366,8 @@ export default function NotificationsScreen() {
                   </ThemedText>
                 </View>
               </TouchableOpacity>
-            ))
+            );
+            })
           )}
         </ScrollView>
       )}
@@ -291,13 +452,34 @@ const styles = StyleSheet.create({
   },
   notificationHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 4,
+  },
+  titleRow: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    paddingRight: 4,
+  },
+  resignLabel: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginTop: 1,
+    marginLeft: 8,
+  },
+  resignLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   notificationTitle: {
     fontSize: 16,
     fontWeight: '600',
-    flex: 1,
+    flexShrink: 1,
   },
   unreadDot: {
     width: 8,

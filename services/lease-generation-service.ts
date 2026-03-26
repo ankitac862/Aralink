@@ -39,12 +39,16 @@ export interface GeneratePdfResponse {
 export interface SendLeaseRequest {
   leaseId: string;
   tenantEmail?: string;
+  /** Auth user id (profiles.id) — primary recipient for notifications; use when applicant has no tenant row */
+  recipientUserId?: string;
   propertyId?: string;
   applicationId?: string;
   tenantId?: string;
   sendEmail?: boolean;
   sendNotification?: boolean;
   message?: string;
+  /** Landlord edited lease; tenant must sign again (notification + email copy). */
+  leaseUpdatedResign?: boolean;
 }
 
 export interface SendLeaseResponse {
@@ -313,12 +317,14 @@ export async function sendLeaseToTenant(
   leaseId: string,
   options?: {
     tenantEmail?: string;
+    recipientUserId?: string;
     propertyId?: string;
     applicationId?: string;
     tenantId?: string;
     message?: string;
     skipEmail?: boolean;
     skipNotification?: boolean;
+    leaseUpdatedResign?: boolean;
   }
 ): Promise<SendLeaseResponse> {
   try {
@@ -342,12 +348,14 @@ export async function sendLeaseToTenant(
       body: JSON.stringify({
         leaseId,
         tenantEmail: options?.tenantEmail,
+        recipientUserId: options?.recipientUserId,
         propertyId: options?.propertyId,
         applicationId: options?.applicationId,
         tenantId: options?.tenantId,
         sendEmail: !options?.skipEmail,
         sendNotification: !options?.skipNotification,
         message: options?.message,
+        leaseUpdatedResign: options?.leaseUpdatedResign,
       } as SendLeaseRequest),
     });
     
@@ -544,13 +552,19 @@ export async function getLeaseStatus(leaseId: string): Promise<string | null> {
 }
 
 /**
- * Checks if user can view a lease (for tenant view)
+ * Checks if user can view a lease (for tenant/applicant view)
+ *
+ * Identity resolution order:
+ * 1. Owner (landlord) can always view
+ * 2. User is the tenant_id match → Tenant path
+ * 3. User email matches form_data.tenantEmails → Applicant who hasn't converted yet
+ * 4. User has an application linked to this lease → Applicant path
  */
 export async function canViewLease(leaseId: string, userId: string): Promise<boolean> {
   try {
     const { data: lease, error } = await supabase
       .from('leases')
-      .select('user_id, tenant_id, status')
+      .select('user_id, tenant_id, application_id, status, form_data')
       .eq('id', leaseId)
       .single();
     
@@ -562,12 +576,74 @@ export async function canViewLease(leaseId: string, userId: string): Promise<boo
     if (lease.user_id === userId) {
       return true;
     }
-    
-    // Tenant can view if lease is sent or signed
-    if (lease.tenant_id === userId && ['sent', 'signed'].includes(lease.status)) {
-      return true;
+
+    const viewableStatuses = ['sent', 'signed', 'signed_pending_move_in', 'active'];
+
+    // Tenant linked by tenant_id (tenant_id stores the tenants table row id, not user_id)
+    // Check via tenants table: find if this userId corresponds to the tenant
+    if (lease.tenant_id) {
+      const { data: tenantRecord } = await supabase
+        .from('tenants')
+        .select('user_id')
+        .eq('id', lease.tenant_id)
+        .maybeSingle();
+      if (tenantRecord?.user_id === userId && viewableStatuses.includes(lease.status)) {
+        return true;
+      }
     }
-    
+
+    // Resolve user email to check applicant path
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', userId)
+      .maybeSingle();
+    const userEmail = profile?.email;
+
+    if (userEmail) {
+      // Check if user email is in lease form_data.tenantEmails
+      const tenantEmails: string[] = lease.form_data?.tenantEmails || [];
+      if (tenantEmails.some((e: string) => e?.toLowerCase() === userEmail.toLowerCase())
+          && viewableStatuses.includes(lease.status)) {
+        return true;
+      }
+
+      // Check if there is an application linked to this lease with this user's email
+      if (lease.application_id) {
+        const { data: application } = await supabase
+          .from('applications')
+          .select('user_id, applicant_email')
+          .eq('id', lease.application_id)
+          .maybeSingle();
+        if (
+          application &&
+          (application.user_id === userId ||
+            application.applicant_email?.toLowerCase() === userEmail.toLowerCase()) &&
+          viewableStatuses.includes(lease.status)
+        ) {
+          return true;
+        }
+      }
+
+      // Also check applications table by email even without application_id on lease
+      const { data: appByEmail } = await supabase
+        .from('applications')
+        .select('id')
+        .eq('applicant_email', userEmail)
+        .maybeSingle();
+      if (appByEmail) {
+        const { data: leaseByApp } = await supabase
+          .from('leases')
+          .select('id, status')
+          .eq('id', leaseId)
+          .eq('application_id', appByEmail.id)
+          .maybeSingle();
+        if (leaseByApp && viewableStatuses.includes(leaseByApp.status)) {
+          return true;
+        }
+      }
+    }
+
     return false;
   } catch (error) {
     console.error('Error checking lease view permission:', error);

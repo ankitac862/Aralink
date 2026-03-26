@@ -180,7 +180,7 @@ serve(async (req: Request) => {
 
     console.log(`📧 Sending invitation to ${email} for property ${propertyName}`);
 
-    // Send email
+    // Send email (non-fatal: return 200 so client can still mark lease sent + show in-app link)
     const emailSent = await sendEmailViaResend(
       email,
       tenantName,
@@ -190,13 +190,19 @@ serve(async (req: Request) => {
     );
 
     if (!emailSent) {
+      const warning = !resendApiKey
+        ? 'RESEND_API_KEY is not set on the Edge Function. Configure it in Supabase Dashboard → Edge Functions → Secrets.'
+        : 'Resend API rejected or failed the send. Check RESEND_API_KEY, FROM_EMAIL, and domain verification.';
+      console.warn('⚠️ Invitation email not sent:', warning);
+
       return new Response(
         JSON.stringify({
-          success: false,
-          error: 'Failed to send invitation email',
+          success: true,
           emailSent: false,
+          warning,
+          message: 'Invitation record is valid; email was not delivered.',
         }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 

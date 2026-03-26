@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 import { usePropertyStore } from '@/store/propertyStore';
+import type { SubUnit } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
 import { fetchTenantById, DbTenant } from '@/lib/supabase';
 
@@ -45,6 +46,8 @@ export default function LeaseWizardIndex() {
     tenantName?: string;
     coApplicantNames?: string; // JSON stringified array of co-applicant names
     applicationId?: string; // New param for approved applications
+    leaseId?: string;
+    edit?: string; // "1" when editing/regenerating an existing lease
   }>();
   
   const { user } = useAuthStore();
@@ -59,6 +62,7 @@ export default function LeaseWizardIndex() {
     updateFormData,
     updateTenantName,
     resetWizard,
+    beginLeaseEdit,
     isLoading,
   } = useOntarioLeaseStore();
 
@@ -93,10 +97,30 @@ export default function LeaseWizardIndex() {
       }
       initializeWizard();
     }
-  }, [params.propertyId, params.unitId, params.roomId, params.tenantId, params.tenantName, params.coApplicantNames, params.applicationId]);
+  }, [params.propertyId, params.unitId, params.roomId, params.tenantId, params.tenantName, params.coApplicantNames, params.applicationId, params.leaseId, params.edit]);
 
   const initializeWizard = async () => {
     console.log('Initializing wizard with params:', params);
+
+    // Edit existing lease: hydrate wizard + reset signing/PDF state for regeneration
+    if (params.leaseId) {
+      try {
+        const ok =
+          params.edit === '1'
+            ? await beginLeaseEdit(params.leaseId)
+            : await useOntarioLeaseStore.getState().loadDraft(params.leaseId);
+
+        if (!ok) {
+          Alert.alert('Error', 'Failed to load lease for editing.');
+        }
+      } catch (e) {
+        console.error('Failed to initialize lease edit:', e);
+        Alert.alert('Error', 'Failed to load lease for editing.');
+      } finally {
+        setInitComplete(true);
+      }
+      return;
+    }
     
     // Reset wizard for fresh start if no draft
     if (!params.propertyId && !params.tenantId && !params.applicationId) {
@@ -154,16 +178,18 @@ export default function LeaseWizardIndex() {
             let unitInfo = '';
             
             // Handle different property types
-            if (property.property_type === 'multi_unit' && application.unit_id) {
+            if (property.propertyType === 'multi_unit' && application.unit_id) {
               const unit = property.units?.find(u => u.id === application.unit_id);
               if (unit && application.sub_unit_id) {
-                const subUnit = unit.sub_units?.find(s => s.id === application.sub_unit_id);
-                unitInfo = subUnit?.name || unit.unit_number || '';
+                const subUnit = unit.subUnits?.find((s: SubUnit) => s.id === application.sub_unit_id);
+                unitInfo = subUnit?.name || unit.name || '';
               } else if (unit) {
-                unitInfo = unit.unit_number || '';
+                unitInfo = unit.name || '';
               }
             } else if (application.sub_unit_id) {
-              const subUnit = property.sub_units?.find(s => s.id === application.sub_unit_id);
+              const subUnit = property.units
+                .flatMap(u => u.subUnits || [])
+                .find((s: SubUnit) => s.id === application.sub_unit_id);
               unitInfo = subUnit?.name || '';
             }
 
@@ -173,7 +199,7 @@ export default function LeaseWizardIndex() {
               streetName: property.address1?.split(' ').slice(1).join(' ') || '',
               city: property.city || '',
               province: property.state || 'ON',
-              postalCode: property.zip_code || '',
+              postalCode: property.zipCode || '',
             });
           }
         }
@@ -240,7 +266,7 @@ export default function LeaseWizardIndex() {
         if (tenant) {
           setSelectedTenant(tenant);
           // Update first tenant name
-          updateTenantName(0, tenant.name);
+          updateTenantName(0, `${tenant.first_name} ${tenant.last_name}`.trim());
         }
       } catch (error) {
         console.error('Error fetching tenant:', error);
@@ -254,7 +280,7 @@ export default function LeaseWizardIndex() {
   };
 
   const handleStepPress = (step: number) => {
-    router.push(`/lease-wizard/step${step}`);
+    router.push(`/lease-wizard/step${step}` as any);
   };
 
   const handleCancel = () => {
