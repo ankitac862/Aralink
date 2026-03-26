@@ -31,6 +31,7 @@ import {
   sendLeaseToTenant,
   supabase,
   convertApplicantToTenant,
+  leaseNeedsApplicantTenantConversion,
 } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 
@@ -163,7 +164,7 @@ export default function LeasesScreen() {
   };
 
   const handleConvertApplicantToTenant = async (lease: DbLease) => {
-    if (!lease.application_id || lease.tenant_id) return;
+    if (!leaseNeedsApplicantTenantConversion(lease)) return;
     if (!lease.property_id) {
       Alert.alert('Error', 'This lease is missing property information.');
       return;
@@ -425,9 +426,7 @@ export default function LeasesScreen() {
                   </TouchableOpacity>
                 )}
 
-                {lease.status === 'signed_pending_move_in' &&
-                  lease.application_id &&
-                  !lease.tenant_id && (
+                {leaseNeedsApplicantTenantConversion(lease) && (
                     <TouchableOpacity
                       style={[styles.actionButton, { backgroundColor: '#10b98118' }]}
                       onPress={() => handleConvertApplicantToTenant(lease)}

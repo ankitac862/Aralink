@@ -10,7 +10,13 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
-import { fetchLandlordApplications, supabase, convertApplicantToTenant } from '@/lib/supabase';
+import {
+  fetchLandlordApplications,
+  supabase,
+  convertApplicantToTenant,
+  leaseNeedsApplicantTenantConversion,
+  getApplicationLeaseCardPhase,
+} from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
 interface Application {
@@ -34,8 +40,17 @@ export default function LandlordApplicationsScreen() {
   
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  type ApplicationLeaseRow = {
+    id: string;
+    status: string;
+    tenant_id: string | null;
+    application_id: string | null;
+    version: number | null;
+    signed_pdf_url: string | null;
+  };
+
   const [applicationLeases, setApplicationLeases] = useState<
-    Record<string, { id: string; status: string; tenant_id: string | null } | null>
+    Record<string, ApplicationLeaseRow | null>
   >({});
   const [convertingApplicationId, setConvertingApplicationId] = useState<string | null>(null);
 
@@ -83,13 +98,13 @@ export default function LandlordApplicationsScreen() {
 
   const checkForLeases = async (apps: Application[]) => {
     try {
-      const leaseMap: Record<string, { id: string; status: string; tenant_id: string | null } | null> = {};
+      const leaseMap: Record<string, ApplicationLeaseRow | null> = {};
       
       for (const app of apps) {
         try {
           const { data, error } = await supabase
             .from('leases')
-            .select('id, status, tenant_id')
+            .select('id, status, tenant_id, application_id, version, signed_pdf_url')
             .eq('application_id', app.id)
             .order('updated_at', { ascending: false })
             .limit(1);
@@ -98,10 +113,14 @@ export default function LandlordApplicationsScreen() {
             console.error('Error checking lease for application:', app.id, error);
             leaseMap[app.id] = null; // Default to null on error
           } else if (data && data.length > 0) {
+            const row = data[0] as any;
             leaseMap[app.id] = {
-              id: data[0].id,
-              status: data[0].status,
-              tenant_id: data[0].tenant_id ?? null,
+              id: row.id,
+              status: row.status,
+              tenant_id: row.tenant_id ?? null,
+              application_id: row.application_id ?? app.id,
+              version: row.version ?? null,
+              signed_pdf_url: row.signed_pdf_url ?? null,
             };
           } else {
             leaseMap[app.id] = null;
@@ -124,7 +143,13 @@ export default function LandlordApplicationsScreen() {
   /** After lease is fully signed (v3), create/link tenant record when not already linked. */
   const handleDirectConvertToTenant = async (application: Application) => {
     const leaseInfo = applicationLeases[application.id];
-    if (!leaseInfo?.id || leaseInfo.status !== 'signed_pending_move_in' || leaseInfo.tenant_id) {
+    if (
+      !leaseInfo?.id ||
+      !leaseNeedsApplicantTenantConversion({
+        ...leaseInfo,
+        application_id: leaseInfo.application_id || application.id,
+      })
+    ) {
       return;
     }
     if (!application.property_id) {
@@ -210,7 +235,30 @@ export default function LandlordApplicationsScreen() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const renderApplication = ({ item }: { item: Application }) => (
+  const renderApplication = ({ item }: { item: Application }) => {
+    const al = applicationLeases[item.id];
+    const phase = al ? getApplicationLeaseCardPhase(al) : 'other';
+    const needsConvert = al
+      ? leaseNeedsApplicantTenantConversion({ ...al, application_id: al.application_id || item.id })
+      : false;
+
+    const phaseAccent =
+      phase === 'sent' || phase === 'awaiting_landlord'
+        ? { bg: '#f59e0b15', border: '#f59e0b', color: '#f59e0b', icon: 'clock-outline' as const }
+        : phase === 'fully_signed'
+          ? { bg: '#10b98115', border: '#10b981', color: '#10b981', icon: 'check-circle' as const }
+          : { bg: `${primaryColor}15`, border: primaryColor, color: primaryColor, icon: 'file-document-check' as const };
+
+    const leaseLabel =
+      phase === 'sent'
+        ? 'Awaiting Tenant Signature (Sent)'
+        : phase === 'awaiting_landlord'
+          ? 'Pending Landlord Signature'
+          : phase === 'fully_signed'
+            ? 'Fully Signed (View)'
+            : 'View Lease Details';
+
+    return (
     <TouchableOpacity
       style={[styles.applicationCard, { backgroundColor: cardBgColor, borderColor }]}
       onPress={() => router.push(`/landlord-application-review?id=${item.id}`)}>
@@ -283,22 +331,8 @@ export default function LandlordApplicationsScreen() {
                 style={[
                   styles.leaseExistsContainer,
                   {
-                    backgroundColor:
-                      applicationLeases[item.id]!.status === 'sent'
-                        ? '#f59e0b15'
-                        : applicationLeases[item.id]!.status === 'signed'
-                          ? '#f59e0b15'
-                          : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                            ? '#10b98115'
-                            : `${primaryColor}15`,
-                    borderColor:
-                      applicationLeases[item.id]!.status === 'sent'
-                        ? '#f59e0b'
-                        : applicationLeases[item.id]!.status === 'signed'
-                          ? '#f59e0b'
-                          : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                            ? '#10b981'
-                            : primaryColor,
+                    backgroundColor: phaseAccent.bg,
+                    borderColor: phaseAccent.border,
                   },
                 ]}
                 onPress={(e) => {
@@ -306,52 +340,22 @@ export default function LandlordApplicationsScreen() {
                   router.push(`/lease-detail?id=${applicationLeases[item.id]!.id}`);
                 }}>
                 <MaterialCommunityIcons
-                  name={
-                    applicationLeases[item.id]!.status === 'sent'
-                      ? 'clock-outline'
-                      : applicationLeases[item.id]!.status === 'signed'
-                        ? 'clock-outline'
-                        : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                          ? 'check-circle'
-                          : 'file-document-check'
-                  }
+                  name={phaseAccent.icon}
                   size={16}
-                  color={
-                    applicationLeases[item.id]!.status === 'sent'
-                      ? '#f59e0b'
-                      : applicationLeases[item.id]!.status === 'signed'
-                        ? '#f59e0b'
-                        : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                          ? '#10b981'
-                          : primaryColor
-                  }
+                  color={phaseAccent.color}
                 />
                 <ThemedText
                   style={[
                     styles.leaseExistsText,
                     {
-                      color:
-                        applicationLeases[item.id]!.status === 'sent'
-                          ? '#f59e0b'
-                          : applicationLeases[item.id]!.status === 'signed'
-                            ? '#f59e0b'
-                            : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                              ? '#10b981'
-                              : primaryColor,
+                      color: phaseAccent.color,
                     },
                   ]}>
-                  {applicationLeases[item.id]!.status === 'sent'
-                    ? 'Awaiting Tenant Signature (Sent)'
-                    : applicationLeases[item.id]!.status === 'signed'
-                      ? 'Pending Landlord Signature'
-                      : applicationLeases[item.id]!.status === 'signed_pending_move_in'
-                        ? 'Fully Signed (View)'
-                        : 'View Lease Details'}
+                  {leaseLabel}
                 </ThemedText>
               </TouchableOpacity>
 
-              {applicationLeases[item.id]!.status === 'signed_pending_move_in' &&
-                !applicationLeases[item.id]!.tenant_id && (
+              {needsConvert && (
                   <TouchableOpacity
                     style={[styles.convertToTenantButton, { borderColor: primaryColor }]}
                     onPress={(e) => {
@@ -370,8 +374,7 @@ export default function LandlordApplicationsScreen() {
                   </TouchableOpacity>
                 )}
 
-              {applicationLeases[item.id]!.status === 'signed_pending_move_in' &&
-                !!applicationLeases[item.id]!.tenant_id && (
+              {!!al?.tenant_id && phase === 'fully_signed' && (
                   <ThemedText style={[styles.tenantLinkedHint, { color: textSecondaryColor }]}>
                     Tenant record linked
                   </ThemedText>
@@ -381,7 +384,8 @@ export default function LandlordApplicationsScreen() {
         </View>
       )}
     </TouchableOpacity>
-  );
+    );
+  };
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>

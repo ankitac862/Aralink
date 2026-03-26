@@ -2464,6 +2464,39 @@ export interface DbLease {
   updated_at: string;
 }
 
+/** Applicant lease: landlord finalized (v3) but tenant row not linked yet — show “Convert to tenant” on landlord lists. */
+export function leaseNeedsApplicantTenantConversion(lease: {
+  status: string;
+  tenant_id?: string | null;
+  application_id?: string | null;
+  version?: number | null;
+  signed_pdf_url?: string | null;
+}): boolean {
+  if (!lease.application_id || lease.tenant_id) return false;
+  if (lease.status === 'signed_pending_move_in') return true;
+  const v = lease.version ?? 0;
+  if (lease.status === 'signed' && v >= 3 && !!lease.signed_pdf_url) return true;
+  return false;
+}
+
+/**
+ * Card styling on landlord application list: which phase the lease is in for labels/colors.
+ */
+export function getApplicationLeaseCardPhase(lease: {
+  status: string;
+  version?: number | null;
+  signed_pdf_url?: string | null;
+}): 'sent' | 'awaiting_landlord' | 'fully_signed' | 'other' {
+  if (lease.status === 'sent') return 'sent';
+  if (lease.status === 'signed_pending_move_in') return 'fully_signed';
+  if (lease.status === 'signed') {
+    const v = lease.version ?? 0;
+    if (v >= 3 && !!lease.signed_pdf_url) return 'fully_signed';
+    return 'awaiting_landlord';
+  }
+  return 'other';
+}
+
 /**
  * Resolve recipient email + auth userId for sending a lease.
  * Does NOT depend on tenant_id — applicants may have no tenant row yet.
