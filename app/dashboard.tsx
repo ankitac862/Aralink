@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -53,6 +53,7 @@ export default function DashboardScreen() {
     pending: 0,
     overdue: 0,
   });
+  const [selectedTimePeriod, setSelectedTimePeriod] = useState<'week' | 'month' | '3months'>('month');
 
   useEffect(() => {
     const loadDashboardData = async () => {
@@ -158,74 +159,177 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* Rent Collection Card */}
+        {/* Scrollable Cards Carousel - Rent Collection & Analytics */}
         {isLandlordOrManager && (
-          <View style={[styles.rentCollectionCard, { backgroundColor: cardBgColor }]}>
-            <ThemedText style={[styles.rentTitle, { color: textColor }]}>Rent Collection</ThemedText>
-            <ThemedText style={[styles.rentSubtitle, { color: secondaryTextColor }]}>
-              For {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-            </ThemedText>
+          <View style={{ marginBottom: 24 }}>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={true}
+              scrollEventThrottle={16}
+              nestedScrollEnabled={true}
+              contentContainerStyle={{ gap: 16, paddingHorizontal: 16 }}>
+              
+              {/* Rent Collection Card */}
+              <View style={[styles.carouselCard, { backgroundColor: cardBgColor }]}>
+              <ThemedText style={[styles.rentTitle, { color: textColor }]}>Rent Collection</ThemedText>
+              <ThemedText style={[styles.rentSubtitle, { color: secondaryTextColor }]}>
+                For {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </ThemedText>
 
-            {loading ? (
-              <View style={styles.chartContainer}>
-                <ActivityIndicator size="large" color={primaryColor} />
-              </View>
-            ) : rentCollection.totalExpected === 0 ? (
-              <View style={styles.chartContainer}>
-                <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
-                  No rent data for this month
-                </ThemedText>
-              </View>
-            ) : (
-              <>
-                {/* Circular Progress Chart */}
+              {loading ? (
                 <View style={styles.chartContainer}>
-                  <View style={styles.chartCircle}>
-                    <View
-                      style={[
-                        styles.progressRing,
-                        {
-                          borderTopColor: '#10b981',
-                          borderRightColor: '#fbbf24',
-                          borderBottomColor: '#60a5fa',
-                          borderLeftColor: isDark ? '#3f3f46' : '#e2e8f0',
-                        },
-                      ]}>
-                    </View>
-                    <View style={styles.chartCenter}>
-                      <ThemedText style={[styles.chartAmount, { color: textColor }]}>
-                        ${rentCollection.paid.toLocaleString()}
-                      </ThemedText>
-                      <ThemedText style={[styles.chartTotal, { color: secondaryTextColor }]}>
-                        out of ${rentCollection.totalExpected.toLocaleString()}
-                      </ThemedText>
+                  <ActivityIndicator size="large" color={primaryColor} />
+                </View>
+              ) : rentCollection.totalExpected === 0 ? (
+                <View style={styles.chartContainer}>
+                  <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                    No rent data for this month
+                  </ThemedText>
+                </View>
+              ) : (
+                <>
+                  {/* Circular Progress Chart */}
+                  <View style={styles.chartContainer}>
+                    <View style={styles.chartCircle}>
+                      <View
+                        style={[
+                          styles.progressRing,
+                          {
+                            borderTopColor: '#10b981',
+                            borderRightColor: '#fbbf24',
+                            borderBottomColor: '#60a5fa',
+                            borderLeftColor: isDark ? '#3f3f46' : '#e2e8f0',
+                          },
+                        ]}>
+                      </View>
+                      <View style={styles.chartCenter}>
+                        <ThemedText style={[styles.chartAmount, { color: textColor }]}>
+                          ${rentCollection.paid.toLocaleString()}
+                        </ThemedText>
+                        <ThemedText style={[styles.chartTotal, { color: secondaryTextColor }]}>
+                          out of ${rentCollection.totalExpected.toLocaleString()}
+                        </ThemedText>
+                      </View>
                     </View>
                   </View>
-                </View>
 
-                {/* Legend */}
-                <View style={styles.legendContainer}>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
-                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
-                      Paid (${rentCollection.paid.toLocaleString()})
+                  {/* Legend */}
+                  <View style={styles.legendContainer}>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#10b981' }]} />
+                      <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                        Paid (${rentCollection.paid.toLocaleString()})
+                      </ThemedText>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#fbbf24' }]} />
+                      <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                        Pending (${rentCollection.pending.toLocaleString()})
+                      </ThemedText>
+                    </View>
+                    <View style={styles.legendItem}>
+                      <View style={[styles.legendDot, { backgroundColor: '#60a5fa' }]} />
+                      <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
+                        Overdue (${rentCollection.overdue.toLocaleString()})
+                      </ThemedText>
+                    </View>
+                  </View>
+                </>
+              )}
+            </View>
+
+            {/* Income & Expense Card */}
+            <View style={[styles.carouselCard, { backgroundColor: cardBgColor }]}>
+              <ThemedText style={[styles.rentTitle, { color: textColor }]}>Income & Expense</ThemedText>
+              
+              {/* Time Period Selector */}
+              <View style={styles.timePeriodButtons}>
+                {['week', 'month', '3months'].map((period) => (
+                  <TouchableOpacity
+                    key={period}
+                    style={[
+                      styles.periodButton,
+                      {
+                        backgroundColor: selectedTimePeriod === period ? primaryColor : (isDark ? '#3f3f46' : '#e2e8f0'),
+                      },
+                    ]}
+                    onPress={() => setSelectedTimePeriod(period as any)}>
+                    <ThemedText style={[
+                      styles.periodButtonText,
+                      { color: selectedTimePeriod === period ? '#ffffff' : secondaryTextColor }
+                    ]}>
+                      {period === 'week' ? 'Week' : period === 'month' ? 'Month' : '3 Months'}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Chart Area */}
+              <View style={styles.chartContainer}>
+                <View style={styles.barChartContainer}>
+                  {/* Income Bar - Always 100% as reference */}
+                  <View style={styles.barDataGroup}>
+                    <View style={styles.barWrapper}>
+                      <View 
+                        style={[
+                          styles.barChart,
+                          { 
+                            height: '100%',
+                            backgroundColor: '#10b981',
+                          }
+                        ]} 
+                      />
+                    </View>
+                    <ThemedText style={[styles.barLabel, { color: secondaryTextColor }]}>
+                      Income
                     </ThemedText>
                   </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#fbbf24' }]} />
-                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
-                      Pending (${rentCollection.pending.toLocaleString()})
-                    </ThemedText>
-                  </View>
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#60a5fa' }]} />
-                    <ThemedText style={[styles.legendText, { color: secondaryTextColor }]}>
-                      Overdue (${rentCollection.overdue.toLocaleString()})
+
+                  {/* Expense Bar - Proportional to income */}
+                  <View style={styles.barDataGroup}>
+                    <View style={styles.barWrapper}>
+                      <View 
+                        style={[
+                          styles.barChart,
+                          { 
+                            height: selectedTimePeriod === 'week' ? '32%' : selectedTimePeriod === 'month' ? '38%' : '40%',
+                            backgroundColor: '#ef4444',
+                          }
+                        ]} 
+                      />
+                    </View>
+                    <ThemedText style={[styles.barLabel, { color: secondaryTextColor }]}>
+                      Expense
                     </ThemedText>
                   </View>
                 </View>
-              </>
-            )}
+              </View>
+
+              {/* Stats */}
+              <View style={styles.statsContainer}>
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Income</ThemedText>
+                  <ThemedText style={[styles.statValue, { color: '#10b981' }]}>
+                    ${selectedTimePeriod === 'week' ? '2,500' : selectedTimePeriod === 'month' ? '8,500' : '24,000'}
+                  </ThemedText>
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Expense</ThemedText>
+                  <ThemedText style={[styles.statValue, { color: '#ef4444' }]}>
+                    ${selectedTimePeriod === 'week' ? '800' : selectedTimePeriod === 'month' ? '3,200' : '9,500'}
+                  </ThemedText>
+                </View>
+                <View style={styles.divider} />
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Net</ThemedText>
+                  <ThemedText style={[styles.statValue, { color: '#10b981', fontWeight: '700' }]}>
+                    ${selectedTimePeriod === 'week' ? '1,700' : selectedTimePeriod === 'month' ? '5,300' : '14,500'}
+                  </ThemedText>
+                </View>
+              </View>
+            </View>
+          </ScrollView>
           </View>
         )}
 
@@ -386,5 +490,83 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     textAlign: 'center',
+  },
+  carouselCard: {
+    width: Dimensions.get('window').width - 32,
+    minWidth: Dimensions.get('window').width - 32,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  timePeriodButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  periodButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    flex: 1,
+    alignItems: 'center',
+  },
+  periodButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  barChartContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 20,
+    height: 150,
+  },
+  barDataGroup: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  barWrapper: {
+    height: 120,
+    width: 40,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 6,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  barChart: {
+    width: '100%',
+    borderRadius: 4,
+  },
+  barLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  divider: {
+    width: 1,
+    height: 40,
+    backgroundColor: '#e5e7eb',
   },
 });

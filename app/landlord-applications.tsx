@@ -225,7 +225,6 @@ export default function LandlordApplicationsScreen() {
                 .single();
 
               const unitLabel =
-                lease.unit_name ||
                 lease.form_data?.unitAddress?.unit ||
                 '';
 
@@ -368,50 +367,50 @@ export default function LandlordApplicationsScreen() {
           )}
           
           {/* Lease exists message */}
-          {applicationLeases[item.id] && (
+          {applicationLeases[item.id] ? (
             <TouchableOpacity 
               style={[
                 styles.leaseExistsContainer, 
                 { 
-                  backgroundColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b15' : 
-                                   applicationLeases[item.id].status === 'signed' ? '#10b98115' : 
+                  backgroundColor: applicationLeases[item.id]!.status === 'sent' ? '#f59e0b15' : 
+                                   applicationLeases[item.id]!.status === 'signed' ? '#10b98115' : 
                                    `${primaryColor}15`, 
-                  borderColor: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                               applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                  borderColor: applicationLeases[item.id]!.status === 'sent' ? '#f59e0b' : 
+                               applicationLeases[item.id]!.status === 'signed' ? '#10b981' : 
                                primaryColor, 
                   flex: 1 
                 }
               ]}
               onPress={(e) => {
                 e.stopPropagation();
-                router.push(`/lease-detail?id=${applicationLeases[item.id].id}`);
+                router.push(`/lease-detail?id=${applicationLeases[item.id]!.id}`);
               }}
             >
               <MaterialCommunityIcons 
-                name={applicationLeases[item.id].status === 'sent' ? "clock-outline" : 
-                      applicationLeases[item.id].status === 'signed' ? "check-circle" : 
+                name={applicationLeases[item.id]!.status === 'sent' ? "clock-outline" : 
+                      applicationLeases[item.id]!.status === 'signed' ? "check-circle" : 
                       "file-document-check"} 
                 size={16} 
-                color={applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                       applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                color={applicationLeases[item.id]!.status === 'sent' ? '#f59e0b' : 
+                       applicationLeases[item.id]!.status === 'signed' ? '#10b981' : 
                        primaryColor} 
               />
               <ThemedText 
                 style={[
                   styles.leaseExistsText, 
                   { 
-                    color: applicationLeases[item.id].status === 'sent' ? '#f59e0b' : 
-                           applicationLeases[item.id].status === 'signed' ? '#10b981' : 
+                    color: applicationLeases[item.id]!.status === 'sent' ? '#f59e0b' : 
+                           applicationLeases[item.id]!.status === 'signed' ? '#10b981' : 
                            primaryColor 
                   }
                 ]}
               >
-                {applicationLeases[item.id].status === 'sent' ? 'Awaiting Signature (Sent)' : 
-                 applicationLeases[item.id].status === 'signed' ? 'Lease Signed (View)' : 
+                {applicationLeases[item.id]!.status === 'sent' ? 'Awaiting Signature (Sent)' : 
+                 applicationLeases[item.id]!.status === 'signed' ? 'Lease Signed (View)' : 
                  'View Lease Details'}
               </ThemedText>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
       )}
     </TouchableOpacity>
@@ -456,7 +455,7 @@ export default function LandlordApplicationsScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor, bottom: insets.bottom + 16 }]}
         onPress={() => router.push('/add-applicant')}>
-        <MaterialCommunityIcons name="email-plus" size={24} color="#fff" />
+        <MaterialCommunityIcons name="plus" size={28} color="white" />
       </TouchableOpacity>
     </ThemedView>
   );

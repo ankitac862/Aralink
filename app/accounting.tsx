@@ -256,12 +256,7 @@ export default function AccountingScreen() {
             <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
           </TouchableOpacity>
           <ThemedText style={[styles.headerTitle, { color: textColor }]}>Accounts</ThemedText>
-          <TouchableOpacity
-            style={[styles.addButton, { backgroundColor: `${primaryColor}15` }]}
-            onPress={() => router.push('/add-transaction')}
-          >
-            <MaterialCommunityIcons name="plus" size={24} color={primaryColor} />
-          </TouchableOpacity>
+          <View style={styles.addButton} />
         </View>
       </View>
 
@@ -468,6 +463,13 @@ export default function AccountingScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={[styles.fab, { backgroundColor: primaryColor }]}
+        onPress={() => router.push('/add-transaction')}>
+        <MaterialCommunityIcons name="plus" size={28} color="white" />
+      </TouchableOpacity>
     </ThemedView>
   );
 }
@@ -809,4 +811,20 @@ const styles = StyleSheet.create({
   chartEmptyText: {
     fontSize: 14,
   },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#137fec',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
 });
+

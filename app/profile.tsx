@@ -22,8 +22,10 @@ export default function ProfileScreen() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   
+  // Edit mode state
+  const [isEditMode, setIsEditMode] = useState(false);
+  
   // Section open/close state
-  const [personalOpen, setPersonalOpen] = useState(true);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
   
@@ -72,6 +74,7 @@ export default function ProfileScreen() {
 
       if (result) {
         Alert.alert('Success', 'Profile updated successfully');
+        setIsEditMode(false);
       } else {
         Alert.alert('Error', 'Failed to update profile');
       }
@@ -81,6 +84,16 @@ export default function ProfileScreen() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleCancelEdit = () => {
+    // Reload user data to discard changes
+    if (user) {
+      setFullName(user.name || '');
+      setEmail(user.email || '');
+      setPhone(user.phone || '');
+    }
+    setIsEditMode(false);
   };
 
   const handleLogout = async () => {
@@ -252,7 +265,15 @@ export default function ProfileScreen() {
         <ThemedText type="subtitle" style={[styles.headerTitle, { color: textColor }]}>
           Profile
         </ThemedText>
-        <View style={{ width: 40 }} />
+        {isEditMode ? (
+          <TouchableOpacity onPress={handleCancelEdit} style={{ width: 40, alignItems: 'center' }}>
+            <MaterialCommunityIcons name="close" size={24} color={textColor} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={() => setIsEditMode(true)} style={{ width: 40, alignItems: 'center' }}>
+            <MaterialCommunityIcons name="pencil" size={24} color={primaryColor} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
@@ -295,29 +316,49 @@ export default function ProfileScreen() {
 
         {/* Settings Sections */}
         <View style={styles.sectionsContainer}>
-          <SettingSection 
-            title="Personal Details" 
-            isOpen={personalOpen} 
-            onToggle={() => setPersonalOpen(!personalOpen)}
-          >
-            <SettingInput 
-              label="Full Name" 
-              value={fullName} 
-              onChangeText={setFullName} 
-            />
-            <SettingInput 
-              label="Email Address" 
-              value={email} 
-              type="email" 
-              onChangeText={setEmail} 
-            />
-            <SettingInput 
-              label="Phone Number" 
-              value={phone} 
-              type="tel" 
-              onChangeText={setPhone} 
-            />
-          </SettingSection>
+          {/* Personal Details - View or Edit Mode */}
+          {!isEditMode ? (
+            // View Mode
+            <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={[styles.sectionTitle, { color: textColor, marginBottom: 16 }]}>Personal Details</ThemedText>
+              <View style={styles.infoItem}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Full Name</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>{fullName || 'Not set'}</ThemedText>
+              </View>
+              <View style={styles.infoDivider} />
+              <View style={styles.infoItem}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Email Address</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>{email || 'Not set'}</ThemedText>
+              </View>
+              <View style={styles.infoDivider} />
+              <View style={styles.infoItem}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Phone Number</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>{phone || 'Not set'}</ThemedText>
+              </View>
+            </View>
+          ) : (
+            // Edit Mode
+            <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={[styles.sectionTitle, { color: textColor, marginBottom: 16 }]}>Edit Personal Details</ThemedText>
+              <SettingInput 
+                label="Full Name" 
+                value={fullName} 
+                onChangeText={setFullName} 
+              />
+              <SettingInput 
+                label="Email Address" 
+                value={email} 
+                type="email" 
+                onChangeText={setEmail} 
+              />
+              <SettingInput 
+                label="Phone Number" 
+                value={phone} 
+                type="tel" 
+                onChangeText={setPhone} 
+              />
+            </View>
+          )}
 
           <SettingSection 
             title="Notification Preferences" 
@@ -372,17 +413,27 @@ export default function ProfileScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Bottom Save Button */}
-      <View style={[styles.bottomBar, { borderTopColor: borderColor }]}>
-        <TouchableOpacity
-          style={[styles.saveButton, { backgroundColor: primaryColor, opacity: isSaving ? 0.6 : 1 }]}
-          disabled={isSaving}
-          onPress={handleSaveChanges}>
-          <ThemedText style={styles.saveButtonText}>
-            {isSaving ? 'Saving...' : 'Save Changes'}
-          </ThemedText>
-        </TouchableOpacity>
-      </View>
+      {/* Bottom Save/Cancel Buttons - Only in Edit Mode */}
+      {isEditMode && (
+        <View style={[styles.bottomBar, { borderTopColor: borderColor }]}>
+          <TouchableOpacity
+            style={[styles.cancelButton, { backgroundColor: isDark ? '#404450' : '#e5e7eb' }]}
+            disabled={isSaving}
+            onPress={handleCancelEdit}>
+            <ThemedText style={[styles.cancelButtonText, { color: isDark ? '#f3f4f6' : '#1f2937' }]}>
+              Cancel
+            </ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.saveButton, { backgroundColor: primaryColor, opacity: isSaving ? 0.6 : 1 }]}
+            disabled={isSaving}
+            onPress={handleSaveChanges}>
+            <ThemedText style={styles.saveButtonText}>
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
     </ThemedView>
   );
 }
@@ -527,12 +578,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+  infoItem: {
+    marginBottom: 12,
+  },
+  infoDivider: {
+    height: 1,
+    backgroundColor: 'rgba(127, 127, 127, 0.2)',
+    marginVertical: 12,
+  },
+  infoLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  infoValue: {
+    fontSize: 14,
+    fontWeight: '400',
+  },
   bottomBar: {
     borderTopWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 16,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(127, 127, 127, 0.2)',
+  },
+  cancelButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
   saveButton: {
+    flex: 1,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',

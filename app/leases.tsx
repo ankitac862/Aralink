@@ -156,14 +156,7 @@ export default function LeasesScreen() {
         <ThemedText style={[styles.headerTitle, { color: textColor }]}>
           {property ? `Leases - ${property.address1}` : 'All Leases'}
         </ThemedText>
-        <TouchableOpacity 
-          onPress={() => router.push(params.propertyId 
-            ? `/lease-wizard?propertyId=${params.propertyId}` 
-            : '/lease-wizard'
-          )}
-        >
-          <MaterialCommunityIcons name="plus" size={24} color={primaryColor} />
-        </TouchableOpacity>
+        <View style={{ width: 24 }} />
       </View>
 
       {isLoading ? (
@@ -299,6 +292,16 @@ export default function LeasesScreen() {
         ))}
       </ScrollView>
       )}
+
+      {/* Floating Action Button */}
+      <TouchableOpacity
+        style={[styles.fab, { backgroundColor: primaryColor }]}
+        onPress={() => router.push(params.propertyId 
+          ? `/lease-wizard?propertyId=${params.propertyId}` 
+          : '/lease-wizard'
+        )}>
+        <MaterialCommunityIcons name="plus" size={28} color="white" />
+      </TouchableOpacity>
     </ThemedView>
   );
 }
@@ -441,4 +444,20 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#137fec',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
 });
+

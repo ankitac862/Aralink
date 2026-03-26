@@ -68,7 +68,7 @@ export default function PropertiesScreen() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter((p) =>
-        (p.address1 || p.streetAddress || '').toLowerCase().includes(query) ||
+        (p.address1 || '').toLowerCase().includes(query) ||
         (p.name || '').toLowerCase().includes(query) ||
         p.city.toLowerCase().includes(query) ||
         p.state.toLowerCase().includes(query)
@@ -83,9 +83,9 @@ export default function PropertiesScreen() {
     return result;
   }, [properties, searchQuery, selectedPropertyIds]);
 
-  // Get full address for display (use address1, fallback to streetAddress for legacy data)
+  // Get full address for display
   const getFullAddress = (property: Property) => {
-    const address = property.address1 || property.streetAddress || 'Unknown Address';
+    const address = property.address1 || 'Unknown Address';
     return `${address}, ${property.city}`;
   };
 
@@ -104,9 +104,9 @@ export default function PropertiesScreen() {
       <TouchableOpacity
         onPress={() => router.push(`/property-detail?id=${property.id}`)}
         style={[styles.propertyCard, { backgroundColor: cardBgColor, borderColor }]}>
-        {(property.photos && property.photos.length > 0) || property.photo ? (
+        {property.photos && property.photos.length > 0 ? (
           <Image 
-            source={{ uri: property.photos?.[0] || property.photo }} 
+            source={{ uri: property.photos[0] }} 
             style={styles.propertyImage} 
           />
         ) : (
@@ -117,7 +117,7 @@ export default function PropertiesScreen() {
         <View style={styles.propertyContent}>
           <View style={styles.propertyHeader}>
             <ThemedText type="subtitle" style={[styles.propertyTitle, { color: textColor }]}>
-              {property.address1 || property.streetAddress || 'Unknown Address'}
+              {property.address1 || 'Unknown Address'}
             </ThemedText>
             <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -260,12 +260,7 @@ export default function PropertiesScreen() {
         <ThemedText type="subtitle" style={[styles.headerTitle, { color: textColor }]}>
           My Properties
         </ThemedText>
-        <TouchableOpacity 
-          style={styles.iconButton} 
-          onPress={() => router.push('/add-property')}
-        >
-          <MaterialCommunityIcons name="plus-circle-outline" size={24} color={primaryColor} />
-        </TouchableOpacity>
+        <View style={styles.iconButton} />
       </View>
 
       {/* Search Bar with Filter */}
@@ -547,7 +542,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#135bec',
+    shadowColor: '#137fec',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,

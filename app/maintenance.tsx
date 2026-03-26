@@ -83,7 +83,7 @@ export default function MaintenanceScreen() {
   const borderColor = isDark ? '#334155' : '#e2e8f0';
   const textColor = isDark ? '#f1f5f9' : '#0f172a';
   const secondaryTextColor = isDark ? '#94a3b8' : '#475569';
-  const primaryColor = '#135bec';
+  const primaryColor = '#137fec';
 
   const filteredRequests = MOCK_REQUESTS.filter((r) => {
     const matchSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -205,7 +205,7 @@ export default function MaintenanceScreen() {
                 <View
                   style={[
                     styles.chipBadge,
-                    { backgroundColor: filter === status ? 'rgba(255,255,255,0.3)' : 'rgba(107,114,128,0.2)' },
+                    { backgroundColor: filter === status ? 'rgba(255,255,255,0.3)' : (isDark ? 'rgba(148,163,184,0.2)' : 'rgba(107,114,128,0.2)') },
                   ]}>
                   <ThemedText
                     style={{
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: '#137fec',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
