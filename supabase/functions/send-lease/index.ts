@@ -14,12 +14,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 interface SendLeaseRequest {
   leaseId: string;
   tenantEmail?: string; // Override email if different from tenant profile
+  /** Supabase auth user id — primary recipient for in-app notification (applicants may have no tenant row) */
+  recipientUserId?: string;
   propertyId?: string;
   applicationId?: string;
   tenantId?: string;
   sendEmail?: boolean; // Default true
   sendNotification?: boolean; // Default true
   message?: string; // Optional custom message
+  /** True when landlord edited the lease and tenant must sign again (distinct notification copy). */
+  leaseUpdatedResign?: boolean;
 }
 
 interface SendLeaseResponse {
@@ -49,7 +53,8 @@ async function sendEmailNotification(
   landlordName: string,
   propertyAddress: string,
   documentUrl: string,
-  customMessage?: string
+  customMessage?: string,
+  opts?: { isUpdatedLeaseResign?: boolean }
 ): Promise<boolean> {
   if (!emailServiceUrl || !emailApiKey) {
     console.log('Email service not configured');
@@ -63,7 +68,7 @@ async function sendEmailNotification(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your Lease Agreement is Ready</title>
+  <title>${opts?.isUpdatedLeaseResign ? 'Updated lease — please review and sign' : 'Your Lease Agreement is Ready'}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -128,13 +133,15 @@ async function sendEmailNotification(
 </head>
 <body>
   <div class="header">
-    <h1>📄 Your Lease Agreement is Ready</h1>
+    <h1>📄 ${opts?.isUpdatedLeaseResign ? 'Updated Lease — Please Review & Sign' : 'Your Lease Agreement is Ready'}</h1>
   </div>
   
   <div class="content">
     <p>Dear ${tenantName || 'Tenant'},</p>
     
-    <p>${landlordName} has sent you a lease agreement for review.</p>
+    <p>${opts?.isUpdatedLeaseResign
+      ? `${landlordName} has updated your lease agreement. Please review the new version and sign when you are ready.`
+      : `${landlordName} has sent you a lease agreement for review.`}</p>
     
     <div class="property-card">
       <strong>Property:</strong><br>
@@ -181,7 +188,9 @@ async function sendEmailNotification(
       body: JSON.stringify({
         from: fromEmail,
         to: tenantEmail,
-        subject: `Lease Agreement Ready for Review - ${propertyAddress}`,
+        subject: opts?.isUpdatedLeaseResign
+          ? `Updated lease — please review and sign - ${propertyAddress}`
+          : `Lease Agreement Ready for Review - ${propertyAddress}`,
         html: emailHtml,
       }),
     });
@@ -206,19 +215,27 @@ async function createInAppNotification(
   tenantId: string,
   leaseId: string,
   landlordName: string,
-  propertyAddress: string
+  propertyAddress: string,
+  opts?: { isUpdatedLeaseResign?: boolean }
 ): Promise<boolean> {
   try {
+    const title = opts?.isUpdatedLeaseResign
+      ? 'Lease updated — please sign'
+      : 'New Lease Agreement';
+    const message = opts?.isUpdatedLeaseResign
+      ? `${landlordName} updated the lease for ${propertyAddress}. Please review and sign the new version.`
+      : `${landlordName} has sent you a lease agreement for ${propertyAddress}`;
     const { error } = await supabase
       .from('notifications')
       .insert({
         user_id: tenantId,
         type: 'lease_received',
-        title: 'New Lease Agreement',
-        message: `${landlordName} has sent you a lease agreement for ${propertyAddress}`,
+        title,
+        message,
         data: {
           lease_id: leaseId,
           action: 'view_lease',
+          lease_updated_resign: opts?.isUpdatedLeaseResign === true,
         },
         is_read: false,
         created_at: new Date().toISOString(),
@@ -279,12 +296,14 @@ serve(async (req) => {
     const {
       leaseId,
       tenantEmail: overrideEmail,
+      recipientUserId: overrideRecipientUserId,
       propertyId,
       applicationId,
       tenantId,
       sendEmail = true,
       sendNotification = true,
       message,
+      leaseUpdatedResign: leaseUpdatedResignBody,
     } = body;
     
     if (!leaseId) {
@@ -352,19 +371,36 @@ serve(async (req) => {
     // Fetch tenant or applicant info separately
     let recipientEmail = overrideEmail;
     let recipientName = 'Tenant';
-    let recipientId: string | null = null;
-    
-    // START: CRITICAL REQUIREMENT 1 - USER TYPE HANDLING
-    // Extract target email from explicit override, or fallback to lease form data, or existing bindings
-    let finalTargetEmail = overrideEmail || (lease.form_data && lease.form_data.tenantEmails && lease.form_data.tenantEmails.length > 0 ? lease.form_data.tenantEmails[0] : null);
-    
-    if (!finalTargetEmail && lease.tenant_id) {
-      const { data: t } = await supabase.from('tenants').select('email').eq('id', lease.tenant_id).single();
-      if (t) finalTargetEmail = t.email;
-    }
+    let recipientId: string | null = overrideRecipientUserId || null;
+
+    // Resolve email: override → form → linked application (applicant) → tenant row — NOT tenantId-first
+    let finalTargetEmail =
+      overrideEmail ||
+      (lease.form_data?.tenantEmails?.length
+        ? lease.form_data.tenantEmails.find((e: string) => e?.trim())
+        : null) ||
+      null;
+
     if (!finalTargetEmail && lease.application_id) {
-      const { data: a } = await supabase.from('applications').select('applicant_email').eq('id', lease.application_id).single();
-      if (a) finalTargetEmail = a.applicant_email;
+      const { data: a } = await supabase
+        .from('applications')
+        .select('applicant_email, applicant_name, user_id')
+        .eq('id', lease.application_id)
+        .maybeSingle();
+      if (a?.applicant_email) {
+        finalTargetEmail = a.applicant_email;
+        if (!recipientId && a.user_id) recipientId = a.user_id;
+        if (a.applicant_name) recipientName = a.applicant_name;
+      }
+    }
+
+    if (!finalTargetEmail && lease.tenant_id) {
+      const { data: t } = await supabase.from('tenants').select('email, user_id, first_name, last_name').eq('id', lease.tenant_id).maybeSingle();
+      if (t?.email) {
+        finalTargetEmail = t.email;
+        if (!recipientId && t.user_id) recipientId = t.user_id;
+        recipientName = `${t.first_name || ''} ${t.last_name || ''}`.trim() || 'Tenant';
+      }
     }
 
     if (!finalTargetEmail) {
@@ -377,7 +413,7 @@ serve(async (req) => {
     recipientEmail = finalTargetEmail;
     let updatesToLease: any = {};
 
-    // Fetch both records if they exist to link them accurately
+    // Link tenant/application rows by email — prefer lease.application_id when set (do not swap to wrong application)
     const { data: tenantFound } = await supabase
       .from('tenants')
       .select('id, first_name, last_name, user_id')
@@ -394,23 +430,34 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (applicantFound) {
-      // Bind application side
+    if (lease.application_id) {
+      const { data: leaseApp } = await supabase
+        .from('applications')
+        .select('id, applicant_name, user_id')
+        .eq('id', lease.application_id)
+        .maybeSingle();
+      if (leaseApp) {
+        updatesToLease.application_id = leaseApp.id;
+        lease.application_id = leaseApp.id;
+        recipientId = leaseApp.user_id ?? recipientId;
+        recipientName = leaseApp.applicant_name || recipientName;
+      }
+    } else if (applicantFound) {
       updatesToLease.application_id = applicantFound.id;
       lease.application_id = applicantFound.id;
-      recipientId = applicantFound.user_id;
-      recipientName = applicantFound.applicant_name;
+      recipientId = applicantFound.user_id ?? recipientId;
+      recipientName = applicantFound.applicant_name || recipientName;
     }
 
     if (tenantFound) {
-      // Override recipientId via tenant, bind tenant_id
       updatesToLease.tenant_id = tenantFound.id;
       lease.tenant_id = tenantFound.id;
-      recipientId = tenantFound.user_id; 
-      recipientName = `${tenantFound.first_name || ''} ${tenantFound.last_name || ''}`.trim() || 'Tenant';
+      recipientId = tenantFound.user_id ?? recipientId;
+      recipientName = `${tenantFound.first_name || ''} ${tenantFound.last_name || ''}`.trim() || recipientName;
     }
 
-    if (!tenantFound && !applicantFound) {
+    // Only create cold-invite row when no tenant/application row matched this email AND lease is not already tied to an application
+    if (!tenantFound && !applicantFound && !lease.application_id) {
         // 3. User does not exist at all -> Create Applicant Invite record.
         const inviteToken = crypto.randomUUID();
         console.log('⚠️ Recipient not found in tenants or applications. Creating Applicant invitation record.');
@@ -423,6 +470,16 @@ serve(async (req) => {
           token: inviteToken
         });
         recipientName = lease.form_data?.tenantNames?.[0] || 'Applicant';
+
+        // Try to resolve userId from profiles table by email for in-app notification
+        const { data: profileByEmail } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', finalTargetEmail)
+          .maybeSingle();
+        if (profileByEmail?.id) {
+          recipientId = profileByEmail.id;
+        }
     }
 
     // Apply mappings to DB immediately so the system knows what this lease belongs to
@@ -461,6 +518,12 @@ serve(async (req) => {
       .single();
     
     const landlordName = landlordProfile?.full_name || 'Your Landlord';
+
+    const formData = (lease.form_data && typeof lease.form_data === 'object'
+      ? lease.form_data
+      : {}) as Record<string, unknown>;
+    const isUpdatedLeaseResign =
+      leaseUpdatedResignBody === true || formData._resignAfterEdit === true;
     
     let emailSent = false;
     let notificationSent = false;
@@ -473,7 +536,8 @@ serve(async (req) => {
         landlordName,
         propertyAddress,
         lease.document_url,
-        message
+        message,
+        { isUpdatedLeaseResign }
       );
     }
     
@@ -483,16 +547,23 @@ serve(async (req) => {
         recipientId,
         lease.id,
         landlordName,
-        propertyAddress
+        propertyAddress,
+        { isUpdatedLeaseResign }
       );
     }
     
-    // Update lease status to 'sent'
+    const clearedForm = { ...formData };
+    if ('_resignAfterEdit' in clearedForm) {
+      delete clearedForm._resignAfterEdit;
+    }
+
+    // Update lease status to 'sent' and clear one-shot resign flag from wizard/edit flow
     const { error: updateError } = await supabase
       .from('leases')
       .update({
         status: 'sent',
         updated_at: new Date().toISOString(),
+        ...('_resignAfterEdit' in formData ? { form_data: clearedForm } : {}),
       })
       .eq('id', lease.id);
     

@@ -27,7 +27,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, DbLease, updateLeaseInDb, uploadLeaseDocument, addTenantToProperty, supabase } from '@/lib/supabase';
+import {
+  fetchLeaseById,
+  DbLease,
+  updateLeaseInDb,
+  uploadLeaseDocument,
+  addTenantToProperty,
+  supabase,
+  resolveLeaseRecipientEmail,
+  convertApplicantToTenant,
+} from '@/lib/supabase';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   sendLeaseToTenant,
@@ -52,6 +61,11 @@ export default function LeaseDetailScreen() {
 
   const handleUploadFinalSignature = async () => {
     try {
+      if (user?.role !== 'landlord') {
+        Alert.alert('Not allowed', 'Only the landlord can countersign and finalize the lease.');
+        return;
+      }
+
       const result = await DocumentPicker.getDocumentAsync({
         type: 'application/pdf',
         copyToCacheDirectory: true,
@@ -72,8 +86,69 @@ export default function LeaseDetailScreen() {
           signed_pdf_url: uploadResult.url, // Store the final signed URL
           version: 3, // Increment version to v3 (landlord signed)
         });
-        Alert.alert('Success', 'Final signed lease (v3) uploaded successfully.');
-        loadLease();
+
+        const runApplicantTenantLink = async () => {
+          if (!lease?.application_id) return;
+          setIsProcessing(true);
+          try {
+            const conv = await convertApplicantToTenant({
+              applicationId: lease.application_id,
+              propertyId: lease.property_id,
+              unitId: lease.unit_id,
+              subUnitId: undefined,
+              leaseId: lease.id,
+              startDate: lease.effective_date,
+              landlordFinalize: true,
+            });
+            if (conv?.tenant) {
+              Alert.alert('Success', 'Applicant linked as a tenant on this lease.');
+            } else {
+              Alert.alert(
+                'Notice',
+                'Final PDF saved, but tenant linking did not complete. Use Convert to tenant from this screen, Applications, or All Leases.',
+              );
+            }
+          } catch (convErr) {
+            console.error('convertApplicantToTenant after v3:', convErr);
+            Alert.alert(
+              'Lease saved',
+              'Final PDF uploaded, but linking failed. You can tap Convert to tenant when ready.',
+            );
+          } finally {
+            setIsProcessing(false);
+            loadLease();
+          }
+        };
+
+        // Applicant leases: landlord chooses to link tenant_id now or later (not automatic).
+        if (lease.application_id) {
+          Alert.alert(
+            'Lease finalized',
+            'Link the applicant as a tenant on this lease now? This sets tenant_id so they appear in your tenant list. You can do it later from this screen, Applications, or All Leases.',
+            [
+              {
+                text: 'Later',
+                style: 'cancel',
+                onPress: () => {
+                  Alert.alert(
+                    'Saved',
+                    'Final signed lease (v3) uploaded. Link the tenant whenever you are ready.',
+                  );
+                  loadLease();
+                },
+              },
+              {
+                text: 'Convert now',
+                onPress: () => {
+                  void runApplicantTenantLink();
+                },
+              },
+            ],
+          );
+        } else {
+          Alert.alert('Success', 'Final signed lease (v3) uploaded successfully.');
+          loadLease();
+        }
       } else {
         throw new Error(uploadResult.error || 'Failed to upload lease');
       }
@@ -89,65 +164,120 @@ export default function LeaseDetailScreen() {
     if (!lease) return;
     setIsProcessing(true);
     try {
+      // Resolve target email: prefer form_data, fallback to application
       let targetTenantEmail = lease.form_data?.tenantEmails?.[0];
-      let existingTenantId = lease.tenant_id;
+      let applicantUserId: string | null = null;
 
       if (!targetTenantEmail && lease.application_id) {
-         const { data: a } = await supabase.from('applications').select('applicant_email').eq('id', lease.application_id).single();
-         if (a) targetTenantEmail = a.applicant_email;
-      }
-      
-      // We must get the tenant from the mapping or lookup
-      if (!targetTenantEmail && !existingTenantId) {
-         throw new Error("Missing email to map tenant.");
-      }
-      
-      // Find exact tenant ID if we don't have it
-      if (!existingTenantId && targetTenantEmail) {
-         const { data: tnt } = await supabase.from('tenants').select('id').eq('email', targetTenantEmail).single();
-         if (tnt) existingTenantId = tnt.id;
-      }
-      
-      // If still NO tenant record, create one! This converts Applicant -> Tenant physically.
-      if (!existingTenantId && targetTenantEmail) {
-         const tenantNameParts = (lease.form_data?.tenantNames?.[0] || 'New Tenant').split(' ');
-         const first = tenantNameParts[0];
-         const last = tenantNameParts.slice(1).join(' ');
-         
-         const { data: newTnt, error: createTntErr } = await supabase.from('tenants').insert({
-             first_name: first,
-             last_name: last,
-             email: targetTenantEmail,
-             user_id: lease.application_id ? (await supabase.from('applications').select('user_id').eq('id', lease.application_id).single()).data?.user_id : null,
-             phone: '',
-         }).select('id').single();
-         
-         if (createTntErr) throw createTntErr;
-         existingTenantId = newTnt.id;
+        const { data: a } = await supabase
+          .from('applications')
+          .select('applicant_email, user_id')
+          .eq('id', lease.application_id)
+          .single();
+        if (a) {
+          targetTenantEmail = a.applicant_email;
+          applicantUserId = a.user_id;
+        }
       }
 
-      // CRITICAL LOGIC: Remove access from old property for this tenant
-      if (existingTenantId) {
-         await supabase.from('tenant_property_links')
-           .update({ status: 'past', link_end_date: new Date().toISOString() })
-           .eq('tenant_id', existingTenantId)
-           .eq('status', 'active');
+      if (!targetTenantEmail) {
+        throw new Error('Cannot convert: no tenant email found on lease.');
       }
 
-      // Now add them tightly to THIS new property
+      // Resolve user_id from email if not already known
+      if (!applicantUserId) {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', targetTenantEmail)
+          .maybeSingle();
+        applicantUserId = prof?.id ?? null;
+      }
+
+      // Find existing tenant record by email OR by user_id
+      let existingTenantId: string | null = lease.tenant_id ?? null;
+      if (!existingTenantId) {
+        const { data: tnt } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('email', targetTenantEmail)
+          .maybeSingle();
+        existingTenantId = tnt?.id ?? null;
+      }
+
+      // If still no tenant record, create one (Applicant → Tenant conversion)
+      if (!existingTenantId) {
+        const tenantNameParts = (lease.form_data?.tenantNames?.[0] || 'New Tenant').split(' ');
+        const first = tenantNameParts[0];
+        const last = tenantNameParts.slice(1).join(' ');
+
+        const { data: newTnt, error: createTntErr } = await supabase
+          .from('tenants')
+          .insert({
+            first_name: first,
+            last_name: last,
+            email: targetTenantEmail,
+            user_id: applicantUserId,
+            phone: '',
+          })
+          .select('id')
+          .single();
+
+        if (createTntErr) throw createTntErr;
+        existingTenantId = newTnt.id;
+      }
+
+      // ACCESS CONTROL (FIX 8):
+      // Remove active links for ALL tenant records belonging to this user
+      // so they cannot access the old property's data via RLS.
+      // Records are NOT deleted — old landlord still retains their data.
+      if (applicantUserId) {
+        const { data: allUserTenants } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('user_id', applicantUserId);
+
+        const allTenantIds = (allUserTenants || []).map((t: any) => t.id);
+        const oldTenantIds = allTenantIds.filter((id: string) => id !== existingTenantId);
+
+        if (oldTenantIds.length > 0) {
+          // Revoke active property links (access control — no data deleted)
+          await supabase
+            .from('tenant_property_links')
+            .update({ status: 'past', link_end_date: new Date().toISOString(), updated_at: new Date().toISOString() })
+            .in('tenant_id', oldTenantIds)
+            .eq('status', 'active');
+
+          // Mark old tenant records as inactive
+          await supabase
+            .from('tenants')
+            .update({ status: 'inactive', updated_at: new Date().toISOString() })
+            .in('id', oldTenantIds)
+            .eq('status', 'active');
+        }
+      } else if (existingTenantId) {
+        // Fallback: deactivate only the known tenant record's old links
+        await supabase
+          .from('tenant_property_links')
+          .update({ status: 'past', link_end_date: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('tenant_id', existingTenantId)
+          .eq('status', 'active');
+      }
+
+      // Assign tenant to new property
       await addTenantToProperty({
         landlordUserId: user!.id,
         propertyId: lease.property_id,
-        tenantEmail: targetTenantEmail as string,
+        tenantEmail: targetTenantEmail,
         tenantName: lease.form_data?.tenantNames?.[0] || 'Tenant',
         unitId: lease.unit_id || undefined,
-        linkStartDate: lease.effective_date || new Date().toISOString()
+        linkStartDate: lease.effective_date || new Date().toISOString(),
       });
 
-      // Update lease status to active
+      // Mark lease as active
       await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId });
 
-      Alert.alert('Success', 'Applicant successfully converted to Active Tenant for this property!');
+      Alert.alert('Success', 'Tenant activated successfully for this property!');
       loadLease();
     } catch (error: any) {
       console.error('Error converting to tenant:', error);
@@ -235,11 +365,28 @@ export default function LeaseDetailScreen() {
       return;
     }
 
+    setIsSending(true);
+    const resolved = await resolveLeaseRecipientEmail(lease);
+    setIsSending(false);
+
+    if (!resolved.email) {
+      Alert.alert(
+        'Missing Email',
+        'Could not find a recipient email. Link this lease to an application, add a tenant email in the lease form, or ensure the tenant record has an email.'
+      );
+      return;
+    }
+
+    const tenantEmail = resolved.email;
+    const recipientUserId = resolved.userId || undefined;
+
     const isResend = lease?.status === 'sent';
 
     Alert.alert(
       isResend ? 'Send Reminder' : 'Send Lease',
-      isResend ? 'Are you sure you want to send a reminder to the tenant to sign the lease?' : 'Are you sure you want to send this lease to the tenant?',
+      isResend
+        ? `Send a reminder to ${tenantEmail}?`
+        : `Send this lease to ${tenantEmail}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -247,11 +394,17 @@ export default function LeaseDetailScreen() {
           onPress: async () => {
             setIsSending(true);
             try {
-              const result = await sendLeaseToTenant(leaseId!);
-              
+              const result = await sendLeaseToTenant(leaseId!, {
+                tenantEmail,
+                recipientUserId,
+                propertyId: lease.property_id,
+                applicationId: lease.application_id,
+                tenantId: lease.tenant_id,
+              });
+
               if (result.success) {
-                Alert.alert('Success', 'Lease has been sent to the tenant.');
-                loadLease(); // Refresh to update status
+                Alert.alert('Success', `Lease has been sent to ${tenantEmail}.`);
+                loadLease();
               } else {
                 Alert.alert('Error', result.error || 'Failed to send lease');
               }
@@ -280,10 +433,13 @@ export default function LeaseDetailScreen() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'draft': return 'Draft';
-      case 'generated': return 'Generated';
-      case 'uploaded': return 'Uploaded';
+      case 'generated': return 'Generated (v1)';
+      case 'uploaded': return 'Uploaded (v1)';
       case 'sent': return 'Sent to Tenant';
-      case 'signed': return 'Signed';
+      case 'signed': return 'Tenant Signed (v2) — Awaiting Your Countersign';
+      case 'signed_pending_move_in': return 'Fully Signed (v3) — Ready to Activate';
+      case 'active': return 'Active Tenancy';
+      case 'terminated': return 'Terminated';
       default: return status;
     }
   };
@@ -520,7 +676,8 @@ export default function LeaseDetailScreen() {
             </TouchableOpacity>
           )}
           
-          {lease.status === 'signed' && (
+          {/* Landlord countersign: shows after tenant uploads signed copy (v2) */}
+          {lease.status === 'signed' && user?.role === 'landlord' && (
             <TouchableOpacity
               style={[styles.sendButton, { backgroundColor: '#f59e0b', marginBottom: 12 }]}
               onPress={handleUploadFinalSignature}
@@ -531,13 +688,14 @@ export default function LeaseDetailScreen() {
               ) : (
                 <>
                   <MaterialCommunityIcons name="file-sign" size={20} color="#fff" />
-                  <ThemedText style={styles.sendButtonText}>Upload Final Contract (v3)</ThemedText>
+                  <ThemedText style={styles.sendButtonText}>Countersign & Upload (v3)</ThemedText>
                 </>
               )}
             </TouchableOpacity>
           )}
 
-          {lease.status === 'signed_pending_move_in' && (
+          {/* Convert to Tenant: only show when lease_v2 (tenant signed) AND lease_v3 (landlord countersigned) both exist */}
+          {lease.status === 'signed_pending_move_in' && (lease.version ?? 0) >= 3 && (
             <TouchableOpacity
               style={[styles.sendButton, { backgroundColor: '#10b981', marginBottom: 12 }]}
               onPress={handleConvertToTenant}

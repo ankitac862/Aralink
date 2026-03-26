@@ -100,6 +100,10 @@ export default function TenantLeasesScreen() {
       case 'sent':
         return warningColor;
       case 'signed':
+        return warningColor;
+      case 'signed_pending_move_in':
+        return successColor;
+      case 'active':
         return successColor;
       default:
         return secondaryTextColor;
@@ -114,9 +118,13 @@ export default function TenantLeasesScreen() {
       case 'uploaded':
         return 'file-document';
       case 'sent':
-        return 'email-send';
+        return 'email-outline';
       case 'signed':
+        return 'clock-outline';
+      case 'signed_pending_move_in':
         return 'file-document-check';
+      case 'active':
+        return 'home-variant';
       default:
         return 'file-document-outline';
     }
@@ -127,13 +135,17 @@ export default function TenantLeasesScreen() {
       case 'draft':
         return 'Draft';
       case 'generated':
-        return 'Generated';
+        return 'Created';
       case 'uploaded':
         return 'Uploaded';
       case 'sent':
-        return 'Awaiting Signature';
+        return 'Waiting for your signature';
       case 'signed':
-        return 'Signed';
+        return 'Waiting for landlord approval';
+      case 'signed_pending_move_in':
+        return 'Lease fully signed';
+      case 'active':
+        return 'Active';
       default:
         return status;
     }
@@ -159,7 +171,7 @@ export default function TenantLeasesScreen() {
 
   const renderLeaseCard = (lease: DbLease) => {
     const needsSignature = lease.status === 'sent';
-    const isSigned = lease.status === 'signed';
+    const awaitingLandlord = lease.status === 'signed';
 
     return (
       <TouchableOpacity
@@ -167,7 +179,7 @@ export default function TenantLeasesScreen() {
         style={[
           styles.leaseCard,
           { backgroundColor: cardBgColor, borderColor },
-          needsSignature && { borderColor: warningColor, borderWidth: 2 },
+          (needsSignature || awaitingLandlord) && { borderColor: warningColor, borderWidth: 2 },
         ]}
         onPress={() => router.push(`/tenant-lease-detail?id=${lease.id}`)}
       >
@@ -189,6 +201,14 @@ export default function TenantLeasesScreen() {
               <MaterialCommunityIcons name="alert-circle" size={14} color={warningColor} />
               <ThemedText style={[styles.actionText, { color: warningColor }]}>
                 Action Required
+              </ThemedText>
+            </View>
+          )}
+          {!needsSignature && awaitingLandlord && (
+            <View style={[styles.actionBadge, { backgroundColor: `${warningColor}20` }]}>
+              <MaterialCommunityIcons name="clock-outline" size={14} color={warningColor} />
+              <ThemedText style={[styles.actionText, { color: warningColor }]}>
+                Waiting on landlord
               </ThemedText>
             </View>
           )}
@@ -281,23 +301,45 @@ export default function TenantLeasesScreen() {
             </View>
           )}
 
-          {/* Signed Leases Section */}
+          {/* Waiting on landlord */}
           {leases.some(l => l.status === 'signed') && (
             <View style={styles.section}>
-              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
-                Signed Leases
+              <ThemedText style={[styles.sectionTitle, { color: warningColor }]}>
+                <MaterialCommunityIcons name="clock-outline" size={18} color={warningColor} />
+                {' '}Waiting for Landlord Approval
               </ThemedText>
               {leases.filter(l => l.status === 'signed').map(renderLeaseCard)}
             </View>
           )}
 
+          {/* Fully signed */}
+          {leases.some(l => l.status === 'signed_pending_move_in' || l.status === 'active') && (
+            <View style={styles.section}>
+              <ThemedText style={[styles.sectionTitle, { color: successColor }]}>
+                <MaterialCommunityIcons name="check-circle" size={18} color={successColor} />
+                {' '}Fully Signed / Active
+              </ThemedText>
+              {leases
+                .filter(l => l.status === 'signed_pending_move_in' || l.status === 'active')
+                .map(renderLeaseCard)}
+            </View>
+          )}
+
           {/* Other Leases Section */}
-          {leases.some(l => !['sent', 'signed'].includes(l.status)) && (
+          {leases.some(
+            l =>
+              !['sent', 'signed', 'signed_pending_move_in', 'active'].includes(l.status)
+          ) && (
             <View style={styles.section}>
               <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
                 Other Leases
               </ThemedText>
-              {leases.filter(l => !['sent', 'signed'].includes(l.status)).map(renderLeaseCard)}
+              {leases
+                .filter(
+                  l =>
+                    !['sent', 'signed', 'signed_pending_move_in', 'active'].includes(l.status)
+                )
+                .map(renderLeaseCard)}
             </View>
           )}
         </ScrollView>

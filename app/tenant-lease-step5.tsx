@@ -197,9 +197,27 @@ export default function TenantLeaseStep5Screen() {
           const documentRef = `${uploadedBucket}/${uploadedPath}`;
           console.log('Document uploaded successfully:', documentRef);
 
-          // Update state and store with bucket/path reference
-          setDocuments({ ...documents, [docType]: true });
-          updateDraft('documents', { [docType]: documentRef });
+          // Generate a long-lived signed URL so landlord review can open files
+          // even when storage RLS blocks cross-user object access.
+          let storedDocumentValue = documentRef;
+          try {
+            const { data: signedData, error: signedError } = await supabase.storage
+              .from(uploadedBucket)
+              .createSignedUrl(uploadedPath, 60 * 60 * 24 * 365 * 2); // 2 years
+
+            if (!signedError && signedData?.signedUrl) {
+              storedDocumentValue = signedData.signedUrl;
+              console.log('Generated signed URL for document');
+            } else {
+              console.warn('Could not create signed URL, storing storage ref instead:', signedError);
+            }
+          } catch (signedErr) {
+            console.warn('Signed URL generation failed, storing storage ref instead:', signedErr);
+          }
+
+          // Update state and store
+          setDocuments((prev) => ({ ...prev, [docType]: true }));
+          updateDraft('documents', { [docType]: storedDocumentValue });
           
           Alert.alert('Success', 'Document uploaded successfully');
         } catch (uploadError) {
