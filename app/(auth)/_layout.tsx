@@ -9,6 +9,7 @@ export default function AuthLayout() {
       <Stack.Screen name="otp" />
       <Stack.Screen name="verify-email" />
       <Stack.Screen name="forgot-password" />
+      <Stack.Screen name="activate-tenant" />
     </Stack>
   );
 }
