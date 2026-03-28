@@ -624,8 +624,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
+      const redirectTo =
+        Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
+          ? `${window.location.origin.replace(/\/+$/, '')}/invite-auth`
+          : 'com.aralink.app://invite-auth';
+
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: 'com.aralink.app://reset-password',
+        redirectTo,
       });
 
       if (error) {

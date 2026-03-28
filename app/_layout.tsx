@@ -24,6 +24,39 @@ export default function RootLayout() {
     setIsMounted(true);
   }, []);
 
+  /**
+   * Supabase emails may land on Site URL (origin only). Tokens in hash/query must reach
+   * the set-password screen before the auth guard sends users to login.
+   */
+  useEffect(() => {
+    if (!isMounted) return;
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const path = window.location.pathname.replace(/\/$/, '') || '/';
+    if (path.endsWith('/invite-auth')) return;
+    if (path.endsWith('/activate-tenant')) return;
+
+    const hashRaw = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hashRaw);
+    const queryParams = new URLSearchParams(window.location.search);
+
+    const isSupabaseAuthCallback =
+      hashParams.has('access_token') ||
+      hashParams.has('refresh_token') ||
+      hashParams.has('error_code') ||
+      hashParams.get('type') === 'recovery' ||
+      hashParams.get('type') === 'invite' ||
+      queryParams.has('code');
+
+    if (!isSupabaseAuthCallback) return;
+
+    const targetRoute = `/invite-auth${window.location.search}${window.location.hash}`;
+    // Route immediately so auth guard cannot send users to dashboards first.
+    router.replace(targetRoute as any);
+  }, [isMounted, router]);
+
   // Initialize auth on app start
   useEffect(() => {
     if (!isInitialized) {
@@ -35,12 +68,36 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isMounted || !isInitialized || isLoading) return;
 
+    const hasPendingSupabaseAuthCallback =
+      Platform.OS === 'web' &&
+      typeof window !== 'undefined' &&
+      (() => {
+        const hashRaw = window.location.hash.startsWith('#')
+          ? window.location.hash.slice(1)
+          : window.location.hash;
+        const hashParams = new URLSearchParams(hashRaw);
+        const queryParams = new URLSearchParams(window.location.search);
+        return (
+          hashParams.has('access_token') ||
+          hashParams.has('refresh_token') ||
+          hashParams.has('error_code') ||
+          hashParams.get('type') === 'recovery' ||
+          hashParams.get('type') === 'invite' ||
+          queryParams.has('code')
+        );
+      })();
+
+    if (hasPendingSupabaseAuthCallback) {
+      // Let invite-auth bootstrap and finish password flow before any auth guard redirect.
+      return;
+    }
+
     const inAuthGroup = segments[0] === '(auth)';
 
     const isInviteRoute =
       segments[0] === 'invite' ||
       segments[0] === 'invite-auth' ||
-      segments[0] === 'activate-tenant'; // public deep-link route for new tenant onboarding
+      (segments[0] === '(auth)' && segments[1] === 'activate-tenant');
 
     if (!user && !inAuthGroup && !isInviteRoute) {
       // User is not authenticated and not in auth group, redirect to auth
@@ -87,6 +144,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="invite" />
         <Stack.Screen name="invite-auth" />
+        <Stack.Screen name="set-password" />
         <Stack.Screen name="properties" />
         <Stack.Screen name="tenants" />
         <Stack.Screen name="leases" />

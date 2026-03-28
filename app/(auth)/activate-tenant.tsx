@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { supabase } from '@/lib/supabase';
+import { fetchPendingTenantInvitationForSignup, supabase } from '@/lib/supabase';
 
 export default function ActivateTenantScreen() {
   const colorScheme = useColorScheme();
@@ -56,26 +56,14 @@ export default function ActivateTenantScreen() {
     }
 
     try {
-      // Check if invite exists and is not expired
-      const { data, error: fetchError } = await supabase
-        .from('tenant_invitations')
-        .select('*')
-        .eq('token', inviteToken)
-        .eq('email', inviteEmail)
-        .eq('status', 'pending')
-        .single();
+      // Pending invites stay valid until signup completes (not consumed on link open).
+      const data = await fetchPendingTenantInvitationForSignup(
+        String(inviteToken),
+        String(inviteEmail)
+      );
 
-      if (fetchError || !data) {
-        setError('This invitation link is invalid or has already been used.');
-        setIsValidating(false);
-        return;
-      }
-
-      // Check if expired (created more than 30 days ago)
-      const createdDate = new Date(data.created_at);
-      const daysSinceCreation = (Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceCreation > 30) {
-        setError('This invitation link has expired. Please contact your landlord for a new one.');
+      if (!data) {
+        setError('This invitation link is invalid, already used, or expired. Ask your landlord for a new invite if needed.');
         setIsValidating(false);
         return;
       }

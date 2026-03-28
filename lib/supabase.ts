@@ -1,6 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
+import { getActivationLinkBaseUrl } from './activationLinkBaseUrl';
+import { buildWebInviteAuthUrl } from './setPasswordRoute';
+
 // Supabase configuration
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -84,8 +87,9 @@ try {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: Platform.OS === 'web',
-      // Add error handling for session issues
-      flowType: 'pkce',
+      // Invite / recovery / magic-link emails redirect with implicit hash fragments, not PKCE ?code=.
+      // PKCE on web breaks session extraction from the URL after clicking the email link.
+      flowType: Platform.OS === 'web' ? 'implicit' : 'pkce',
     },
   });
   
@@ -103,7 +107,7 @@ try {
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: false,
-      flowType: 'pkce',
+      flowType: Platform.OS === 'web' ? 'implicit' : 'pkce',
     },
   });
 }
@@ -117,6 +121,8 @@ export interface UserProfile {
   full_name: string;
   user_type: 'landlord' | 'tenant' | 'manager';
   account_status?: 'active' | 'pending' | 'invited' | 'suspended';
+  /** Set after first password is chosen (invite activation). */
+  has_set_password?: boolean;
   phone?: string;
   avatar_url?: string;
   is_social_login: boolean;
@@ -1159,6 +1165,7 @@ export interface DbInvite {
 export interface InviteDetails {
   inviteStatus: string;
   expiresAt?: string;
+  hasSetPassword?: boolean;
   property?: {
     id: string;
     address1: string;
@@ -1180,8 +1187,13 @@ export async function resolveTenantByEmail(
   fullName?: string
 ): Promise<TenantResolutionResult | null> {
   try {
+    const redirectBaseUrl = getActivationLinkBaseUrl();
     const { data, error } = await supabase.functions.invoke('resolve-tenant', {
-      body: { email, fullName },
+      body: {
+        email,
+        fullName,
+        ...(redirectBaseUrl ? { redirectBaseUrl } : {}),
+      },
     });
 
     if (error) {
@@ -1536,6 +1548,7 @@ export async function inviteTenantToProperty(params: {
       return { error: 'No auth session found. Please sign in again.' };
     }
 
+    const redirectBaseUrl = getActivationLinkBaseUrl();
     const response = await fetch(`${supabaseUrl}/functions/v1/invite-tenant`, {
       method: 'POST',
       headers: {
@@ -1543,7 +1556,10 @@ export async function inviteTenantToProperty(params: {
         apikey: supabaseAnonKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        ...(redirectBaseUrl ? { redirectBaseUrl } : {}),
+      }),
     });
 
     const rawText = await response.text();
@@ -1582,7 +1598,15 @@ export async function inviteApplicantToProperty(params: {
   phone?: string;
   unitId?: string;
   subUnitId?: string;
-}): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
+}): Promise<{
+  inviteId?: string;
+  token?: string;
+  notificationQueued?: boolean;
+  emailQueued?: boolean;
+  authEmailKind?: 'invite' | 'recovery';
+  redirectToUsed?: string;
+  error?: string;
+} | null> {
   try {
     console.log('🚀 inviteApplicantToProperty called with params:', JSON.stringify(params, null, 2));
     
@@ -1597,6 +1621,9 @@ export async function inviteApplicantToProperty(params: {
       return { error: 'No auth session found. Please sign in again.' };
     }
 
+    const originBase = getActivationLinkBaseUrl();
+    const redirectBaseUrl =
+      originBase != null && originBase !== '' ? buildWebInviteAuthUrl(originBase) : null;
     const response = await fetch(`${supabaseUrl}/functions/v1/invite-applicant`, {
       method: 'POST',
       headers: {
@@ -1604,7 +1631,10 @@ export async function inviteApplicantToProperty(params: {
         apikey: supabaseAnonKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        ...(redirectBaseUrl ? { redirectBaseUrl } : {}),
+      }),
     });
 
     const rawText = await response.text();
@@ -1625,11 +1655,13 @@ export async function inviteApplicantToProperty(params: {
     const data = rawText ? JSON.parse(rawText) : {};
     console.log('✅ Parsed applicant invite response:', JSON.stringify(data, null, 2));
     
-    return { 
-      inviteId: data?.inviteId, 
+    return {
+      inviteId: data?.inviteId,
       token: data?.token,
       notificationQueued: data?.notificationQueued,
       emailQueued: data?.emailQueued,
+      authEmailKind: data?.authEmailKind,
+      redirectToUsed: data?.redirectToUsed,
     };
   } catch (error) {
     console.error('❌ Unexpected error inviting applicant:', error);
@@ -1660,6 +1692,62 @@ export async function getInviteDetails(params: {
   } catch (error) {
     console.error('Error fetching invite details:', error);
     return null;
+  }
+}
+
+/** Set password for applicant invite (works after Supabase one-time link is consumed). */
+export async function completeApplicantInvitePassword(params: {
+  token: string;
+  email: string;
+  password: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('complete-applicant-invite-password', {
+      body: {
+        token: params.token,
+        email: params.email,
+        password: params.password,
+      },
+    });
+    const payload = data as { error?: string; ok?: boolean } | null;
+    if (payload?.error) {
+      return { error: payload.error };
+    }
+    if (error) {
+      return { error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Request failed' };
+  }
+}
+
+/** Same as completeApplicantInvitePassword but uses current session (magic link from email). */
+export async function completeApplicantInvitePasswordWithSession(params: {
+  password: string;
+}): Promise<{ ok?: boolean; error?: string }> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      return { error: 'No session' };
+    }
+    const { data, error } = await supabase.functions.invoke('complete-applicant-invite-password', {
+      body: { password: params.password },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    const payload = data as { error?: string; ok?: boolean } | null;
+    if (payload?.error) {
+      return { error: payload.error };
+    }
+    if (error) {
+      return { error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Request failed' };
   }
 }
 
@@ -4829,6 +4917,44 @@ export async function getApplicationById(applicationId: string) {
 // ============ TENANT INVITATION FLOW ============
 
 /**
+ * Valid pending invitation for signup — not consumed until account is created.
+ * Use for routing (set-password → activate-tenant) and validation.
+ */
+export async function fetchPendingTenantInvitationForSignup(
+  token: string,
+  email: string
+): Promise<{
+  id: string;
+  token: string;
+  email: string;
+  tenant_name: string | null;
+  application_id: string | null;
+  lease_id: string | null;
+  created_at: string;
+} | null> {
+  try {
+    const normalized = email.trim().toLowerCase();
+    const { data, error } = await supabase
+      .from('tenant_invitations')
+      .select('id, token, email, tenant_name, application_id, lease_id, status, created_at')
+      .eq('token', token)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (error || !data) return null;
+    if ((data.email || '').trim().toLowerCase() !== normalized) return null;
+
+    const daysSince =
+      (Date.now() - new Date(data.created_at).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSince > 30) return null;
+
+    return data as any;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create a tenant invitation
  * This sends an invitation link to the applicant so they can activate their account
  */
@@ -4865,12 +4991,17 @@ export async function createTenantInvitation(params: {
 
     if (error) throw error;
 
+    const q = `token=${encodeURIComponent(token)}&email=${encodeURIComponent(params.email)}`;
+    const webBase = getActivationLinkBaseUrl();
+    // Web: link stays valid until signup — uses DB token, not Supabase one-time magic links.
+    const activationLink = webBase
+      ? `${webBase}/activate-tenant?${q}`
+      : `aralink://activate-tenant?${q}`;
+
     return {
       success: true,
       invitation: data,
-      // Use the custom URL scheme so the link opens the app instead of a browser.
-      // The (auth)/activate-tenant screen handles the token + email params.
-      activationLink: `aralink://activate-tenant?token=${token}&email=${encodeURIComponent(params.email)}`,
+      activationLink,
     };
   } catch (error) {
     console.error('Error creating tenant invitation:', error);

@@ -13,16 +13,13 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { supabase } from '@/lib/supabase';
-
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
-  return await Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
-    ),
-  ]);
-};
+import {
+  completeApplicantInvitePassword,
+  completeApplicantInvitePasswordWithSession,
+  fetchPendingTenantInvitationForSignup,
+  getInviteDetails,
+  supabase,
+} from '@/lib/supabase';
 
 const readHashParams = () => {
   if (Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -46,27 +43,6 @@ const readQueryParams = () => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const getInviteAuthRedirectUrl = (): string => {
-  const configuredBase = process.env.EXPO_PUBLIC_APP_URL?.trim();
-
-  // Support both localhost (for local web dev) and real domains.
-  // When running on web, prefer the current browser origin so local and hosted
-  // environments both work naturally.
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const origin = window.location.origin;
-    return `${origin.replace(/\/+$/, '')}/invite-auth`;
-  }
-
-  if (configuredBase) {
-    return configuredBase.endsWith('/invite-auth')
-      ? configuredBase
-      : `${configuredBase.replace(/\/+$/, '')}/invite-auth`;
-  }
-
-  // Safe fallback for mobile deep-link handling.
-  return 'aralink://invite-auth';
-};
-
 export default function InviteAuthScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
@@ -77,14 +53,11 @@ export default function InviteAuthScreen() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionReady, setSessionReady] = useState(false);
-  const [canResendLink, setCanResendLink] = useState(false);
-  const [isResending, setIsResending] = useState(false);
-  const [resendEmailInput, setResendEmailInput] = useState('');
   const [tokenAndEmail, setTokenAndEmail] = useState<{ token?: string; email?: string }>({
     token: routerToken,
     email: routerEmail,
   });
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0f172a' : '#f8fafc';
@@ -102,22 +75,45 @@ export default function InviteAuthScreen() {
     Alert.alert(title, message);
   };
 
-  const waitForSession = async (maxAttempts = 15, delayMs = 1000) => {
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const { data } = await supabase.auth.getSession();
-      if (data?.session) {
-        return data.session;
-      }
-      await sleep(delayMs);
-    }
-    return null;
-  };
-
   useEffect(() => {
     let isMounted = true;
     const bootstrapInviteSession = async () => {
       try {
         setError(null);
+
+        const queryEarly = readQueryParams();
+        const paramToken =
+          (Array.isArray(routerToken) ? routerToken[0] : routerToken) ||
+          queryEarly.get('token') ||
+          undefined;
+        const paramEmail =
+          (Array.isArray(routerEmail) ? routerEmail[0] : routerEmail) ||
+          queryEarly.get('email') ||
+          undefined;
+
+        // Tenant activation (tenant_invitations) — separate from property applicant invites.
+        if (paramToken && paramEmail) {
+          setIsRedirecting(true);
+          const pending = await fetchPendingTenantInvitationForSignup(paramToken, paramEmail);
+          if (pending && isMounted) {
+            router.replace({
+              pathname: '/activate-tenant',
+              params: { token: paramToken, email: paramEmail },
+            });
+            return;
+          }
+          if (isMounted) setIsRedirecting(false);
+
+          const propertyInvite = await getInviteDetails({
+            token: paramToken,
+            tenantEmail: paramEmail,
+          });
+          if (propertyInvite?.hasSetPassword && isMounted) {
+            setError('This link is expired or already used');
+            setIsBootstrapping(false);
+            return;
+          }
+        }
 
         const hashParams = readHashParams();
         const queryParams = readQueryParams();
@@ -128,24 +124,56 @@ export default function InviteAuthScreen() {
           hashParams.get('error_description') || queryParams.get('error_description');
 
         if (errorCode === 'otp_expired' || errorCode === 'access_denied') {
-          setError('This invite link is already used or expired. Please request a fresh link.');
-          setCanResendLink(true);
-          setIsBootstrapping(false);
+          if (paramToken && paramEmail) {
+            const pending = await fetchPendingTenantInvitationForSignup(paramToken, paramEmail);
+            if (pending && isMounted) {
+              router.replace({
+                pathname: '/activate-tenant',
+                params: { token: paramToken, email: paramEmail },
+              });
+              return;
+            }
+            const inviteDetails = await getInviteDetails({
+              token: paramToken,
+              tenantEmail: paramEmail,
+            });
+            if (inviteDetails?.hasSetPassword && isMounted) {
+              setError('This link is expired or already used');
+              setIsBootstrapping(false);
+              return;
+            }
+            if (inviteDetails?.inviteStatus === 'pending' && isMounted) {
+              setError(null);
+              setTokenAndEmail({ token: paramToken, email: paramEmail });
+              setIsBootstrapping(false);
+              return;
+            }
+          }
+          if (isMounted) {
+            setError('This link is expired or already used');
+            setIsBootstrapping(false);
+          }
           return;
         }
 
         if (errorCode || errorDescription) {
-          setError(errorDescription || `Auth error: ${errorCode}. Please request a fresh link.`);
-          setCanResendLink(true);
+          setError(
+            errorDescription ||
+              `Something went wrong with this link (${errorCode}). Ask your landlord to send a new invitation if you need access.`
+          );
           setIsBootstrapping(false);
           return;
         }
 
-        // Extract email from URL
         const hashEmail = hashParams.get('email') || queryParams.get('email');
+        const routerEmailSingle = Array.isArray(routerEmail) ? routerEmail[0] : routerEmail;
+        const mergedToken =
+          paramToken || queryParams.get('token') || undefined;
+        const mergedEmail =
+          paramEmail || queryParams.get('email') || hashEmail || routerEmailSingle || undefined;
         setTokenAndEmail({
-          token: undefined,
-          email: hashEmail || routerEmail,
+          token: mergedToken,
+          email: mergedEmail,
         });
 
         // Extract tokens but DO NOT WAIT for session setup
@@ -155,44 +183,54 @@ export default function InviteAuthScreen() {
 
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           try {
-            const cleaned = `${window.location.origin}${window.location.pathname}`;
+            // Keep ?token=&email= so repeat visits / resend still know the property invite context
+            const cleaned = `${window.location.origin}${window.location.pathname}${window.location.search}`;
             window.history.replaceState({}, document.title, cleaned);
           } catch {
             // no-op
           }
         }
 
-        // Fire session setup in background (don't await it)
+        // Establish session so we have user email for password completion (redirect_to has no ?token= now).
         if (accessToken && refreshToken) {
-          supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          }).then(() => {
-            if (isMounted) {
-              setSessionReady(true);
+          try {
+            await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            const { data: userData } = await supabase.auth.getUser();
+            const sessionEmail = userData?.user?.email;
+            if (sessionEmail && isMounted) {
+              setTokenAndEmail((prev) => ({
+                token: prev.token ?? mergedToken,
+                email: prev.email ?? mergedEmail ?? sessionEmail,
+              }));
             }
-          }).catch((err) => {
-            console.warn('setSession failed in background:', err);
-            // Don't set error here - user can still try to set password
-          });
+          } catch (err) {
+            console.warn('setSession failed:', err);
+          }
         } else if (authCode) {
-          supabase.auth.exchangeCodeForSession(authCode).then(() => {
-            if (isMounted) {
-              setSessionReady(true);
+          try {
+            await supabase.auth.exchangeCodeForSession(authCode);
+            const { data: userData } = await supabase.auth.getUser();
+            const sessionEmail = userData?.user?.email;
+            if (sessionEmail && isMounted) {
+              setTokenAndEmail((prev) => ({
+                token: prev.token ?? mergedToken,
+                email: prev.email ?? mergedEmail ?? sessionEmail,
+              }));
             }
-          }).catch((err) => {
-            console.warn('Code exchange failed in background:', err);
-          });
+          } catch (err) {
+            console.warn('Code exchange failed:', err);
+          }
         }
 
-        // Show password form immediately without waiting
         if (isMounted) {
           setIsBootstrapping(false);
         }
       } catch (err: any) {
         if (isMounted) {
           setError(`Failed to parse invite: ${err?.message || 'Unknown error'}`);
-          setCanResendLink(true);
           setIsBootstrapping(false);
         }
       }
@@ -203,7 +241,7 @@ export default function InviteAuthScreen() {
     return () => {
       isMounted = false;
     };
-  }, [routerToken, routerEmail]);
+  }, [router, routerToken, routerEmail]);
 
   const handleSetPassword = async () => {
     if (!password || password.length < 6) {
@@ -216,15 +254,45 @@ export default function InviteAuthScreen() {
       return;
     }
 
+    const rawToken = Array.isArray(tokenAndEmail.token)
+      ? tokenAndEmail.token[0]
+      : tokenAndEmail.token;
+    const rawEmail = Array.isArray(tokenAndEmail.email)
+      ? tokenAndEmail.email[0]
+      : tokenAndEmail.email;
+
     try {
       setIsSubmitting(true);
       setError(null);
 
-      // Poll for session to be ready (give it 5 seconds max)
+      if (rawToken && rawEmail) {
+        const { error: edgeError } = await completeApplicantInvitePassword({
+          token: rawToken,
+          email: rawEmail,
+          password,
+        });
+        if (edgeError) {
+          setError(edgeError);
+          return;
+        }
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: rawEmail,
+          password,
+        });
+        if (signInError) {
+          setError(signInError.message || 'Could not sign in after setting password.');
+          return;
+        }
+        setPassword('');
+        setConfirmPassword('');
+        showMessage('✓ Password Set', 'Your account is ready.');
+        router.replace('/');
+        return;
+      }
+
       const maxWaitMs = 5000;
       const startTime = Date.now();
       let userAuthed = false;
-
       while (Date.now() - startTime < maxWaitMs) {
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session) {
@@ -235,98 +303,33 @@ export default function InviteAuthScreen() {
       }
 
       if (!userAuthed) {
-        // Even without session, try to get the current user
         const { data: userData, error: userError } = await supabase.auth.getUser();
         if (userError || !userData?.user) {
           setError(
-            'Your session is not ready. Please request a fresh link using the button below.'
+            'Your session is not ready. Open the link from your invitation email again, or use the link that includes your email in the address bar.'
           );
-          setCanResendLink(true);
           return;
         }
       }
 
-      // Try to update password WITH A TIMEOUT
-      const updatePromise = supabase.auth.updateUser({ password });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Password update timed out after 8 seconds')), 8000)
-      );
-
-      const { error: updateError } = await Promise.race([updatePromise, timeoutPromise]) as any;
-
-      if (updateError) {
-        throw updateError;
+      const { error: edgeSessionError } = await completeApplicantInvitePasswordWithSession({ password });
+      if (edgeSessionError) {
+        setError(edgeSessionError);
+        return;
       }
 
-      // Success!
-      setSessionReady(true);
-      showMessage('✓ Password Set', 'Your account is ready! Redirecting to login...');
-
-      // Clear form and sign out immediately
       setPassword('');
       setConfirmPassword('');
-      
-      try {
-        await withTimeout(supabase.auth.signOut(), 3000, 'Sign out timed out');
-      } catch (signOutError) {
-        console.warn('Sign out error (non-blocking):', signOutError);
-      }
-
+      showMessage('✓ Password Set', 'Your account is ready.');
       router.replace('/');
-    } catch (updateError: any) {
-      const errorMsg = updateError?.message || 'Failed to set password. Please try again or request a fresh link.';
+    } catch (updateError: unknown) {
+      const errorMsg =
+        updateError instanceof Error
+          ? updateError.message
+          : 'Failed to set password. Try again or ask your landlord to send a new invitation.';
       setError(errorMsg);
-      setCanResendLink(true);
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleResendLink = async () => {
-    // Get email from multiple possible sources
-    let emailToUse = tokenAndEmail.email || routerEmail || resendEmailInput.trim();
-
-    if (!emailToUse) {
-      showMessage(
-        'Missing Email',
-        'Email address not found in invite. Enter the invited email to receive a fresh password link.'
-      );
-      return;
-    }
-
-    emailToUse = emailToUse.toLowerCase();
-
-    try {
-      setIsResending(true);
-
-      // Build invite-auth redirect URL.
-      const redirectTo = getInviteAuthRedirectUrl();
-
-      // Send password reset email to the user
-      // This will include a fresh magic link with access_token & refresh_token
-      const { error: resetError } = await supabase.auth.resetPasswordForEmail(emailToUse, {
-        redirectTo,
-      });
-
-      if (resetError) {
-        throw resetError;
-      }
-
-      showMessage(
-        'Link Sent ✓',
-        `A fresh password setup link has been sent to ${emailToUse}. Check your email (including spam folder) and click the newest link.`
-      );
-
-      // Clear errors and reset UI to allow re-bootstrapping
-      setError(null);
-      setCanResendLink(false);
-      setIsBootstrapping(true);
-      setSessionReady(false);
-    } catch (resendError: any) {
-      const errorMsg = resendError?.message || 'Could not send a fresh link. Please try again in a moment.';
-      showMessage('Resend Failed', errorMsg);
-    } finally {
-      setIsResending(false);
     }
   };
 
@@ -338,10 +341,12 @@ export default function InviteAuthScreen() {
           {tokenAndEmail.email ? `Finish creating your account for ${tokenAndEmail.email}.` : 'Finish creating your invited account.'}
         </ThemedText>
 
-        {isBootstrapping ? (
+        {(isBootstrapping || isRedirecting) ? (
           <View style={styles.loaderBlock}>
             <ActivityIndicator size="small" color={primaryColor} />
-            <ThemedText style={[styles.helperText, { color: secondaryText }]}>Preparing your invite...</ThemedText>
+            <ThemedText style={[styles.helperText, { color: secondaryText }]}>
+              {isRedirecting ? 'Opening activation…' : 'Preparing your invite...'}
+            </ThemedText>
           </View>
         ) : (
           <>
@@ -392,43 +397,10 @@ export default function InviteAuthScreen() {
 
             {error && <ThemedText style={[styles.errorText, { color: '#dc2626' }]}>{error}</ThemedText>}
 
-            {error && canResendLink && !tokenAndEmail.email && (
-              <View style={styles.fieldGroup}>
-                <ThemedText style={[styles.label, { color: textColor }]}>Invited Email</ThemedText>
-                <TextInput
-                  style={[
-                    styles.input,
-                    { backgroundColor: isDark ? '#0b1220' : '#f8fafc', borderColor, color: textColor },
-                  ]}
-                  value={resendEmailInput}
-                  onChangeText={setResendEmailInput}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  placeholder="Enter invited email"
-                  placeholderTextColor={secondaryText}
-                />
-              </View>
-            )}
-
-            {error && canResendLink && (
-              <TouchableOpacity
-                style={[styles.secondaryActionButton, { borderColor }]}
-                onPress={handleResendLink}
-                disabled={isResending}
-              >
-                {isResending ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <ThemedText style={[styles.secondaryActionButtonText, { color: primaryColor }]}>Resend Password Link</ThemedText>
-                )}
-              </TouchableOpacity>
-            )}
-
             {error && (
               <TouchableOpacity
                 style={[styles.secondaryActionButton, { borderColor }]}
-                onPress={() => router.replace('/')}
-                disabled={isResending}
+                onPress={() => router.replace('/(auth)/login')}
               >
                 <ThemedText style={[styles.secondaryActionButtonText, { color: textColor }]}>Back to Login</ThemedText>
               </TouchableOpacity>
