@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
+import { triggerPushNotification } from '@/lib/sendPushNotification';
 
 // Supabase configuration
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
@@ -3381,6 +3382,18 @@ export async function requestArrivalDateChange(params: {
       created_at: new Date().toISOString(),
     });
 
+    // Push notification to landlord
+    await triggerPushNotification({
+      userId: lease.user_id,
+      title: 'Move-in Date Change Requested',
+      body: `Tenant requested to change move-in date to ${params.requestedDate}.`,
+      data: {
+        type: 'arrival_date_change_request',
+        leaseId: lease.id,
+        propertyId: lease.property_id,
+      },
+    });
+
     return { success: true };
   } catch (error) {
     console.error('Error requesting arrival date change:', error);
@@ -4463,7 +4476,7 @@ export async function submitApplication(params: {
         .eq('email', params.applicantEmail);
     }
 
-    // Send notification to landlord
+    // Send in-app + push notification to landlord
     try {
       await supabase
         .from('notifications')
@@ -4481,6 +4494,18 @@ export async function submitApplication(params: {
           },
           created_at: new Date().toISOString(),
         });
+
+      // Push notification to landlord
+      await triggerPushNotification({
+        userId: landlordId,
+        title: 'New Application Received',
+        body: `${params.applicantName} applied for ${propertyAddress}`,
+        data: {
+          type: 'application',
+          applicationId: data.id,
+          propertyId: params.propertyId,
+        },
+      });
 
       console.log('✅ Notification sent to landlord:', landlordId);
     } catch (notifError) {

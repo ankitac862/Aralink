@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 
 export const unstable_settings = {
   anchor: 'splash', // Start with splash while auth initializes
@@ -19,6 +20,9 @@ export default function RootLayout() {
   const segments = useSegments();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
+
+  // Register device for push notifications and handle notification taps
+  usePushNotifications();
 
   useEffect(() => {
     setIsMounted(true);

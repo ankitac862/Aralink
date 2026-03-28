@@ -1,10 +1,13 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Href, useRouter } from 'expo-router';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
+  Dimensions,
   FlatList,
   ListRenderItem,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -95,6 +98,14 @@ export default function LandlordDashboardScreen() {
   const cacheRef = React.useRef<{ timestamp: number; data: any }>({ timestamp: 0, data: null });
   const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+  // Chart carousel
+  const chartScrollRef = useRef<ScrollView>(null);
+  const [chartPage, setChartPage] = useState(0);
+  const SCREEN_WIDTH = Dimensions.get('window').width - 32; // card width = screen - horizontal padding
+
+  // Income vs Expense data (last 6 months)
+  const [incomeExpenseData, setIncomeExpenseData] = useState<{ month: string; income: number; expense: number }[]>([]);
+
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
   const bgColor = isDark ? '#101c22' : '#F2F2F7';
@@ -116,6 +127,7 @@ export default function LandlordDashboardScreen() {
           setRentCollection(cacheRef.current.data.rentCollection);
           setUserName(cacheRef.current.data.userName);
           setNotifications(cacheRef.current.data.notifications);
+          setIncomeExpenseData(cacheRef.current.data.incomeExpenseData || []);
           setIsLoading(false);
           return;
         }
@@ -145,56 +157,39 @@ export default function LandlordDashboardScreen() {
       // Load properties asynchronously
       loadFromSupabase(user.id).catch(err => console.error('Properties load error:', err));
 
-      // OPTIMIZATION 2: Use Supabase count() to get exact counts without loading data
-      // Run all queries in parallel
+      // Build last-6-months labels
+      const months: { label: string; start: string; end: string }[] = [];
+      const dMonth = new Date();
+      dMonth.setMonth(dMonth.getMonth() - 5);
+      
+      for (let i = 0; i < 6; i++) {
+        const start = new Date(dMonth.getFullYear(), dMonth.getMonth(), 1).toISOString();
+        const end = new Date(dMonth.getFullYear(), dMonth.getMonth() + 1, 0, 23, 59, 59).toISOString();
+        months.push({
+          label: dMonth.toLocaleDateString('en-US', { month: 'short' }),
+          start,
+          end,
+        });
+        dMonth.setMonth(dMonth.getMonth() + 1);
+      }
+
+      // Fetch ALL transactions for the last 6 months
       const [
         { count: propertyCount },
         { count: tenantCount },
         { count: leaseCount },
         { count: maintenanceCount },
         { count: applicantCount },
-        { data: rentData }
+        { data: rentData },
+        { data: txns }
       ] = await Promise.all([
-        // Get property count
-        supabase
-          .from('properties')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', user.id),
-        
-        // Get tenant count
-        supabase
-          .from('tenant_property_links')
-          .select('id', { count: 'exact', head: true })
-          .eq('landlord_id', user.id)
-          .eq('status', 'active'),
-        
-        // Get lease count
-        supabase
-          .from('leases')
-          .select('id', { count: 'exact', head: true })
-          .eq('landlord_id', user.id)
-          .eq('status', 'active'),
-        
-        // Get maintenance count
-        supabase
-          .from('maintenance_requests')
-          .select('id', { count: 'exact', head: true })
-          .eq('landlord_id', user.id)
-          .in('status', ['pending', 'in_progress']),
-        
-        // Get applicant count
-        supabase
-          .from('applicants')
-          .select('id', { count: 'exact', head: true })
-          .eq('landlord_id', user.id)
-          .in('status', ['invited', 'applied']),
-        
-        // Get rent data (only this one needs actual data)
-        supabase
-          .from('tenant_property_links')
-          .select('rent_amount')
-          .eq('landlord_id', user.id)
-          .eq('status', 'active')
+        supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+        supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
+        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
+        supabase.from('maintenance_requests').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['pending', 'in_progress']),
+        supabase.from('applicants').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['invited', 'applied']),
+        supabase.from('tenant_property_links').select('rent_amount').eq('landlord_id', user.id).eq('status', 'active'),
+        supabase.from('transactions').select('type, category, amount, date, status').eq('user_id', user.id).gte('date', months[0].start).lte('date', months[5].end)
       ]);
 
       // Calculate occupancy rate
@@ -203,10 +198,31 @@ export default function LandlordDashboardScreen() {
         occupancyRate = Math.round(((tenantCount || 0) / (propertyCount || 0)) * 100);
       }
 
-      // Calculate rent collection
+      // --- Calculate Income vs Expense Graph Data ---
+      const incomeExpenseResult = months.map(({ label, start, end }) => {
+        const bucket = (txns || []).filter(t => t.date >= start && t.date <= end);
+        const income = bucket
+          .filter(t => t.type === 'income' && t.status !== 'pending')
+          .reduce((s, t) => s + (t.amount || 0), 0);
+        const expense = bucket
+          .filter(t => t.type === 'expense' && t.status !== 'pending')
+          .reduce((s, t) => s + (t.amount || 0), 0);
+        return { month: label, income, expense };
+      });
+      setIncomeExpenseData(incomeExpenseResult);
+
+      // --- Calculate Rent Collection for current month (months[5]) ---
       const totalExpectedRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
-      const collectedRent = Math.round(totalExpectedRent * 0.9);
-      const pendingRent = totalExpectedRent - collectedRent;
+      
+      const currentMonthTxns = (txns || []).filter(t => t.date >= months[5].start && t.date <= months[5].end);
+      const collectedRent = currentMonthTxns
+        .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+      const pendingRent = currentMonthTxns
+        .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'pending')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+      
+      const notPaidRent = Math.max(0, totalExpectedRent - collectedRent - pendingRent);
 
       setStats({
         propertyCount: propertyCount || 0,
@@ -220,7 +236,7 @@ export default function LandlordDashboardScreen() {
       setRentCollection({
         collected: collectedRent,
         pending: pendingRent,
-        notPaid: 0,
+        notPaid: notPaidRent,
         total: totalExpectedRent,
         month: new Date().toLocaleDateString('en-US', { month: 'long' }),
         year: new Date().getFullYear(),
@@ -252,13 +268,14 @@ export default function LandlordDashboardScreen() {
           rentCollection: {
             collected: collectedRent,
             pending: pendingRent,
-            notPaid: 0,
+            notPaid: notPaidRent,
             total: totalExpectedRent,
             month: new Date().toLocaleDateString('en-US', { month: 'long' }),
             year: new Date().getFullYear(),
           },
           userName,
           notifications: [],
+          incomeExpenseData: incomeExpenseResult,
         },
       };
 
@@ -266,6 +283,8 @@ export default function LandlordDashboardScreen() {
       console.error('❌ Error loading dashboard:', error);
     }
   };
+
+
 
   const activities: Activity[] = [
     {
@@ -430,33 +449,156 @@ export default function LandlordDashboardScreen() {
             </ThemedText>
           </TouchableOpacity>
 
-        {/* Rent Collection Card */}
-        <View style={[styles.rentCard, { backgroundColor: cardBgColor }]}>
-          <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rent Collection</ThemedText>
-          <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
-            For {rentCollection.month} {rentCollection.year}
-          </ThemedText>
+        {/* ── Scrollable Chart Carousel ─────────────────────────────── */}
+        <View style={{ marginBottom: 24 }}>
+          <ScrollView
+            ref={chartScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToInterval={SCREEN_WIDTH + 16}
+            snapToAlignment="start"
+            contentContainerStyle={{ paddingVertical: 4, paddingHorizontal: 2 }}
+            onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+              const page = Math.round(e.nativeEvent.contentOffset.x / (SCREEN_WIDTH + 16));
+              setChartPage(page);
+            }}
+          >
+            {/* ── Slide 1: Rent Collection Pie ─────────────────── */}
+            <View style={[styles.chartCard, { backgroundColor: cardBgColor, width: SCREEN_WIDTH }]}>
+              <View style={styles.chartCardHeader}>
+                <View>
+                  <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rent Collection</ThemedText>
+                  <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
+                    For {rentCollection.month} {rentCollection.year}
+                  </ThemedText>
+                </View>
+                <View style={[styles.chartBadge, { backgroundColor: '#34C75920' }]}>
+                  <ThemedText style={[styles.chartBadgeText, { color: '#34C759' }]}>This Month</ThemedText>
+                </View>
+              </View>
 
-          <RentChart 
-            collected={rentCollection.collected} 
-            pending={rentCollection.pending}
-            notPaid={rentCollection.notPaid}
-            total={rentCollection.total} 
-          />
+              <RentChart
+                collected={rentCollection.collected}
+                pending={rentCollection.pending}
+                notPaid={rentCollection.notPaid}
+                total={rentCollection.total}
+              />
 
-          <View style={styles.legendContainer}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
-              <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Paid</ThemedText>
+              <View style={styles.legendContainer}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
+                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Paid</ThemedText>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#FF9500' }]} />
+                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Pending</ThemedText>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: isDark ? '#1e3a8a' : '#bfdbfe' }]} />
+                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Overdue</ThemedText>
+                </View>
+              </View>
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#FF9500' }]} />
-              <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Pending</ThemedText>
+
+            {/* ── Slide 2: Income vs Expense Bar Chart ─────────── */}
+            <View style={[styles.chartCard, { backgroundColor: cardBgColor, width: SCREEN_WIDTH, marginLeft: 16 }]}>
+              <View style={styles.chartCardHeader}>
+                <View>
+                  <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Income vs Expense</ThemedText>
+                  <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>Last 6 months</ThemedText>
+                </View>
+                <View style={[styles.chartBadge, { backgroundColor: `${primaryColor}20` }]}>
+                  <ThemedText style={[styles.chartBadgeText, { color: primaryColor }]}>6M</ThemedText>
+                </View>
+              </View>
+
+              {/* Bar chart */}
+              {incomeExpenseData.length === 0 ? (
+                <View style={styles.barChartEmpty}>
+                  <MaterialCommunityIcons name="chart-bar" size={40} color={textSecondaryColor} />
+                  <ThemedText style={[{ color: textSecondaryColor, fontSize: 13, marginTop: 8 }]}>
+                    No transaction data yet
+                  </ThemedText>
+                </View>
+              ) : (() => {
+                const maxVal = Math.max(...incomeExpenseData.flatMap(d => [d.income, d.expense]), 1);
+                const BAR_H = 120;
+                return (
+                  <View style={styles.barChartWrapper}>
+                    {/* Y-axis guide lines */}
+                    {[1, 0.5, 0].map(frac => (
+                      <View
+                        key={frac}
+                        style={[
+                          styles.barChartGuideLine,
+                          { bottom: frac * BAR_H + 28, borderColor: isDark ? '#ffffff12' : '#00000010' },
+                        ]}
+                      />
+                    ))}
+                    {incomeExpenseData.map((d, i) => (
+                      <View key={i} style={styles.barGroup}>
+                        <View style={[styles.barsRow, { height: BAR_H }]}>
+                          <View
+                            style={[
+                              styles.bar,
+                              {
+                                height: Math.max((d.income / maxVal) * BAR_H, 3),
+                                backgroundColor: '#34C759',
+                              },
+                            ]}
+                          />
+                          <View
+                            style={[
+                              styles.bar,
+                              {
+                                height: Math.max((d.expense / maxVal) * BAR_H, 3),
+                                backgroundColor: '#FF3B30',
+                              },
+                            ]}
+                          />
+                        </View>
+                        <ThemedText style={[styles.barLabel, { color: textSecondaryColor }]}>
+                          {d.month}
+                        </ThemedText>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+
+              {/* Legend */}
+              <View style={[styles.legendContainer, { marginTop: 12 }]}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
+                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Income</ThemedText>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
+                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Expense</ThemedText>
+                </View>
+              </View>
             </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: isDark ? '#1e3a8a' : '#bfdbfe' }]} />
-              <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Overdue</ThemedText>
-            </View>
+          </ScrollView>
+
+          {/* Pagination dots */}
+          <View style={styles.paginationDots}>
+            {[0, 1].map(i => (
+              <TouchableOpacity
+                key={i}
+                onPress={() => {
+                  chartScrollRef.current?.scrollTo({ x: i * (SCREEN_WIDTH + 16), animated: true });
+                  setChartPage(i);
+                }}
+                style={[
+                  styles.dot,
+                  {
+                    backgroundColor: chartPage === i ? primaryColor : (isDark ? '#394a57' : '#D1D5DB'),
+                    width: chartPage === i ? 20 : 8,
+                  },
+                ]}
+              />
+            ))}
           </View>
         </View>
 
@@ -625,6 +767,85 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
+  },
+  // Chart carousel
+  chartCard: {
+    padding: 16,
+    borderRadius: 16,
+    minHeight: 330, // Ensures consistent height and prevents Android ScrollView collapse
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  chartCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  chartBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  chartBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  paginationDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+  },
+  dot: {
+    height: 8,
+    borderRadius: 4,
+  },
+  // Bar chart
+  barChartWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    height: 148,
+    marginTop: 16,
+    position: 'relative',
+  },
+  barChartGuideLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    borderTopWidth: 1,
+    borderStyle: 'dashed',
+  },
+  barChartEmpty: {
+    height: 148,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  barGroup: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  barsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 3,
+    justifyContent: 'center',
+  },
+  bar: {
+    width: 10,
+    borderRadius: 4,
+  },
+  barLabel: {
+    fontSize: 10,
+    marginTop: 6,
+    fontWeight: '500',
   },
   sectionTitle: {
     fontSize: 18,

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { triggerPushNotification } from '@/lib/sendPushNotification';
 
 // Types for maintenance requests
 export interface MaintenanceRequestInput {
@@ -108,20 +109,28 @@ export async function createMaintenanceRequest(
 
     console.log('✅ Maintenance request created:', data.id);
 
-    // Send notification to landlord
+    // Send in-app + push notification to landlord
     try {
+      const notifData = {
+        requestId: data.id,
+        propertyId: input.propertyId,
+        urgency: input.urgency,
+        category: input.category,
+      };
       await supabase.from('notifications').insert({
         user_id: input.landlordId,
         type: 'maintenance_request',
         title: 'New Maintenance Request',
         message: `New ${input.urgency} priority request: ${input.title}`,
-        data: {
-          requestId: data.id,
-          propertyId: input.propertyId,
-          urgency: input.urgency,
-          category: input.category,
-        },
+        data: notifData,
         created_at: new Date().toISOString(),
+      });
+      // Push notification to landlord
+      await triggerPushNotification({
+        userId: input.landlordId,
+        title: 'New Maintenance Request',
+        body: `New ${input.urgency} priority request: ${input.title}`,
+        data: { type: 'maintenance_request', ...notifData },
       });
     } catch (notifError) {
       // Don't fail the request if notification fails
@@ -259,18 +268,23 @@ export async function updateMaintenanceStatus(
 
     console.log('✅ Maintenance status updated');
 
-    // Send notification to tenant about status change
+    // Send in-app + push notification to tenant about status change
     try {
+      const statusNotifData = { requestId, status };
       await supabase.from('notifications').insert({
         user_id: currentRequest.tenant_id,
         type: 'maintenance_status_update',
         title: 'Maintenance Request Updated',
         message: `Your maintenance request status: ${status.replace(/_/g, ' ')}`,
-        data: {
-          requestId,
-          status,
-        },
+        data: statusNotifData,
         created_at: new Date().toISOString(),
+      });
+      // Push notification to tenant
+      await triggerPushNotification({
+        userId: currentRequest.tenant_id,
+        title: 'Maintenance Request Updated',
+        body: `Your request status changed to: ${status.replace(/_/g, ' ')}`,
+        data: { type: 'maintenance_status_update', ...statusNotifData },
       });
     } catch (notifError) {
       console.error('⚠️ Error sending status update notification:', notifError);

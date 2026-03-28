@@ -250,6 +250,30 @@ async function createInAppNotification(
       console.error('Error creating notification:', error);
       return false;
     }
+
+    // Send push notification to tenant's devices
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          userId: tenantId,
+          title,
+          body: message,
+          data: {
+            type: 'lease_received',
+            leaseId,
+            lease_updated_resign: opts?.isUpdatedLeaseResign === true,
+          },
+        }),
+      });
+      console.log('✅ Push notification queued for tenant');
+    } catch (pushError) {
+      console.error('⚠️ Push notification failed (non-fatal):', pushError);
+    }
     
     return true;
   } catch (error) {

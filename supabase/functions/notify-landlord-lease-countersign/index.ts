@@ -130,6 +130,26 @@ serve(async (req: Request): Promise<Response> => {
       );
     }
 
+    // Push notification to landlord
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+        },
+        body: JSON.stringify({
+          userId: landlordUserId,
+          title: 'Pending Landlord Signature',
+          body: `${tenantLabel} has signed. Please review and countersign the lease.`,
+          data: { type: 'lease', leaseId },
+        }),
+      });
+      console.log('✅ Push notification sent to landlord');
+    } catch (pushErr) {
+      console.error('⚠️ Push notification failed (non-fatal):', pushErr);
+    }
+
     return new Response(
       JSON.stringify({ success: true }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
