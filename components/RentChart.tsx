@@ -13,11 +13,12 @@ interface RentChartProps {
 const RentChart: React.FC<RentChartProps> = ({ collected, pending, notPaid, total }) => {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  
-  // Calculate percentages
-  const collectedPercent = (collected / total) * 100;
-  const pendingPercent = (pending / total) * 100;
-  const notPaidPercent = (notPaid / total) * 100;
+
+  // Calculate percentages — guard against division by zero (total=0 causes Infinity in SVG which freezes the renderer)
+  const safeTotal = total > 0 ? total : 1;
+  const collectedPercent = (collected / safeTotal) * 100;
+  const pendingPercent = (pending / safeTotal) * 100;
+  const notPaidPercent = (notPaid / safeTotal) * 100;
   
   // Calculate stroke-dasharray values
   const collectedDash = collectedPercent;

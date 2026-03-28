@@ -99,41 +99,67 @@ export default function ActivateTenantScreen() {
     setIsLoading(true);
 
     try {
-      // 1. Create auth user with email and temporary password
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: inviteEmail,
+      // 1. Check if user is already registered/verified before calling signUp.
+      //    signUp always triggers a Supabase confirmation email — even for existing
+      //    verified accounts — so we must avoid calling it when unnecessary.
+      const { data: existingSession } = await supabase.auth.signInWithPassword({
+        email: String(inviteEmail),
         password: password,
-        options: {
-          data: {
-            full_name: tenantName,
-            role: 'tenant',
-            user_type: 'tenant',
-          },
-        },
       });
 
-      if (signUpError) {
-        // Check if user already exists
-        if (signUpError.message.includes('User already registered') || 
-            signUpError.message.includes('already exists')) {
+      let userId: string;
+
+      if (existingSession?.user) {
+        // User already exists and supplied the correct password.
+        // No need to call signUp at all — just mark the invite and redirect.
+        userId = existingSession.user.id;
+        await supabase.auth.signOut();
+      } else {
+        // User does not exist yet (or wrong password — handled below).
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: String(inviteEmail),
+          password: password,
+          options: {
+            data: {
+              full_name: tenantName,
+              role: 'tenant',
+              user_type: 'tenant',
+            },
+          },
+        });
+
+        if (signUpError) {
+          if (signUpError.message.includes('User already registered') ||
+              signUpError.message.includes('already exists')) {
+            setError('An account with this email already exists. Please log in instead.');
+            setTimeout(() => router.replace('/(auth)/login'), 2000);
+            return;
+          }
+          throw signUpError;
+        }
+
+        // identities: [] means the email is already registered (verified user).
+        // signUp was called but Supabase sent a notification email — tell user to log in.
+        if (signUpData.user?.identities?.length === 0) {
           setError('An account with this email already exists. Please log in instead.');
-          setTimeout(() => router.back(), 2000);
+          setTimeout(() => router.replace('/(auth)/login'), 2000);
           return;
         }
-        throw signUpError;
-      }
 
-      if (!signUpData.user) {
-        throw new Error('Failed to create account');
+        if (!signUpData.user) {
+          throw new Error('Failed to create account');
+        }
+
+        userId = signUpData.user.id;
       }
 
       // 2. Mark invitation as used
       const { error: updateInviteError } = await supabase
         .from('tenant_invitations')
-        .update({ 
+        .update({
           status: 'activated',
           activated_at: new Date().toISOString(),
-          user_id: signUpData.user.id,
+          user_id: userId,
         })
         .eq('token', inviteToken);
 

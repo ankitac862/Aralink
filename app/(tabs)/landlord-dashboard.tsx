@@ -94,10 +94,6 @@ export default function LandlordDashboardScreen() {
     year: new Date().getFullYear(),
   });
   
-  // OPTIMIZATION 3: Add cache to prevent reloading on every focus
-  const cacheRef = React.useRef<{ timestamp: number; data: any }>({ timestamp: 0, data: null });
-  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
   // Chart carousel
   const chartScrollRef = useRef<ScrollView>(null);
   const [chartPage, setChartPage] = useState(0);
@@ -114,25 +110,10 @@ export default function LandlordDashboardScreen() {
   const textSecondaryColor = isDark ? '#a0aec0' : '#8E8E93';
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
 
-  // Load data when screen comes into focus
+  // Load data every time the screen comes into focus so changes from other screens are reflected
   useFocusEffect(
     React.useCallback(() => {
       if (user?.id) {
-        // OPTIMIZATION 4: Use cache to avoid reloading within 5 minutes
-        const now = Date.now();
-        if (cacheRef.current.timestamp && (now - cacheRef.current.timestamp) < CACHE_DURATION) {
-          // Use cached data
-          console.log('📦 Using cached dashboard data');
-          setStats(cacheRef.current.data.stats);
-          setRentCollection(cacheRef.current.data.rentCollection);
-          setUserName(cacheRef.current.data.userName);
-          setNotifications(cacheRef.current.data.notifications);
-          setIncomeExpenseData(cacheRef.current.data.incomeExpenseData || []);
-          setIsLoading(false);
-          return;
-        }
-        
-        // OPTIMIZATION 6: Show dashboard INSTANTLY with skeleton, load data in background
         setIsLoading(false);
         loadDashboardDataInBackground();
       }
@@ -252,32 +233,6 @@ export default function LandlordDashboardScreen() {
           setNotifications(filtered);
         })
         .catch(err => console.error('Notifications load error:', err));
-
-      // OPTIMIZATION 5: Cache the data
-      cacheRef.current = {
-        timestamp: Date.now(),
-        data: {
-          stats: {
-            propertyCount: propertyCount || 0,
-            tenantCount: tenantCount || 0,
-            leaseCount: leaseCount || 0,
-            occupancyRate,
-            maintenanceCount: maintenanceCount || 0,
-            applicantCount: applicantCount || 0,
-          },
-          rentCollection: {
-            collected: collectedRent,
-            pending: pendingRent,
-            notPaid: notPaidRent,
-            total: totalExpectedRent,
-            month: new Date().toLocaleDateString('en-US', { month: 'long' }),
-            year: new Date().getFullYear(),
-          },
-          userName,
-          notifications: [],
-          incomeExpenseData: incomeExpenseResult,
-        },
-      };
 
     } catch (error) {
       console.error('❌ Error loading dashboard:', error);
@@ -820,7 +775,6 @@ const styles = StyleSheet.create({
     right: 0,
     height: 1,
     borderTopWidth: 1,
-    borderStyle: 'dashed',
   },
   barChartEmpty: {
     height: 148,
@@ -835,16 +789,18 @@ const styles = StyleSheet.create({
   barsRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 3,
+    gap: 2,
     justifyContent: 'center',
   },
   bar: {
-    width: 10,
-    borderRadius: 4,
+    width: 14,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+    minHeight: 3,
   },
   barLabel: {
     fontSize: 10,
-    marginTop: 6,
+    marginTop: 4,
     fontWeight: '500',
   },
   sectionTitle: {

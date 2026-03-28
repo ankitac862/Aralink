@@ -110,7 +110,7 @@ export default function AddTransactionScreen() {
   }, [safeProperties, isLoadingProperties, user?.id, authUser?.id]);
 
   const [formData, setFormData] = useState<FormData>({
-    type: (params.type as TransactionType) || 'expense',
+    type: (params.type as TransactionType) || 'income',
     amount: '',
     date: new Date(),
     propertyId: params.propertyId || '',
@@ -118,7 +118,7 @@ export default function AddTransactionScreen() {
     subunitId: params.subunitId || '',
     tenantId: params.tenantId || '',
     leaseId: '',
-    category: params.category || 'maintenance',
+    category: params.category || 'rent',
     serviceType: '',
     description: '',
   });

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -64,18 +64,13 @@ export default function AccountingScreen() {
   const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
   const primaryColor = '#137fec';
 
-  // Reload transactions when screen comes into focus (e.g., after adding a transaction)
+  // Load transactions on mount and every time the screen comes into focus.
+  // useFocusEffect covers both the initial mount and re-focus after adding a transaction.
   useFocusEffect(
     React.useCallback(() => {
-      console.log('🔄 Accounting screen focused - reloading transactions');
       loadTransactions();
     }, [user])
   );
-
-  // Load transactions on mount
-  useEffect(() => {
-    loadTransactions();
-  }, [user]);
 
   const loadTransactions = async (isRefresh = false) => {
     if (!user) return;
@@ -143,6 +138,25 @@ export default function AccountingScreen() {
 
   // Calculate total for filtered transactions
   const totalAmount = filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
+
+  // Build last-6-months income vs expense data from already-fetched transactions
+  const sixMonthData = useMemo(() => {
+    const months: { label: string; start: string; end: string }[] = [];
+    const d = new Date();
+    d.setMonth(d.getMonth() - 5);
+    for (let i = 0; i < 6; i++) {
+      const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+      months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
+      d.setMonth(d.getMonth() + 1);
+    }
+    return months.map(({ label, start, end }) => {
+      const bucket = transactions.filter(t => t.date >= start && t.date <= end);
+      const income = bucket.filter(t => t.type === 'income' && t.status !== 'pending').reduce((s, t) => s + t.amount, 0);
+      const expense = bucket.filter(t => t.type === 'expense' && t.status !== 'pending').reduce((s, t) => s + t.amount, 0);
+      return { month: label, income, expense };
+    });
+  }, [transactions]);
 
   // Map category to icon
   const getCategoryIcon = (category: string): string => {
@@ -333,63 +347,107 @@ export default function AccountingScreen() {
                       Total {transactionType === 'income' ? 'Income' : 'Expenses'}
                     </ThemedText>
                     <View style={styles.summaryAmountContainer}>
-                      <ThemedText 
+                      <ThemedText
                         style={[styles.summaryAmount, { color: primaryColor }]}
                       >
                         ${(transactionType === 'income' ? aggregates.totalIncome : aggregates.totalExpense).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </ThemedText>
                     </View>
                   </View>
-                  <View 
+                  <View
                     style={[
                       styles.summaryIconWrapper,
                       { backgroundColor: transactionType === 'income' ? '#DCFCE7' : '#FEE2E2' },
                     ]}
                   >
-                    <MaterialCommunityIcons 
-                      name={transactionType === 'income' ? 'trending-up' : 'trending-down'} 
-                      size={24} 
-                      color={transactionType === 'income' ? '#16A34A' : '#DC2626'} 
+                    <MaterialCommunityIcons
+                      name={transactionType === 'income' ? 'trending-up' : 'trending-down'}
+                      size={24}
+                      color={transactionType === 'income' ? '#16A34A' : '#DC2626'}
                     />
                   </View>
-                </View>
-
-                {/* Divider */}
-                <View style={[styles.summaryDivider, { backgroundColor: borderColor }]} />
-                
-                {/* Mini Chart - Last 7 days */}
-                <View style={[styles.chartContainer, { backgroundColor: `${primaryColor}08` }]}>
-                  {aggregates.chartData && aggregates.chartData.length > 0 ? (
-                    aggregates.chartData.map((day, index) => {
-                      const maxAmount = Math.max(...aggregates.chartData.map(d => transactionType === 'income' ? d.income : d.expense));
-                      const amount = transactionType === 'income' ? day.income : day.expense;
-                      const flexValue = maxAmount > 0 ? Math.max(amount / maxAmount, 0.1) : 0.1;
-                      
-                      return (
-                        <View key={index} style={styles.chartBarWrapper}>
-                          <View style={[styles.chartBar, { flex: flexValue, backgroundColor: primaryColor }]} />
-                        </View>
-                      );
-                    })
-                  ) : (
-                    // Show placeholder bars when no data
-                    Array.from({ length: 7 }).map((_, i) => {
-                      const heights = [0.35, 0.55, 0.4, 0.65, 0.5, 0.85, 0.45];
-                      return (
-                        <View key={i} style={styles.chartBarWrapper}>
-                          <View style={[styles.chartBar, { flex: heights[i], backgroundColor: `${primaryColor}20` }]} />
-                        </View>
-                      );
-                    })
-                  )}
                 </View>
               </>
             )}
           </View>
         </View>
 
-        <ScrollView 
-          horizontal 
+        {/* Income vs Expense — 6-month bar chart */}
+        <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
+          <View style={styles.incomeExpenseHeader}>
+            <View>
+              <ThemedText style={[styles.incomeExpenseTitle, { color: textColor }]}>
+                Income vs Expense
+              </ThemedText>
+              <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor }]}>
+                Last 6 months
+              </ThemedText>
+            </View>
+            <View style={[styles.incomeExpenseBadge, { backgroundColor: `${primaryColor}20` }]}>
+              <ThemedText style={[styles.incomeExpenseBadgeText, { color: primaryColor }]}>6M</ThemedText>
+            </View>
+          </View>
+
+          {sixMonthData.every(d => d.income === 0 && d.expense === 0) ? (
+            <View style={styles.incomeExpenseEmpty}>
+              <MaterialCommunityIcons name="chart-bar" size={36} color={secondaryTextColor} />
+              <ThemedText style={[styles.incomeExpenseEmptyText, { color: secondaryTextColor }]}>
+                No transaction data yet
+              </ThemedText>
+            </View>
+          ) : (() => {
+            const maxVal = Math.max(...sixMonthData.flatMap(d => [d.income, d.expense]), 1);
+            const BAR_H = 110;
+            return (
+              <View style={styles.barChartWrapper}>
+                {[1, 0.5, 0].map(frac => (
+                  <View
+                    key={frac}
+                    style={[
+                      styles.barChartGuideLine,
+                      { bottom: frac * BAR_H + 24, borderColor: isDark ? '#ffffff12' : '#00000010' },
+                    ]}
+                  />
+                ))}
+                {sixMonthData.map((d, i) => (
+                  <View key={i} style={styles.barGroup}>
+                    <View style={[styles.barsRow, { height: BAR_H }]}>
+                      <View
+                        style={[
+                          styles.barItem,
+                          { height: Math.max((d.income / maxVal) * BAR_H, 3), backgroundColor: '#34C759' },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.barItem,
+                          { height: Math.max((d.expense / maxVal) * BAR_H, 3), backgroundColor: '#FF3B30' },
+                        ]}
+                      />
+                    </View>
+                    <ThemedText style={[styles.barLabel, { color: secondaryTextColor }]}>
+                      {d.month}
+                    </ThemedText>
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
+
+          <View style={styles.incomeExpenseLegend}>
+            <View style={styles.legendRow}>
+              <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
+              <ThemedText style={[styles.legendLabel, { color: textColor }]}>Income</ThemedText>
+            </View>
+            <View style={styles.legendRow}>
+              <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
+              <ThemedText style={[styles.legendLabel, { color: textColor }]}>Expense</ThemedText>
+            </View>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.categoriesContainer}
           contentContainerStyle={styles.categoriesContent}
@@ -635,6 +693,103 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 2,
     borderTopRightRadius: 2,
     minHeight: 3,
+  },
+  incomeExpenseCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  incomeExpenseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  incomeExpenseTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  incomeExpenseSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  incomeExpenseBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  incomeExpenseBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  incomeExpenseEmpty: {
+    height: 110,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  incomeExpenseEmptyText: {
+    fontSize: 13,
+  },
+  barChartWrapper: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    height: 134,
+    position: 'relative',
+    paddingBottom: 24,
+  },
+  barChartGuideLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    borderTopWidth: 1,
+  },
+  barGroup: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  barsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    width: '80%',
+  },
+  barItem: {
+    flex: 1,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+    minHeight: 3,
+  },
+  barLabel: {
+    fontSize: 10,
+    marginTop: 4,
+  },
+  incomeExpenseLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 12,
+  },
+  legendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendLabel: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   categoriesContainer: {
     paddingVertical: 8,

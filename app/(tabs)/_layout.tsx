@@ -68,18 +68,12 @@ export default function TabLayout() {
     },
   ];
 
-  return (
-    <View style={{ flex: 1 }}>
-      {/* Web Navbar (Top) */}
-      {isWeb && <WebNavbar items={navItems} userRole={userRole!} />}
-
-      {/* Mobile/Web Tabs */}
+  const tabs = (
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
           headerShown: false,
           tabBarButton: HapticTab,
-          // Hide tab bar on web
           tabBarStyle: isWeb
             ? { display: 'none' }
             : {
@@ -153,6 +147,18 @@ export default function TabLayout() {
           />
         )}
       </Tabs>
-    </View>
   );
+
+  // Expo Router requires <Tabs> at the layout root on mobile.
+  // For web, wrap with the navbar; on mobile return <Tabs> directly.
+  if (isWeb) {
+    return (
+      <View style={{ flex: 1 }}>
+        <WebNavbar items={navItems} userRole={userRole!} />
+        {tabs}
+      </View>
+    );
+  }
+
+  return tabs;
 }
