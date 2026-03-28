@@ -2,8 +2,10 @@
 # This file configures the Supabase project
 
 [auth]
-site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/**", "aralink://**"]
+# Keep Site URL as your app root (your login/default page). Mirror in hosted Dashboard.
+site_url = "http://localhost:8081"
+# Add your LAN origin when testing from another device, e.g. http://192.168.1.10:8081/**
+additional_redirect_urls = ["http://localhost:3000/**", "http://localhost:8081/**", "http://localhost:8081/invite-auth", "aralink://**"]
 
 [api]
 enabled = true
@@ -14,12 +16,16 @@ verify_jwt = true
 [functions.send-lease]
 verify_jwt = true
 
+[functions.complete-applicant-invite-password]
+verify_jwt = false
+
 # Environment variables for Edge Functions
 # Set these in your Supabase Dashboard under Project Settings > Edge Functions > Secrets
 #
 # Required:
 # - SUPABASE_URL (auto-injected)
 # - SUPABASE_SERVICE_ROLE_KEY (auto-injected)
+# - SUPABASE_ANON_KEY (auto-injected — needed for invite-applicant POST /auth/v1/recover with redirect_to)
 #
 # Optional (for XFA generation):
 # - XFA_ENGINE_URL: URL of XFA-capable PDF service (e.g., Adobe PDF Services)
@@ -33,3 +39,7 @@ verify_jwt = true
 # - EMAIL_SERVICE_URL: URL of email service (e.g., Resend, SendGrid)
 # - EMAIL_API_KEY: API key for email service
 # - FROM_EMAIL: Sender email address
+#
+# Applicant invite emails (invite-applicant Edge function):
+# - SET_PASSWORD_REDIRECT_URL (or INVITE_AUTH_REDIRECT_URL): optional; path is normalized to /invite-auth
+# Hosted Dashboard must mirror site_url + additional_redirect_urls (local config.toml does NOT apply to cloud).
