@@ -2442,7 +2442,7 @@ export interface DbLease {
   tenant_id?: string; // Tenant assigned to this lease
   application_id?: string; // Link to application if created from approved application
   
-  status: 'draft' | 'generated' | 'uploaded' | 'sent' | 'signed' | 'signed_pending_move_in' | 'active' | 'terminated';
+  status: 'draft' | 'generated' | 'uploaded' | 'sent' | 'signed' | 'signed_pending_move_in' | 'active' | 'terminated' | 'rejected';
   
   // NEW FIELDS FOR VERSIONING
   original_pdf_url?: string;
@@ -2456,11 +2456,16 @@ export interface DbLease {
   document_url?: string;
   document_storage_key?: string;
   
+  // Rejection fields
+  rejection_reason?: string;
+  rejected_at?: string;
+  rejected_by?: string;
+
   // Dates
   effective_date?: string;
   expiry_date?: string;
   signed_date?: string;
-  
+
   created_at: string;
   updated_at: string;
 }
@@ -4113,6 +4118,62 @@ export async function notifyLandlordLeaseCountersign(params: {
     }
 
     return { success: (data as any)?.success !== false };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Tenant rejects a lease with a required reason.
+ * Updates lease status to 'rejected', then notifies the landlord.
+ */
+export async function rejectLease(
+  leaseId: string,
+  reason: string,
+  tenantUserId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data: lease, error: updateError } = await supabase
+      .from('leases')
+      .update({
+        status: 'rejected',
+        rejection_reason: reason,
+        rejected_at: new Date().toISOString(),
+        rejected_by: tenantUserId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaseId)
+      .select('id, user_id, form_data')
+      .maybeSingle();
+
+    if (updateError) {
+      console.error('Error rejecting lease:', updateError);
+      return { success: false, error: updateError.message };
+    }
+
+    if (!lease) {
+      return { success: false, error: 'Lease not found or permission denied.' };
+    }
+
+    // Notify landlord
+    try {
+      const tenantNames: string[] = (lease.form_data as any)?.tenantNames || [];
+      await supabase.from('notifications').insert({
+        user_id: lease.user_id,
+        type: 'lease_rejected',
+        title: 'Lease Rejected',
+        message: tenantNames.length
+          ? `${tenantNames[0]} rejected the lease. Reason: ${reason}`
+          : `The tenant rejected the lease. Reason: ${reason}`,
+        data: { leaseId: lease.id, rejectionReason: reason },
+        is_read: false,
+        created_at: new Date().toISOString(),
+      });
+    } catch (_) {
+      // Non-fatal — rejection already saved
+    }
+
+    return { success: true };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Unknown error' };
   }

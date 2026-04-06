@@ -5,20 +5,33 @@ import {
   updateMaintenanceStatus,
   assignVendor as assignVendorService,
   addResolutionNotes as addResolutionNotesService,
+  submitTenantFeedback as submitTenantFeedbackService,
   getMaintenanceRequestById,
   MaintenanceRequestInput,
+  DbMaintenanceRequest,
 } from '@/services/maintenanceService';
-import { DbMaintenanceRequest } from '@/lib/supabase';
+import { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
 
-type MaintenanceStatus = 'new' | 'under_review' | 'in_progress' | 'waiting_vendor' | 'resolved' | 'cancelled';
-type UrgencyLevel = 'low' | 'medium' | 'high' | 'emergency';
-type MaintenanceCategory = 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general';
+export type MaintenanceStatus =
+  | 'new'
+  | 'under_review'
+  | 'in_progress'
+  | 'waiting_vendor'
+  | 'resolved'
+  | 'cancelled';
+export type UrgencyLevel = 'low' | 'medium' | 'high' | 'emergency';
+export type MaintenanceCategory =
+  | 'plumbing'
+  | 'electrical'
+  | 'hvac'
+  | 'appliance'
+  | 'general';
 
 export interface MaintenanceActivity {
   id: string;
   timestamp: string;
   message: string;
-  actor: 'tenant' | 'landlord' | 'system';
+  actor: 'tenant' | 'landlord' | 'manager' | 'system';
 }
 
 export interface MaintenanceRequest {
@@ -39,8 +52,14 @@ export interface MaintenanceRequest {
   permissionToEnter: boolean;
   attachments: { uri: string; type: string }[];
   status: MaintenanceStatus;
+  createdByRole: MaintenanceCreatorRole;
+  createdById: string;
+  approvedBy?: string;
+  approvedAt?: string;
   vendor?: string;
   resolutionNotes?: string;
+  tenantFeedback?: string;
+  tenantFeedbackRating?: number;
   activity: MaintenanceActivity[];
   createdAt: string;
   updatedAt: string;
@@ -51,42 +70,57 @@ interface MaintenanceStore {
   selectedRequest?: MaintenanceRequest;
   loading: boolean;
   error: string | null;
-  
-  // Actions
-  addRequest: (input: Omit<MaintenanceRequest, 'id' | 'status' | 'activity' | 'createdAt' | 'updatedAt'>) => Promise<string | null>;
-  updateRequestStatus: (id: string, status: MaintenanceStatus, actor?: 'tenant' | 'landlord' | 'system') => Promise<boolean>;
-  assignVendor: (id: string, vendor: string) => Promise<boolean>;
-  addResolutionNotes: (id: string, notes: string) => Promise<boolean>;
+
+  addRequest: (
+    input: Omit<MaintenanceRequest, 'id' | 'status' | 'activity' | 'createdAt' | 'updatedAt'>,
+    callerRole?: MaintenanceCreatorRole
+  ) => Promise<string | null>;
+  updateRequestStatus: (
+    id: string,
+    status: MaintenanceStatus,
+    actor?: 'tenant' | 'landlord' | 'manager' | 'system',
+    callerRole?: MaintenanceCreatorRole
+  ) => Promise<boolean>;
+  assignVendor: (id: string, vendor: string, callerRole?: MaintenanceCreatorRole) => Promise<boolean>;
+  addResolutionNotes: (id: string, notes: string, callerRole?: MaintenanceCreatorRole) => Promise<boolean>;
+  submitFeedback: (id: string, feedback: string, rating: number) => Promise<boolean>;
   selectRequest: (id?: string) => void;
-  fetchRequests: (userId: string, userType: 'tenant' | 'landlord') => Promise<void>;
+  fetchRequests: (userId: string, userType: 'tenant' | 'landlord' | 'manager') => Promise<void>;
   refreshRequest: (id: string) => Promise<void>;
 }
 
-// Helper function to convert DB request to store format
-function dbRequestToStoreFormat(dbRequest: DbMaintenanceRequest): MaintenanceRequest {
+function dbToStore(db: DbMaintenanceRequest): MaintenanceRequest {
   return {
-    id: dbRequest.id,
-    tenantId: dbRequest.tenant_id,
-    tenantName: 'Tenant', // Will be populated from profile
-    property: 'Property', // Will be populated from property table
-    unit: 'Unit', // Will be populated from unit table
-    category: dbRequest.category as MaintenanceCategory,
-    title: dbRequest.title,
-    description: dbRequest.description,
-    urgency: dbRequest.urgency as UrgencyLevel,
-    availability: dbRequest.availability,
-    permissionToEnter: dbRequest.permission_to_enter,
-    attachments: dbRequest.attachments || [],
-    status: dbRequest.status as MaintenanceStatus,
-    vendor: dbRequest.assigned_vendor,
-    resolutionNotes: dbRequest.resolution_notes,
-    activity: dbRequest.activity || [],
-    createdAt: dbRequest.created_at,
-    updatedAt: dbRequest.updated_at,
+    id: db.id,
+    tenantId: db.tenant_id,
+    landlordId: db.landlord_id,
+    propertyId: db.property_id,
+    unitId: db.unit_id,
+    subUnitId: db.sub_unit_id,
+    tenantName: 'Tenant',
+    property: 'Property',
+    unit: 'Unit',
+    category: db.category as MaintenanceCategory,
+    title: db.title,
+    description: db.description,
+    urgency: db.urgency as UrgencyLevel,
+    availability: db.availability,
+    permissionToEnter: db.permission_to_enter,
+    attachments: db.attachments || [],
+    status: db.status as MaintenanceStatus,
+    createdByRole: (db.created_by_role as MaintenanceCreatorRole) || 'tenant',
+    createdById: db.created_by_id,
+    approvedBy: db.approved_by,
+    approvedAt: db.approved_at,
+    vendor: db.assigned_vendor,
+    resolutionNotes: db.resolution_notes,
+    tenantFeedback: db.tenant_feedback,
+    tenantFeedbackRating: db.tenant_feedback_rating,
+    activity: db.activity || [],
+    createdAt: db.created_at,
+    updatedAt: db.updated_at,
   };
 }
-
-const timestamp = () => new Date().toISOString();
 
 export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
   requests: [],
@@ -94,57 +128,28 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
   loading: false,
   error: null,
 
-  addRequest: async (input) => {
+  addRequest: async (input, callerRole = 'tenant') => {
     try {
       set({ loading: true, error: null });
 
-      console.log('🏪 Store addRequest called with:', {
-        tenantId: input.tenantId,
-        landlordId: input.landlordId,
-        propertyId: input.propertyId,
-        unitId: input.unitId,
-        subUnitId: input.subUnitId,
-      });
-
-      // Get property and landlord data from tenant_property_links if not provided
       let propertyId = input.propertyId;
       let landlordId = input.landlordId;
       let unitId = input.unitId;
       let subUnitId = input.subUnitId;
 
-      console.log('🔍 Checking if need to fetch from DB:', {
-        hasPropertyId: !!propertyId,
-        hasLandlordId: !!landlordId,
-      });
-
       if (!propertyId || !landlordId) {
-        // Fetch from tenant_property_links
         const { supabase } = await import('@/lib/supabase');
-        
-        // Get tenant property links with property details to get landlord_id
         const { data: allLinks } = await supabase
           .from('tenant_property_links')
-          .select(`
-            property_id, 
-            unit_id, 
-            sub_unit_id, 
-            status,
-            properties (
-              user_id
-            )
-          `)
+          .select('property_id, unit_id, sub_unit_id, status, properties(user_id)')
           .eq('tenant_id', input.tenantId);
-        
-        // Try to find active link first
-        let tenantLink = allLinks?.find(link => link.status === 'active');
-        
-        // If no active link, use the most recent one
-        if (!tenantLink && allLinks && allLinks.length > 0) {
-          tenantLink = allLinks[0];
-        }
+
+        const tenantLink =
+          allLinks?.find((l) => l.status === 'active') ||
+          (allLinks && allLinks.length > 0 ? allLinks[0] : undefined);
 
         if (!tenantLink) {
-          set({ loading: false, error: 'No property found for tenant. Please contact your landlord.' });
+          set({ loading: false, error: 'No property found for tenant.' });
           return null;
         }
 
@@ -153,8 +158,7 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         unitId = tenantLink.unit_id || undefined;
         subUnitId = tenantLink.sub_unit_id || undefined;
       }
-      
-      // Create the request input for the service
+
       const requestInput: MaintenanceRequestInput = {
         tenantId: input.tenantId,
         landlordId: landlordId!,
@@ -168,6 +172,8 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         availability: input.availability,
         permissionToEnter: input.permissionToEnter,
         attachments: input.attachments,
+        createdByRole: callerRole,
+        createdById: callerRole === 'tenant' ? input.tenantId : (input.createdById || input.tenantId),
       };
 
       const { data, error } = await createMaintenanceRequest(requestInput);
@@ -177,8 +183,7 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         return null;
       }
 
-      const newRequest = dbRequestToStoreFormat(data);
-
+      const newRequest = dbToStore(data);
       set((state) => ({
         requests: [newRequest, ...state.requests],
         selectedRequest: newRequest,
@@ -186,135 +191,107 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
       }));
 
       return newRequest.id;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ loading: false, error: errorMessage });
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
       return null;
     }
   },
 
-  updateRequestStatus: async (id, status, actor = 'landlord') => {
+  updateRequestStatus: async (id, status, actor = 'landlord', callerRole) => {
     try {
       set({ loading: true, error: null });
-
-      const { success, error } = await updateMaintenanceStatus(id, status, actor);
-
-      if (!success || error) {
+      const { success, error } = await updateMaintenanceStatus(id, status, actor, callerRole);
+      if (!success) {
         set({ loading: false, error: error || 'Failed to update status' });
         return false;
       }
-
-      // Refresh the request from backend
       await get().refreshRequest(id);
-
       set({ loading: false });
       return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ loading: false, error: errorMessage });
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
       return false;
     }
   },
 
-  assignVendor: async (id, vendor) => {
+  assignVendor: async (id, vendor, callerRole) => {
     try {
       set({ loading: true, error: null });
-
-      const { success, error } = await assignVendorService(id, vendor);
-
-      if (!success || error) {
+      const { success, error } = await assignVendorService(id, vendor, callerRole);
+      if (!success) {
         set({ loading: false, error: error || 'Failed to assign vendor' });
         return false;
       }
-
-      // Refresh the request from backend
       await get().refreshRequest(id);
-
       set({ loading: false });
       return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ loading: false, error: errorMessage });
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
       return false;
     }
   },
 
-  addResolutionNotes: async (id, notes) => {
+  addResolutionNotes: async (id, notes, callerRole) => {
     try {
       set({ loading: true, error: null });
-
-      const { success, error } = await addResolutionNotesService(id, notes);
-
-      if (!success || error) {
-        set({ loading: false, error: error || 'Failed to add notes' });
+      const { success, error } = await addResolutionNotesService(id, notes, callerRole);
+      if (!success) {
+        set({ loading: false, error: error || 'Failed to save notes' });
         return false;
       }
-
-      // Refresh the request from backend
       await get().refreshRequest(id);
-
       set({ loading: false });
       return true;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ loading: false, error: errorMessage });
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
+      return false;
+    }
+  },
+
+  submitFeedback: async (id, feedback, rating) => {
+    try {
+      set({ loading: true, error: null });
+      const { success, error } = await submitTenantFeedbackService(id, feedback, rating);
+      if (!success) {
+        set({ loading: false, error: error || 'Failed to submit feedback' });
+        return false;
+      }
+      await get().refreshRequest(id);
+      set({ loading: false });
+      return true;
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
       return false;
     }
   },
 
   selectRequest: (id) => {
-    if (!id) {
-      set({ selectedRequest: undefined });
-      return;
-    }
-    const request = get().requests.find((req) => req.id === id);
-    set({ selectedRequest: request });
+    if (!id) { set({ selectedRequest: undefined }); return; }
+    set({ selectedRequest: get().requests.find((r) => r.id === id) });
   },
 
-  fetchRequests: async (userId: string, userType: 'tenant' | 'landlord') => {
+  fetchRequests: async (userId, userType) => {
     try {
       set({ loading: true, error: null });
-
       const { data, error } = await fetchMaintenanceRequests(userId, userType);
-
-      if (error) {
-        set({ loading: false, error });
-        return;
-      }
-
-      const requests = data.map(dbRequestToStoreFormat);
-
-      set({ requests, loading: false });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ loading: false, error: errorMessage });
+      if (error) { set({ loading: false, error }); return; }
+      set({ requests: data.map(dbToStore), loading: false });
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
     }
   },
 
-  refreshRequest: async (id: string) => {
+  refreshRequest: async (id) => {
     try {
       const { data, error } = await getMaintenanceRequestById(id);
-
-      if (error || !data) {
-        console.error('Failed to refresh request:', error);
-        return;
-      }
-
-      const updatedRequest = dbRequestToStoreFormat(data);
-
-      set((state) => {
-        const updatedRequests = state.requests.map((req) =>
-          req.id === id ? updatedRequest : req
-        );
-
-        return {
-          requests: updatedRequests,
-          selectedRequest: state.selectedRequest?.id === id ? updatedRequest : state.selectedRequest,
-        };
-      });
-    } catch (error) {
-      console.error('Error refreshing request:', error);
+      if (error || !data) return;
+      const updated = dbToStore(data);
+      set((state) => ({
+        requests: state.requests.map((r) => (r.id === id ? updated : r)),
+        selectedRequest: state.selectedRequest?.id === id ? updated : state.selectedRequest,
+      }));
+    } catch (err) {
+      console.error('Error refreshing request:', err);
     }
   },
 }));
-

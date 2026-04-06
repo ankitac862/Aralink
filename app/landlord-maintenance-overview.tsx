@@ -1,12 +1,24 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { useAuth } from '@/hooks/use-auth';
+
+const VIEWED_KEY = 'maintenance_viewed_ids';
 
 const FILTERS = [
   { label: 'New', value: 'new' },
@@ -23,14 +35,21 @@ export default function LandlordMaintenanceOverviewScreen() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('new');
   const [refreshing, setRefreshing] = useState(false);
+  const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
 
-  // Fetch landlord's maintenance requests when screen loads
+  // Load viewed IDs from storage
   useEffect(() => {
-    if (user?.id) {
-      console.log('📡 Fetching maintenance requests for landlord:', user.id);
-      fetchRequests(user.id, 'landlord');
-    }
-  }, [user]);
+    AsyncStorage.getItem(VIEWED_KEY).then((raw) => {
+      if (raw) setViewedIds(new Set(JSON.parse(raw)));
+    });
+  }, []);
+
+  // Fetch requests on focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) fetchRequests(user.id, 'landlord');
+    }, [user?.id])
+  );
 
   const handleRefresh = async () => {
     if (user?.id) {
@@ -40,20 +59,46 @@ export default function LandlordMaintenanceOverviewScreen() {
     }
   };
 
+  const markViewed = async (id: string) => {
+    const updated = new Set(viewedIds).add(id);
+    setViewedIds(updated);
+    await AsyncStorage.setItem(VIEWED_KEY, JSON.stringify([...updated]));
+  };
+
+  // A request is "unseen" if the landlord has never tapped on it
+  const isUnseen = (id: string) => !viewedIds.has(id);
+
   const filteredRequests = useMemo(() => {
-    console.log('🔍 Total requests in store:', requests.length);
-    console.log('🔍 Filtering by status:', statusFilter);
-    
     return requests.filter((req) => {
-      const matchStatus = statusFilter ? req.status === statusFilter : true;
       const searchTerm = query.toLowerCase();
       const matchSearch =
         req.title.toLowerCase().includes(searchTerm) ||
         req.property.toLowerCase().includes(searchTerm) ||
         req.id.toLowerCase().includes(searchTerm);
+
+      let matchStatus: boolean;
+      if (statusFilter === 'new') {
+        // "New" tab: status is 'new' OR 'under_review' OR never been opened
+        matchStatus =
+          req.status === 'new' ||
+          req.status === 'under_review' ||
+          isUnseen(req.id);
+      } else {
+        matchStatus = req.status === statusFilter;
+      }
+
       return matchStatus && matchSearch;
     });
-  }, [requests, query, statusFilter]);
+  }, [requests, query, statusFilter, viewedIds]);
+
+  // Count for the "New" badge
+  const newCount = useMemo(
+    () =>
+      requests.filter(
+        (r) => r.status === 'new' || r.status === 'under_review' || isUnseen(r.id)
+      ).length,
+    [requests, viewedIds]
+  );
 
   return (
     <View style={styles.container}>
@@ -81,12 +126,20 @@ export default function LandlordMaintenanceOverviewScreen() {
       <View style={styles.filterRow}>
         {FILTERS.map((filter) => {
           const active = statusFilter === filter.value;
+          const showBadge = filter.value === 'new' && newCount > 0 && !active;
           return (
             <TouchableOpacity
               key={filter.value}
               style={[styles.filterChip, active && styles.filterChipActive]}
               onPress={() => setStatusFilter(filter.value)}>
-              <Text style={[styles.filterText, active && { color: '#fff' }]}>{filter.label}</Text>
+              <Text style={[styles.filterText, active && { color: '#fff' }]}>
+                {filter.label}
+              </Text>
+              {showBadge && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{newCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           );
         })}
@@ -95,39 +148,59 @@ export default function LandlordMaintenanceOverviewScreen() {
       <FlatList
         data={filteredRequests}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16, gap: 12 }}
+        contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: insets.bottom + 96 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.card}
-            onPress={() => router.push({ pathname: '/landlord-maintenance-detail', params: { id: item.id } })}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              <StatusChip status={item.status} />
-            </View>
-            <Text style={styles.cardSubtitle}>
-              {item.property} • {item.unit}
-            </Text>
-            <Text style={styles.cardTenant}>Tenant: {item.tenantName}</Text>
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons name="calendar" size={16} color="#94a3b8" />
-              <Text style={styles.metaText}>
-                Submitted {new Date(item.createdAt).toLocaleDateString()} at{' '}
-                {new Date(item.createdAt).toLocaleTimeString()}
+        renderItem={({ item }) => {
+          const unseen = isUnseen(item.id);
+          return (
+            <TouchableOpacity
+              style={[styles.card, unseen && styles.cardUnseen]}
+              onPress={() => {
+                markViewed(item.id);
+                router.push({ pathname: '/landlord-maintenance-detail', params: { id: item.id } });
+              }}>
+              <View style={styles.cardHeader}>
+                <View style={styles.cardTitleRow}>
+                  {unseen && <View style={styles.unseenDot} />}
+                  <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+                </View>
+                <StatusChip status={item.status} />
+              </View>
+              <Text style={styles.cardSubtitle}>
+                {item.property} • {item.unit}
               </Text>
-            </View>
-          </TouchableOpacity>
-        )}
+              <Text style={styles.cardTenant}>Tenant: {item.tenantName}</Text>
+              <View style={styles.metaRow}>
+                <MaterialCommunityIcons name="calendar" size={16} color="#94a3b8" />
+                <Text style={styles.metaText}>
+                  Submitted {new Date(item.createdAt).toLocaleDateString()} at{' '}
+                  {new Date(item.createdAt).toLocaleTimeString()}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <MaterialCommunityIcons name="clipboard-check-outline" size={48} color="#cbd5e1" />
+            <Text style={styles.emptyText}>No requests found</Text>
+          </View>
+        }
       />
+
+      {/* FAB */}
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + 24 }]}
+        onPress={() => router.push('/landlord-maintenance-create' as any)}
+        activeOpacity={0.85}>
+        <MaterialCommunityIcons name="plus" size={28} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -135,15 +208,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 10,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  searchRow: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#0f172a' },
+  searchRow: { paddingHorizontal: 16, paddingBottom: 12 },
   searchField: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -155,11 +221,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: '#fff',
   },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: '#0f172a',
-  },
+  searchInput: { flex: 1, fontSize: 14, color: '#0f172a' },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -167,18 +229,26 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: '#e2e8f0',
   },
-  filterChipActive: {
-    backgroundColor: '#2563eb',
+  filterChipActive: { backgroundColor: '#2563eb' },
+  filterText: { fontWeight: '600', color: '#1e293b' },
+  badge: {
+    backgroundColor: '#ef4444',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
-  filterText: {
-    fontWeight: '600',
-    color: '#1e293b',
-  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -189,34 +259,50 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  cardUnseen: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#2563eb',
+    backgroundColor: '#f0f7ff',
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
+  cardTitleRow: {
     flex: 1,
-    marginRight: 12,
-  },
-  cardSubtitle: {
-    color: '#475569',
-    fontWeight: '600',
-  },
-  cardTenant: {
-    fontSize: 13,
-    color: '#475569',
-  },
-  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginRight: 12,
   },
-  metaText: {
-    fontSize: 12,
-    color: '#94a3b8',
+  unseenDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2563eb',
+    flexShrink: 0,
+  },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a', flex: 1 },
+  cardSubtitle: { color: '#475569', fontWeight: '600' },
+  cardTenant: { fontSize: 13, color: '#475569' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText: { fontSize: 12, color: '#94a3b8' },
+  empty: { alignItems: 'center', paddingTop: 60, gap: 12 },
+  emptyText: { fontSize: 15, color: '#94a3b8' },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });
-

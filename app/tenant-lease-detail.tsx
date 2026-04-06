@@ -31,7 +31,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, notifyLandlordLeaseCountersign, DbLease } from '@/lib/supabase';
+import { fetchLeaseById, updateLeaseInDb, uploadLeaseDocument, notifyLandlordLeaseCountersign, rejectLease, DbLease } from '@/lib/supabase';
 
 export default function TenantLeaseDetailScreen() {
   const colorScheme = useColorScheme();
@@ -45,6 +45,8 @@ export default function TenantLeaseDetailScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSignModal, setShowSignModal] = useState(false);
   const [signature, setSignature] = useState('');
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -237,6 +239,34 @@ export default function TenantLeaseDetailScreen() {
       return `${addr.unit ? `Unit ${addr.unit}, ` : ''}${addr.streetNumber} ${addr.streetName}, ${addr.city}, ${addr.province} ${addr.postalCode}`;
     }
     return 'Property Address';
+  };
+
+  const confirmReject = async () => {
+    if (!rejectReason.trim()) {
+      Alert.alert('Reason required', 'Please describe why you are rejecting this lease.');
+      return;
+    }
+
+    setShowRejectModal(false);
+    setIsProcessing(true);
+
+    try {
+      const result = await rejectLease(lease!.id, rejectReason.trim(), user!.id);
+      if (result.success) {
+        setRejectReason('');
+        Alert.alert(
+          'Lease Rejected',
+          'You have rejected this lease. The landlord has been notified and may send a revised lease.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+      } else {
+        Alert.alert('Error', result.error || 'Failed to reject lease. Please try again.');
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to reject lease.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const canSign = lease?.status === 'sent';
@@ -475,7 +505,25 @@ export default function TenantLeaseDetailScreen() {
                 Upload Signed Copy
               </ThemedText>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.rejectButton]}
+              onPress={() => setShowRejectModal(true)}
+              disabled={isProcessing}
+            >
+              <MaterialCommunityIcons name="close-circle-outline" size={20} color="#ef4444" />
+              <ThemedText style={styles.rejectButtonText}>Reject Lease</ThemedText>
+            </TouchableOpacity>
           </>
+        )}
+
+        {lease?.status === 'rejected' && (
+          <View style={[styles.signedBadge, { backgroundColor: '#fee2e2' }]}>
+            <MaterialCommunityIcons name="close-circle" size={20} color="#ef4444" />
+            <ThemedText style={[styles.signedText, { color: '#ef4444' }]}>
+              You rejected this lease
+            </ThemedText>
+          </View>
         )}
 
 {lease?.status === 'signed' && (
@@ -503,6 +551,47 @@ export default function TenantLeaseDetailScreen() {
           </View>
         )}
       </View>
+
+      {/* Reject Modal */}
+      <Modal visible={showRejectModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
+            <ThemedText style={[styles.modalTitle, { color: textColor }]}>Reject Lease</ThemedText>
+            <ThemedText style={[styles.modalMessage, { color: secondaryTextColor }]}>
+              Please provide a reason for rejecting this lease. The landlord will be notified and may send a revised lease.
+            </ThemedText>
+
+            <TextInput
+              style={[styles.signatureInput, { backgroundColor: bgColor, borderColor, color: textColor, height: 100, textAlignVertical: 'top', paddingTop: 12 }]}
+              placeholder="e.g. Rent is too high, incorrect move-in date, terms not agreed upon…"
+              placeholderTextColor={secondaryTextColor}
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+              maxLength={500}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: borderColor }]}
+                onPress={() => {
+                  setShowRejectModal(false);
+                  setRejectReason('');
+                }}
+              >
+                <ThemedText style={[styles.modalButtonText, { color: textColor }]}>Cancel</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
+                onPress={confirmReject}
+              >
+                <ThemedText style={[styles.modalButtonText, { color: '#fff' }]}>Reject</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Sign Modal */}
       <Modal visible={showSignModal} transparent animationType="fade">
@@ -698,6 +787,22 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  rejectButton: {
+    flexDirection: 'row',
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    backgroundColor: '#fff1f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  rejectButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ef4444',
   },
   signedBadge: {
     flexDirection: 'row',
