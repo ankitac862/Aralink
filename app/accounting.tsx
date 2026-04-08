@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -33,11 +33,16 @@ interface TransactionSection {
   data: DbTransaction[];
 }
 
-const CATEGORIES: { key: TransactionCategory; label: string }[] = [
+const INCOME_CATEGORIES: { key: TransactionCategory; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'rent', label: 'Rent' },
   { key: 'garage', label: 'Garage' },
   { key: 'parking', label: 'Parking' },
+  { key: 'other', label: 'Other' },
+];
+
+const EXPENSE_CATEGORIES: { key: TransactionCategory; label: string }[] = [
+  { key: 'all', label: 'All' },
   { key: 'utility', label: 'Utility' },
   { key: 'maintenance', label: 'Maintenance' },
   { key: 'other', label: 'Other' },
@@ -51,6 +56,13 @@ export default function AccountingScreen() {
   
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory>('all');
+
+  const currentCategories = transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+
+  const handleSetTransactionType = useCallback((type: TransactionType) => {
+    setTransactionType(type);
+    setSelectedCategory('all'); // reset filter when switching income/expense
+  }, []);
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [aggregates, setAggregates] = useState<TransactionAggregates>({ totalIncome: 0, totalExpense: 0, chartData: [] });
   const [loading, setLoading] = useState(true);
@@ -293,12 +305,12 @@ export default function AccountingScreen() {
                 styles.toggleOption,
                 transactionType === 'income' && [styles.toggleActive, { backgroundColor: cardBgColor }],
               ]}
-              onPress={() => setTransactionType('income')}
+              onPress={() => handleSetTransactionType('income')}
             >
-              <ThemedText 
+              <ThemedText
                 style={[
                   styles.toggleText,
-                  { 
+                  {
                     color: transactionType === 'income' ? primaryColor : secondaryTextColor,
                     fontWeight: transactionType === 'income' ? '700' : '500',
                   },
@@ -312,7 +324,7 @@ export default function AccountingScreen() {
                 styles.toggleOption,
                 transactionType === 'expense' && [styles.toggleActive, { backgroundColor: cardBgColor }],
               ]}
-              onPress={() => setTransactionType('expense')}
+              onPress={() => handleSetTransactionType('expense')}
             >
               <ThemedText 
                 style={[
@@ -452,7 +464,7 @@ export default function AccountingScreen() {
           style={styles.categoriesContainer}
           contentContainerStyle={styles.categoriesContent}
         >
-          {CATEGORIES.map((cat) => (
+          {currentCategories.map((cat) => (
             <TouchableOpacity
               key={cat.key}
               style={[

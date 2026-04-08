@@ -1,5 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image, Switch, Alert, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
+import {
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  View,
+  Image,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -9,428 +18,332 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { upsertUserProfile, uploadImage } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, signOut, updateAvatar } = useAuthStore();
-  
-  // Form state
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  
-  // Edit mode state
+  const { user, updateAvatar, updateProfile } = useAuthStore();
+
   const [isEditMode, setIsEditMode] = useState(false);
-  
-  // Section open/close state
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [securityOpen, setSecurityOpen] = useState(false);
-  
-  // Notification preferences
-  const [pushNotif, setPushNotif] = useState(true);
-  const [emailNotif, setEmailNotif] = useState(true);
-  const [smsNotif, setSmsNotif] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
-  // Load user data
-  useEffect(() => {
-    if (user) {
-      setFullName(user.name || '');
-      setEmail(user.email || '');
-      setPhone(user.phone || '');
-    }
-  }, [user]);
-
-  // Log avatar URL changes for debugging
-  useEffect(() => {
-    if (user?.avatarUrl) {
-      console.log('🖼️ Avatar URL changed:', user.avatarUrl);
-    }
-  }, [user?.avatarUrl]);
-
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f6f6f8';
-  const cardBgColor = isDark ? '#1f2937' : '#f8f9fc';
-  const borderColor = isDark ? '#4b5563' : '#cfd7e7';
-  const textColor = isDark ? '#f3f4f6' : '#0d121b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#4c669a';
-  const primaryColor = '#135bec';
+  const bgColor = isDark ? '#101622' : '#f1f5f9';
+  const cardBg = isDark ? '#1e2736' : '#ffffff';
+  const border = isDark ? '#2d3a4a' : '#e2e8f0';
+  const textColor = isDark ? '#f1f5f9' : '#0f172a';
+  const subText = isDark ? '#94a3b8' : '#64748b';
+  const primary = '#2563eb';
+  const inputBg = isDark ? '#141c27' : '#f8fafc';
 
-  const handleSaveChanges = async () => {
-    if (!user) return;
-    
-    setIsSaving(true);
-    try {
-      const result = await upsertUserProfile({
-        id: user.id,
-        full_name: fullName,
-        email: email,
-        phone: phone || undefined,
-      });
-
-      if (result) {
-        Alert.alert('Success', 'Profile updated successfully');
-        setIsEditMode(false);
-      } else {
-        Alert.alert('Error', 'Failed to update profile');
-      }
-    } catch (error) {
-      console.error('Error updating profile:', error);
-      Alert.alert('Error', 'Failed to update profile');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    // Reload user data to discard changes
+  // Only sync form fields from store on mount, not on every user update.
+  // This prevents background profile loads from wiping in-progress edits.
+  useEffect(() => {
     if (user) {
       setFullName(user.name || '');
-      setEmail(user.email || '');
       setPhone(user.phone || '');
     }
-    setIsEditMode(false);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // mount only
 
-  const handleLogout = async () => {
-    Alert.alert(
-      'Log Out',
-      'Are you sure you want to log out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Log Out',
-          style: 'destructive',
-          onPress: async () => {
-            await signOut();
-            router.replace('/');
-          },
-        },
-      ]
-    );
-  };
-
-  const getRoleDisplayName = (role: string) => {
+  const getRoleLabel = (role: string) => {
     switch (role) {
-      case 'landlord':
-        return 'Property Owner';
-      case 'tenant':
-        return 'Tenant';
-      case 'manager':
-        return 'Property Manager';
-      default:
-        return 'User';
+      case 'landlord': return 'Property Owner';
+      case 'tenant': return 'Tenant';
+      case 'manager': return 'Property Manager';
+      default: return 'User';
     }
   };
+
+  const getRoleBadgeColor = (role: string) => {
+    switch (role) {
+      case 'landlord': return '#7c3aed';
+      case 'manager': return '#0891b2';
+      default: return '#059669';
+    }
+  };
+
+  const getInitials = () =>
+    (user?.name || 'U')
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
 
   const handlePickAvatar = async () => {
     if (!user) return;
 
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your photo library.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (result.canceled || !result.assets[0]) return;
+
+    setIsUploadingAvatar(true);
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow access to your photo library.');
+      const uri = result.assets[0].uri;
+
+      // Read file as base64 using fetch + FileReader (available in RN 0.73+/Expo SDK 54)
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const base64: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // Fixed filename so each upload overwrites the previous avatar
+      const storagePath = `${user.id}/avatar.jpg`;
+
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(storagePath, bytes, {
+          contentType: 'image/jpeg',
+          upsert: true, // overwrite existing
+        });
+
+      if (error) {
+        Alert.alert('Error', error.message || 'Failed to upload image.');
         return;
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
+      // Append timestamp to bust React Native's image cache
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(data.path);
+      const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
-      if (!result.canceled && result.assets[0]) {
-        setIsUploadingAvatar(true);
-        const imageUri = result.assets[0].uri;
-
-        // Upload image to Supabase Storage
-        const uploadResult = await uploadImage(
-          imageUri,
-          'avatars',
-          `user-${user.id}`
-        );
-
-        if (uploadResult.success && uploadResult.url) {
-          console.log('✅ Avatar uploaded successfully:', uploadResult.url);
-          
-          // Update user profile with new avatar URL
-          const updateResult = await updateAvatar(uploadResult.url);
-          
-          if (updateResult.success) {
-            console.log('✅ Avatar URL updated in profile');
-            Alert.alert('Success', 'Profile picture updated successfully');
-          } else {
-            Alert.alert('Error', updateResult.error || 'Failed to update profile picture');
-          }
-        } else {
-          Alert.alert('Error', uploadResult.error || 'Failed to upload image. Make sure the "avatars" bucket exists in Supabase Storage.');
-        }
-        
-        setIsUploadingAvatar(false);
+      const res = await updateAvatar(publicUrl);
+      if (!res.success) {
+        Alert.alert('Error', res.error || 'Failed to save profile picture.');
       }
-    } catch (error) {
-      console.error('Error picking avatar:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
+      // No alert on success — image updates visually immediately
+    } catch (e) {
+      Alert.alert('Error', 'Failed to upload image. Please try again.');
+    } finally {
       setIsUploadingAvatar(false);
     }
   };
 
-  const SettingSection = ({
-    title,
-    children,
-    isOpen,
-    onToggle,
-  }: {
-    title: string;
-    children: React.ReactNode;
-    isOpen: boolean;
-    onToggle: () => void;
-  }) => (
-    <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
-      <TouchableOpacity style={styles.sectionHeader} onPress={onToggle}>
-        <ThemedText style={[styles.sectionTitle, { color: textColor }]}>{title}</ThemedText>
-        <MaterialCommunityIcons
-          name={isOpen ? 'chevron-up' : 'chevron-down'}
-          size={24}
-          color={textColor}
-        />
-      </TouchableOpacity>
-      {isOpen && <View style={[styles.sectionContent, { borderTopColor: borderColor }]}>{children}</View>}
-    </View>
-  );
+  const handleSave = async () => {
+    if (!fullName.trim()) {
+      Alert.alert('Validation', 'Full name cannot be empty.');
+      return;
+    }
+    setIsSaving(true);
+    const res = await updateProfile({ name: fullName.trim(), phone: phone.trim() });
+    setIsSaving(false);
+    if (res.success) {
+      setIsEditMode(false);
+    } else {
+      Alert.alert('Error', res.error || 'Failed to update profile.');
+    }
+  };
 
-  const SettingInput = ({
-    label,
-    value,
-    onChangeText,
-    type = 'text',
-  }: {
-    label: string;
-    value: string;
-    onChangeText: (text: string) => void;
-    type?: 'text' | 'email' | 'tel';
-  }) => (
-    <View style={styles.inputGroup}>
-      <ThemedText style={[styles.inputLabel, { color: textColor }]}>{label}</ThemedText>
-      <TextInput
-        style={[
-          styles.input,
-          {
-            backgroundColor: isDark ? '#111827' : '#ffffff',
-            borderColor,
-            color: textColor,
-          },
-        ]}
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={type === 'email' ? 'email-address' : type === 'tel' ? 'phone-pad' : 'default'}
-        placeholderTextColor={secondaryTextColor}
-      />
-    </View>
-  );
+  const handleCancel = () => {
+    // Reset to current saved values from store
+    const { user: currentUser } = useAuthStore.getState();
+    setFullName(currentUser?.name || '');
+    setPhone(currentUser?.phone || '');
+    setIsEditMode(false);
+  };
 
-  const ToggleSetting = ({
-    label,
-    value,
-    onValueChange,
-  }: {
-    label: string;
-    value: boolean;
-    onValueChange: (value: boolean) => void;
-  }) => (
-    <View style={[styles.toggleItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}>
-      <ThemedText style={[styles.toggleLabel, { color: textColor }]}>{label}</ThemedText>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: '#d1d5db', true: primaryColor + '40' }}
-        thumbColor={value ? primaryColor : '#d1d5db'}
-      />
-    </View>
-  );
+  if (!user) return null;
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
-      {/* Top App Bar */}
-      <View style={[styles.topBar, { borderBottomColor: borderColor, paddingTop: insets.top }]}>
-        <TouchableOpacity onPress={() => router.back()}>
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: border }]}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
-        <ThemedText type="subtitle" style={[styles.headerTitle, { color: textColor }]}>
-          Profile
-        </ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Profile</ThemedText>
         {isEditMode ? (
-          <TouchableOpacity onPress={handleCancelEdit} style={{ width: 40, alignItems: 'center' }}>
-            <MaterialCommunityIcons name="close" size={24} color={textColor} />
+          <TouchableOpacity onPress={handleCancel}>
+            <MaterialCommunityIcons name="close" size={24} color={subText} />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={() => setIsEditMode(true)} style={{ width: 40, alignItems: 'center' }}>
-            <MaterialCommunityIcons name="pencil" size={24} color={primaryColor} />
+          <TouchableOpacity onPress={() => setIsEditMode(true)}>
+            <MaterialCommunityIcons name="pencil-outline" size={24} color={primary} />
           </TouchableOpacity>
         )}
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Profile Section */}
-        <View style={styles.profileSection}>
-          {user?.avatarUrl ? (
-            <Image
-              source={{ 
-                uri: user.avatarUrl,
-                cache: 'reload' // Force reload from server, not cache
-              }}
-              style={styles.profileImage}
-              key={user.avatarUrl} // Force re-render when URL changes
-            />
-          ) : (
-            <View style={[styles.profileImage, styles.avatarPlaceholder, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.avatarInitials}>
-                {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'U'}
-              </ThemedText>
-            </View>
-          )}
-          <TouchableOpacity 
-            style={[styles.editButton, { backgroundColor: primaryColor }]}
-            onPress={handlePickAvatar}
-            disabled={isUploadingAvatar}
-          >
-            {isUploadingAvatar ? (
-              <ActivityIndicator size="small" color="white" />
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}
+        showsVerticalScrollIndicator={false}>
+
+        {/* Avatar block */}
+        <View style={styles.avatarBlock}>
+          <View style={styles.avatarWrap}>
+            {user.avatarUrl ? (
+              <Image
+                source={{ uri: user.avatarUrl }}
+                style={styles.avatar}
+                key={user.avatarUrl}
+              />
             ) : (
-              <MaterialCommunityIcons name="pencil" size={14} color="white" />
+              <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: primary }]}>
+                <ThemedText style={styles.initials}>{getInitials()}</ThemedText>
+              </View>
             )}
-          </TouchableOpacity>
-          <ThemedText style={[styles.profileName, { color: textColor }]}>
-            {user?.name || 'User'}
-          </ThemedText>
-          <ThemedText style={[styles.profileRole, { color: secondaryTextColor }]}>
-            {user ? getRoleDisplayName(user.role) : 'User'}
-          </ThemedText>
-        </View>
-
-        {/* Settings Sections */}
-        <View style={styles.sectionsContainer}>
-          {/* Personal Details - View or Edit Mode */}
-          {!isEditMode ? (
-            // View Mode
-            <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
-              <ThemedText style={[styles.sectionTitle, { color: textColor, marginBottom: 16 }]}>Personal Details</ThemedText>
-              <View style={styles.infoItem}>
-                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Full Name</ThemedText>
-                <ThemedText style={[styles.infoValue, { color: textColor }]}>{fullName || 'Not set'}</ThemedText>
-              </View>
-              <View style={styles.infoDivider} />
-              <View style={styles.infoItem}>
-                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Email Address</ThemedText>
-                <ThemedText style={[styles.infoValue, { color: textColor }]}>{email || 'Not set'}</ThemedText>
-              </View>
-              <View style={styles.infoDivider} />
-              <View style={styles.infoItem}>
-                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Phone Number</ThemedText>
-                <ThemedText style={[styles.infoValue, { color: textColor }]}>{phone || 'Not set'}</ThemedText>
-              </View>
-            </View>
-          ) : (
-            // Edit Mode
-            <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
-              <ThemedText style={[styles.sectionTitle, { color: textColor, marginBottom: 16 }]}>Edit Personal Details</ThemedText>
-              <SettingInput 
-                label="Full Name" 
-                value={fullName} 
-                onChangeText={setFullName} 
-              />
-              <SettingInput 
-                label="Email Address" 
-                value={email} 
-                type="email" 
-                onChangeText={setEmail} 
-              />
-              <SettingInput 
-                label="Phone Number" 
-                value={phone} 
-                type="tel" 
-                onChangeText={setPhone} 
-              />
-            </View>
-          )}
-
-          <SettingSection 
-            title="Notification Preferences" 
-            isOpen={notificationsOpen} 
-            onToggle={() => setNotificationsOpen(!notificationsOpen)}
-          >
-            <ToggleSetting label="Push Notifications" value={pushNotif} onValueChange={setPushNotif} />
-            <ToggleSetting label="Email" value={emailNotif} onValueChange={setEmailNotif} />
-            <ToggleSetting label="SMS" value={smsNotif} onValueChange={setSmsNotif} />
-          </SettingSection>
-
-          <SettingSection 
-            title="Security" 
-            isOpen={securityOpen} 
-            onToggle={() => setSecurityOpen(!securityOpen)}
-          >
-            <TouchableOpacity 
-              style={[styles.buttonItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}
-              onPress={() => Alert.alert('Change Password', 'Password change feature coming soon')}
-            >
-              <ThemedText style={[styles.buttonItemText, { color: textColor }]}>Change Password</ThemedText>
-              <MaterialCommunityIcons name="arrow-right" size={20} color={secondaryTextColor} />
+            <TouchableOpacity
+              style={[styles.cameraBtn, { backgroundColor: primary }]}
+              onPress={handlePickAvatar}
+              disabled={isUploadingAvatar}>
+              {isUploadingAvatar ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+              )}
             </TouchableOpacity>
-            <View style={{ marginTop: 12 }}>
-              <TouchableOpacity
-                style={[
-                  styles.toggleItem,
-                  { backgroundColor: isDark ? '#111827' : '#ffffff' },
-                ]}
-                onPress={() => Alert.alert('2FA', 'Two-factor authentication setup coming soon')}
-              >
-                <View>
-                  <ThemedText style={[styles.toggleLabel, { color: textColor }]}>
-                    Two-Factor Authentication
-                  </ThemedText>
-                  <ThemedText style={{ color: '#6b7280', fontSize: 12, marginTop: 4 }}>
-                    Not Enabled
-                  </ThemedText>
-                </View>
-                <MaterialCommunityIcons name="arrow-right" size={20} color={secondaryTextColor} />
-              </TouchableOpacity>
-            </View>
-          </SettingSection>
+          </View>
+
+          <ThemedText style={[styles.displayName, { color: textColor }]}>
+            {user.name || 'Your Name'}
+          </ThemedText>
+          <View style={[styles.roleBadge, { backgroundColor: getRoleBadgeColor(user.role) + '20' }]}>
+            <ThemedText style={[styles.roleText, { color: getRoleBadgeColor(user.role) }]}>
+              {getRoleLabel(user.role)}
+            </ThemedText>
+          </View>
         </View>
 
-        {/* Logout Button */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <MaterialCommunityIcons name="logout" size={20} color="#ef4444" />
-          <ThemedText style={styles.logoutButtonText}>Log Out</ThemedText>
-        </TouchableOpacity>
+        {/* Personal Details Card */}
+        <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
+          <View style={[styles.cardHeader, { borderBottomColor: border }]}>
+            <MaterialCommunityIcons name="account-outline" size={18} color={primary} />
+            <ThemedText style={[styles.cardTitle, { color: textColor }]}>Personal Details</ThemedText>
+          </View>
 
-        <View style={{ height: 40 }} />
+          {/* Full Name */}
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Full Name</ThemedText>
+            {isEditMode ? (
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBg, borderColor: border, color: textColor }]}
+                value={fullName}
+                onChangeText={setFullName}
+                placeholder="Enter your full name"
+                placeholderTextColor={subText}
+                autoCapitalize="words"
+              />
+            ) : (
+              <ThemedText style={[styles.fieldValue, { color: textColor }]}>
+                {user.name || 'Not set'}
+              </ThemedText>
+            )}
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: border }]} />
+
+          {/* Email — always locked */}
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Email Address</ThemedText>
+            <View style={styles.lockedRow}>
+              <ThemedText style={[styles.fieldValue, { color: textColor, flex: 1 }]}>
+                {user.email}
+              </ThemedText>
+              <View style={[styles.lockBadge, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
+                <MaterialCommunityIcons name="lock-outline" size={13} color={subText} />
+                <ThemedText style={[styles.lockText, { color: subText }]}>Cannot change</ThemedText>
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: border }]} />
+
+          {/* Phone */}
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Phone Number</ThemedText>
+            {isEditMode ? (
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBg, borderColor: border, color: textColor }]}
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="Enter your phone number"
+                placeholderTextColor={subText}
+                keyboardType="phone-pad"
+              />
+            ) : (
+              <ThemedText style={[styles.fieldValue, { color: textColor }]}>
+                {user.phone || 'Not set'}
+              </ThemedText>
+            )}
+          </View>
+        </View>
+
+        {/* Account info card */}
+        <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
+          <View style={[styles.cardHeader, { borderBottomColor: border }]}>
+            <MaterialCommunityIcons name="shield-account-outline" size={18} color={primary} />
+            <ThemedText style={[styles.cardTitle, { color: textColor }]}>Account</ThemedText>
+          </View>
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Account Type</ThemedText>
+            <ThemedText style={[styles.fieldValue, { color: textColor }]}>
+              {getRoleLabel(user.role)}
+            </ThemedText>
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: border }]} />
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Login Method</ThemedText>
+            <ThemedText style={[styles.fieldValue, { color: textColor }]}>
+              {user.isSocialLogin
+                ? `${user.socialProvider ? user.socialProvider.charAt(0).toUpperCase() + user.socialProvider.slice(1) : 'Social'} Login`
+                : 'Email & Password'}
+            </ThemedText>
+          </View>
+        </View>
+
+        {isEditMode && (
+          <ThemedText style={[styles.emailNote, { color: subText }]}>
+            * Email address cannot be changed. Contact support if needed.
+          </ThemedText>
+        )}
       </ScrollView>
 
-      {/* Bottom Save/Cancel Buttons - Only in Edit Mode */}
+      {/* Save / Cancel footer */}
       {isEditMode && (
-        <View style={[styles.bottomBar, { borderTopColor: borderColor }]}>
+        <View style={[styles.footer, { borderTopColor: border, paddingBottom: insets.bottom + 12 }]}>
           <TouchableOpacity
-            style={[styles.cancelButton, { backgroundColor: isDark ? '#404450' : '#e5e7eb' }]}
-            disabled={isSaving}
-            onPress={handleCancelEdit}>
-            <ThemedText style={[styles.cancelButtonText, { color: isDark ? '#f3f4f6' : '#1f2937' }]}>
-              Cancel
-            </ThemedText>
+            style={[styles.cancelBtn, { borderColor: border }]}
+            onPress={handleCancel}
+            disabled={isSaving}>
+            <ThemedText style={[styles.cancelBtnText, { color: textColor }]}>Cancel</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.saveButton, { backgroundColor: primaryColor, opacity: isSaving ? 0.6 : 1 }]}
-            disabled={isSaving}
-            onPress={handleSaveChanges}>
-            <ThemedText style={styles.saveButtonText}>
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </ThemedText>
+            style={[styles.saveBtn, { backgroundColor: primary, opacity: isSaving ? 0.7 : 1 }]}
+            onPress={handleSave}
+            disabled={isSaving}>
+            {isSaving ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <ThemedText style={styles.saveBtnText}>Save Changes</ThemedText>
+            )}
           </TouchableOpacity>
         </View>
       )}
@@ -439,191 +352,109 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  topBar: {
+  container: { flex: 1 },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: 12,
     borderBottomWidth: 1,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  content: {
-    flex: 1,
-    paddingTop: 16,
-  },
-  profileSection: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  profileImage: {
-    width: 128,
-    height: 128,
-    borderRadius: 64,
-    marginBottom: 8,
-  },
-  avatarPlaceholder: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarInitials: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  editButton: {
+  headerTitle: { fontSize: 18, fontWeight: '700' },
+  scroll: { padding: 16, gap: 16 },
+
+  // Avatar
+  avatarBlock: { alignItems: 'center', paddingVertical: 12, gap: 8 },
+  avatarWrap: { position: 'relative', marginBottom: 4 },
+  avatar: { width: 104, height: 104, borderRadius: 52 },
+  avatarFallback: { justifyContent: 'center', alignItems: 'center' },
+  initials: { fontSize: 40, fontWeight: '700', color: '#fff' },
+  cameraBtn: {
     position: 'absolute',
-    bottom: 8,
-    right: '30%',
+    bottom: 2,
+    right: 2,
     width: 32,
     height: 32,
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'white',
+    borderColor: '#fff',
   },
-  profileName: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: 8,
+  displayName: { fontSize: 20, fontWeight: '700', marginTop: 4 },
+  roleBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
   },
-  profileRole: {
-    fontSize: 16,
-    fontWeight: '400',
-    marginTop: 4,
-  },
-  sectionsContainer: {
-    paddingHorizontal: 16,
-    gap: 12,
-  },
-  section: {
-    borderRadius: 10,
+  roleText: { fontSize: 13, fontWeight: '600' },
+
+  // Card
+  card: {
+    borderRadius: 14,
     borderWidth: 1,
     overflow: 'hidden',
   },
-  sectionHeader: {
+  cardHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 16,
+    gap: 8,
     paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
   },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  sectionContent: {
-    borderTopWidth: 1,
-    paddingTop: 16,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    gap: 12,
-  },
-  inputGroup: {
-    marginBottom: 12,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 6,
-  },
+  cardTitle: { fontSize: 14, fontWeight: '700' },
+
+  // Fields
+  field: { paddingHorizontal: 16, paddingVertical: 12 },
+  fieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
+  fieldValue: { fontSize: 15, fontWeight: '400' },
+  divider: { height: 1, marginHorizontal: 16 },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 12,
-    fontSize: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginTop: 2,
   },
-  toggleItem: {
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+  lockedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  lockBadge: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
   },
-  toggleLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  buttonItem: {
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  buttonItemText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  logoutButton: {
-    marginHorizontal: 16,
-    marginTop: 20,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  logoutButtonText: {
-    color: '#ef4444',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  infoItem: {
-    marginBottom: 12,
-  },
-  infoDivider: {
-    height: 1,
-    backgroundColor: 'rgba(127, 127, 127, 0.2)',
-    marginVertical: 12,
-  },
-  infoLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 6,
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '400',
-  },
-  bottomBar: {
-    borderTopWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+  lockText: { fontSize: 11, fontWeight: '500' },
+
+  emailNote: { fontSize: 12, textAlign: 'center', marginTop: 4 },
+
+  // Footer
+  footer: {
     flexDirection: 'row',
     gap: 12,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
   },
-  cancelButton: {
+  cancelBtn: {
     flex: 1,
+    height: 48,
     borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(127, 127, 127, 0.2)',
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  saveButton: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
+  cancelBtnText: { fontSize: 15, fontWeight: '600' },
+  saveBtn: {
+    flex: 2,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
-

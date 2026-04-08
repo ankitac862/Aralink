@@ -71,6 +71,54 @@ export interface DbMaintenanceRequest {
   created_at: string;
   updated_at: string;
   resolved_at?: string;
+  // Enriched display fields (not stored in DB, populated after fetch)
+  _tenantName?: string;
+  _propertyLabel?: string;
+  _unitLabel?: string;
+}
+
+// =====================================================
+// Enrichment helper — resolves display names for a batch of requests
+// =====================================================
+
+async function enrichRequests(requests: DbMaintenanceRequest[]): Promise<DbMaintenanceRequest[]> {
+  if (requests.length === 0) return requests;
+
+  const tenantIds = [...new Set(requests.map(r => r.tenant_id).filter(Boolean))];
+  const propertyIds = [...new Set(requests.map(r => r.property_id).filter(Boolean))];
+  const unitIds = [...new Set(requests.map(r => r.unit_id).filter(Boolean))];
+
+  const [profilesRes, propertiesRes, unitsRes] = await Promise.all([
+    tenantIds.length > 0
+      ? supabase.from('profiles').select('id, full_name, email').in('id', tenantIds)
+      : Promise.resolve({ data: [] }),
+    propertyIds.length > 0
+      ? supabase.from('properties').select('id, name, address1, city, state').in('id', propertyIds)
+      : Promise.resolve({ data: [] }),
+    unitIds.length > 0
+      ? supabase.from('units').select('id, name').in('id', unitIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const profileMap = new Map<string, string>(
+    (profilesRes.data || []).map((p: any) => [p.id, p.full_name || p.email || 'Tenant'])
+  );
+  const propertyMap = new Map<string, string>(
+    (propertiesRes.data || []).map((p: any) => {
+      const parts = [p.address1, p.city, p.state].filter(Boolean);
+      return [p.id, parts.length > 0 ? parts.join(', ') : (p.name || 'Property')];
+    })
+  );
+  const unitMap = new Map<string, string>(
+    (unitsRes.data || []).map((u: any) => [u.id, u.name || 'Unit'])
+  );
+
+  return requests.map(r => ({
+    ...r,
+    _tenantName: profileMap.get(r.tenant_id) || 'Tenant',
+    _propertyLabel: propertyMap.get(r.property_id) || 'Property',
+    _unitLabel: r.unit_id ? (unitMap.get(r.unit_id) || 'Unit') : undefined,
+  }));
 }
 
 // =====================================================
@@ -226,7 +274,8 @@ export async function fetchMaintenanceRequests(
       return { data: [], error: error.message };
     }
 
-    return { data: data || [], error: null };
+    const enriched = await enrichRequests(data || []);
+    return { data: enriched, error: null };
   } catch (err) {
     return {
       data: [],
@@ -250,7 +299,8 @@ export async function getMaintenanceRequestById(
       return { data: null, error: error.message };
     }
 
-    return { data, error: null };
+    const [enriched] = await enrichRequests([data]);
+    return { data: enriched, error: null };
   } catch (err) {
     return {
       data: null,
