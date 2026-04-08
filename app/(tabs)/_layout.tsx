@@ -1,6 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Tabs } from 'expo-router';
-import { useEffect, useState } from 'react';
 import { Platform, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
@@ -8,31 +6,16 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { WebNavbar } from '@/components/web-navbar';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 
 type UserRole = 'landlord' | 'manager' | 'tenant' | null;
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const [userRole, setUserRole] = useState<UserRole>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, isInitialized } = useAuthStore();
+  const userRole = (user?.role as UserRole) ?? 'tenant';
 
-  useEffect(() => {
-    const getUserRole = async () => {
-      try {
-        const role = await AsyncStorage.getItem('userRole');
-        setUserRole((role as UserRole) || 'tenant'); // default to tenant
-      } catch (error) {
-        console.error('Failed to get user role:', error);
-        setUserRole('tenant');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    getUserRole();
-  }, []);
-
-  if (loading) {
+  if (!isInitialized) {
     return null;
   }
 
