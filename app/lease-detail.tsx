@@ -36,6 +36,8 @@ import {
   supabase,
   resolveLeaseRecipientEmail,
   convertApplicantToTenant,
+  deleteLeaseFromDb,
+  resetLeaseForEditing,
 } from '@/lib/supabase';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -426,6 +428,7 @@ export default function LeaseDetailScreen() {
       case 'uploaded': return primaryColor;
       case 'sent': return successColor;
       case 'signed': return successColor;
+      case 'rejected': return '#ef4444';
       default: return secondaryTextColor;
     }
   };
@@ -440,7 +443,94 @@ export default function LeaseDetailScreen() {
       case 'signed_pending_move_in': return 'Fully Signed (v3) — Ready to Activate';
       case 'active': return 'Active Tenancy';
       case 'terminated': return 'Terminated';
+      case 'rejected': return 'Rejected by Tenant';
       default: return status;
+    }
+  };
+
+  const handleDeleteLease = () => {
+    Alert.alert(
+      'Delete Lease',
+      'Are you sure you want to permanently delete this lease? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setIsProcessing(true);
+            const ok = await deleteLeaseFromDb(lease!.id);
+            setIsProcessing(false);
+            if (ok) {
+              Alert.alert('Deleted', 'The lease has been deleted.', [
+                { text: 'OK', onPress: () => router.back() },
+              ]);
+            } else {
+              Alert.alert('Error', 'Failed to delete the lease. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditAndResend = async () => {
+    if (!lease) return;
+    Alert.alert(
+      'Edit & Resend',
+      'This will reset the lease to draft so you can upload a revised document and resend to the tenant. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          onPress: async () => {
+            setIsProcessing(true);
+            try {
+              await resetLeaseForEditing(lease.id);
+              await loadLease(); // Reloads with draft status — landlord can now upload and send
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed to reset lease.');
+            } finally {
+              setIsProcessing(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUploadDraftDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      setIsProcessing(true);
+
+      const uploadResult = await uploadLeaseDocument(
+        result.assets[0].uri,
+        lease!.id,
+        user!.id
+      );
+
+      if (uploadResult.success) {
+        await updateLeaseInDb(lease!.id, {
+          status: 'uploaded',
+          document_url: uploadResult.url,
+          version: 1,
+        });
+        Alert.alert('Uploaded', 'New document uploaded. You can now send it to the tenant.');
+        loadLease();
+      } else {
+        Alert.alert('Error', uploadResult.error || 'Failed to upload document.');
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to upload document.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -538,6 +628,17 @@ export default function LeaseDetailScreen() {
             </ThemedText>
           </View>
         </View>
+
+        {/* Rejection Reason Banner */}
+        {lease.status === 'rejected' && lease.rejection_reason && (
+          <View style={[styles.rejectionBanner]}>
+            <MaterialCommunityIcons name="alert-circle" size={20} color="#ef4444" />
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.rejectionTitle}>Tenant's reason for rejection:</ThemedText>
+              <ThemedText style={styles.rejectionReason}>{lease.rejection_reason}</ThemedText>
+            </View>
+          </View>
+        )}
 
         {/* Lease Overview */}
         {formData && (
@@ -720,6 +821,59 @@ export default function LeaseDetailScreen() {
               </ThemedText>
             </View>
           )}
+
+          {/* Rejected: Edit & Resend or Delete */}
+          {lease.status === 'rejected' && (
+            <>
+              <TouchableOpacity
+                style={[styles.sendButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
+                onPress={handleEditAndResend}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="pencil-outline" size={20} color="#fff" />
+                    <ThemedText style={styles.sendButtonText}>Edit & Resend</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.sendButton, { backgroundColor: '#ef4444' }]}
+                onPress={handleDeleteLease}
+                disabled={isProcessing}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="trash-can-outline" size={20} color="#fff" />
+                    <ThemedText style={styles.sendButtonText}>Delete Lease</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* Draft (after edit & resend reset): upload new document */}
+          {lease.status === 'draft' && (
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: warningColor }]}
+              onPress={handleUploadDraftDocument}
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <MaterialCommunityIcons name="upload" size={20} color="#fff" />
+                  <ThemedText style={styles.sendButtonText}>Upload Revised Document</ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </ThemedView>
@@ -891,5 +1045,26 @@ const styles = StyleSheet.create({
   sentBadgeText: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  rejectionBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  rejectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#b91c1c',
+    marginBottom: 2,
+  },
+  rejectionReason: {
+    fontSize: 13,
+    color: '#7f1d1d',
+    lineHeight: 18,
   },
 });

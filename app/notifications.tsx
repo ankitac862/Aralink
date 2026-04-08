@@ -140,17 +140,38 @@ export default function NotificationsScreen() {
       return true;
     };
 
-    // Maintenance (tenant): status updates use type maintenance_status_update + requestId
+    // Maintenance: route based on user role
     if (
       requestId ||
       type.includes('maintenance') ||
       title.includes('maintenance')
     ) {
+      const isLandlordOrManager =
+        user?.role === 'landlord' || user?.role === 'manager';
       if (requestId) {
-        router.push(`/tenant-maintenance-detail?id=${requestId}` as any);
+        if (isLandlordOrManager) {
+          router.push(`/landlord-maintenance-detail?id=${requestId}` as any);
+        } else {
+          router.push(`/tenant-maintenance-detail?id=${requestId}` as any);
+        }
         return;
       }
-      router.push('/tenant-maintenance-status' as any);
+      if (isLandlordOrManager) {
+        router.push('/landlord-maintenance-overview' as any);
+      } else {
+        router.push('/tenant-maintenance-status' as any);
+      }
+      return;
+    }
+
+    // Lease rejected: landlord gets notified
+    if (type === 'lease_rejected') {
+      const lid = leaseId || data.leaseId || data.lease_id;
+      if (lid) {
+        router.push(`/lease-detail?id=${lid}` as any);
+      } else {
+        router.push('/leases' as any);
+      }
       return;
     }
 
@@ -235,6 +256,8 @@ export default function NotificationsScreen() {
       case 'lease':
       case 'lease_received':
         return 'file-document-outline';
+      case 'lease_rejected':
+        return 'file-cancel-outline';
       case 'application_approved':
       case 'application_rejected':
         return 'clipboard-check-outline';

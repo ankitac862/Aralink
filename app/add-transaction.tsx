@@ -24,6 +24,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { createTransaction, findActiveLease } from '@/lib/supabase';
+import { linkExpenseToRequest } from '@/services/maintenanceService';
 
 type TransactionType = 'income' | 'expense';
 
@@ -79,6 +80,8 @@ export default function AddTransactionScreen() {
     unitId?: string;
     subunitId?: string;
     tenantId?: string;
+    maintenanceRequestId?: string;
+    description?: string;
   }>();
 
   const isDark = colorScheme === 'dark';
@@ -120,7 +123,7 @@ export default function AddTransactionScreen() {
     leaseId: '',
     category: params.category || 'rent',
     serviceType: '',
-    description: '',
+    description: params.description || '',
   });
 
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -213,8 +216,12 @@ export default function AddTransactionScreen() {
       });
 
       if (result) {
+        // If this transaction was created from a maintenance request, link them
+        if (params.maintenanceRequestId && result.id) {
+          await linkExpenseToRequest(params.maintenanceRequestId, result.id);
+        }
         Alert.alert('Success', 'Transaction added successfully');
-      router.back();
+        router.back();
       } else {
         Alert.alert('Error', 'Failed to save transaction. Please try again.');
       }

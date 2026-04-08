@@ -1,21 +1,17 @@
 import { supabase } from '@/lib/supabase';
 import { triggerPushNotification } from '@/lib/sendPushNotification';
+import {
+  MaintenanceCreatorRole,
+  getInitialStatus,
+  getCreationActivityMessage,
+  TENANT_PERMISSION_ERROR,
+} from '@/lib/maintenancePermissions';
 
-// Types for maintenance requests
-export interface MaintenanceRequestInput {
-  tenantId: string;
-  propertyId: string;
-  landlordId: string;
-  unitId?: string;
-  subUnitId?: string;
-  category: 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general';
-  title: string;
-  description: string;
-  urgency: 'low' | 'medium' | 'high' | 'emergency';
-  availability: string; // ISO timestamp
-  permissionToEnter: boolean;
-  attachments?: MaintenanceAttachment[];
-}
+// =====================================================
+// Types
+// =====================================================
+
+export type { MaintenanceCreatorRole };
 
 export interface MaintenanceAttachment {
   uri: string;
@@ -27,7 +23,24 @@ export interface MaintenanceActivity {
   id: string;
   timestamp: string;
   message: string;
-  actor: 'tenant' | 'landlord' | 'system';
+  actor: 'tenant' | 'landlord' | 'manager' | 'system';
+}
+
+export interface MaintenanceRequestInput {
+  tenantId: string;
+  propertyId: string;
+  landlordId: string;
+  unitId?: string;
+  subUnitId?: string;
+  category: 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general';
+  title: string;
+  description: string;
+  urgency: 'low' | 'medium' | 'high' | 'emergency';
+  availability: string;
+  permissionToEnter: boolean;
+  attachments?: MaintenanceAttachment[];
+  createdByRole?: MaintenanceCreatorRole;
+  createdById?: string;
 }
 
 export interface DbMaintenanceRequest {
@@ -45,8 +58,14 @@ export interface DbMaintenanceRequest {
   permission_to_enter: boolean;
   attachments: MaintenanceAttachment[];
   status: string;
+  created_by_role: string;
+  created_by_id: string;
+  approved_by?: string;
+  approved_at?: string;
   assigned_vendor?: string;
   resolution_notes?: string;
+  tenant_feedback?: string;
+  tenant_feedback_rating?: number;
   expense_id?: string;
   activity: MaintenanceActivity[];
   created_at: string;
@@ -54,19 +73,23 @@ export interface DbMaintenanceRequest {
   resolved_at?: string;
 }
 
-/**
- * Create a new maintenance request
- */
+// =====================================================
+// Create
+// =====================================================
+
 export async function createMaintenanceRequest(
   input: MaintenanceRequestInput
 ): Promise<{ data: DbMaintenanceRequest | null; error: string | null }> {
   try {
-    // Create initial activity log
+    const createdByRole: MaintenanceCreatorRole = input.createdByRole || 'tenant';
+    const createdById = input.createdById || input.tenantId;
+    const initialStatus = getInitialStatus(createdByRole);
+
     const initialActivity: MaintenanceActivity = {
       id: `act-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      message: 'Request submitted and is under review.',
-      actor: 'system',
+      message: getCreationActivityMessage(createdByRole),
+      actor: createdByRole === 'tenant' ? 'tenant' : createdByRole,
     };
 
     const requestData = {
@@ -82,7 +105,9 @@ export async function createMaintenanceRequest(
       availability: input.availability,
       permission_to_enter: input.permissionToEnter,
       attachments: input.attachments || [],
-      status: 'under_review',
+      status: initialStatus,
+      created_by_role: createdByRole,
+      created_by_id: createdById,
       activity: [initialActivity],
     };
 
@@ -93,73 +118,104 @@ export async function createMaintenanceRequest(
       .single();
 
     if (error) {
-      console.error('❌ Error creating maintenance request:', error);
-      console.error('❌ Error code:', error.code);
-      console.error('❌ Error message:', error.message);
-      
+      console.error('❌ Error creating maintenance request:', error.code, error.message);
       if (error.code === '42P01') {
-        return { 
-          data: null, 
-          error: 'Database table not found. Please run the CREATE_MAINTENANCE_REQUESTS_TABLE.sql migration in Supabase SQL Editor.' 
+        return {
+          data: null,
+          error: 'Database table not found. Please run the maintenance migration in Supabase.',
         };
       }
-      
       return { data: null, error: error.message || 'Failed to create maintenance request' };
     }
 
     console.log('✅ Maintenance request created:', data.id);
 
-    // Send in-app + push notification to landlord
-    try {
-      const notifData = {
-        requestId: data.id,
-        propertyId: input.propertyId,
-        urgency: input.urgency,
-        category: input.category,
-      };
-      await supabase.from('notifications').insert({
-        user_id: input.landlordId,
-        type: 'maintenance_request',
-        title: 'New Maintenance Request',
-        message: `New ${input.urgency} priority request: ${input.title}`,
-        data: notifData,
-        created_at: new Date().toISOString(),
-      });
-      // Push notification to landlord
-      await triggerPushNotification({
-        userId: input.landlordId,
-        title: 'New Maintenance Request',
-        body: `New ${input.urgency} priority request: ${input.title}`,
-        data: { type: 'maintenance_request', ...notifData },
-      });
-    } catch (notifError) {
-      // Don't fail the request if notification fails
-    }
+    // Notifications based on who created the request
+    await _notifyOnCreate({
+      createdByRole,
+      landlordId: input.landlordId,
+      tenantId: input.tenantId,
+      requestId: data.id,
+      propertyId: input.propertyId,
+      urgency: input.urgency,
+      title: input.title,
+    });
 
     return { data, error: null };
-  } catch (error) {
+  } catch (err) {
     return {
       data: null,
-      error: error instanceof Error ? error.message : 'Failed to create maintenance request',
+      error: err instanceof Error ? err.message : 'Failed to create maintenance request',
     };
   }
 }
 
-/**
- * Fetch maintenance requests for a user (tenant or landlord)
- */
+async function _notifyOnCreate(params: {
+  createdByRole: MaintenanceCreatorRole;
+  landlordId: string;
+  tenantId: string;
+  requestId: string;
+  propertyId: string;
+  urgency: string;
+  title: string;
+}) {
+  const { createdByRole, landlordId, tenantId, requestId, propertyId, urgency, title } = params;
+  const notifData = { requestId, propertyId, urgency };
+
+  try {
+    if (createdByRole === 'tenant') {
+      // Notify landlord
+      await supabase.from('notifications').insert({
+        user_id: landlordId,
+        type: 'maintenance_request',
+        title: 'New Maintenance Request',
+        message: `New ${urgency} priority request: ${title}`,
+        data: notifData,
+        created_at: new Date().toISOString(),
+      });
+      await triggerPushNotification({
+        userId: landlordId,
+        title: 'New Maintenance Request',
+        body: `New ${urgency} priority request: ${title}`,
+        data: { type: 'maintenance_request', ...notifData },
+      });
+    } else {
+      // Landlord or manager created — notify tenant
+      await supabase.from('notifications').insert({
+        user_id: tenantId,
+        type: 'maintenance_request',
+        title: 'Maintenance Request Logged',
+        message: `A ${urgency} priority maintenance request has been logged for your unit: ${title}`,
+        data: notifData,
+        created_at: new Date().toISOString(),
+      });
+      await triggerPushNotification({
+        userId: tenantId,
+        title: 'Maintenance Request Logged',
+        body: `${title} — ${urgency} priority`,
+        data: { type: 'maintenance_request', ...notifData },
+      });
+    }
+  } catch (notifErr) {
+    console.warn('⚠️ Notification failed (non-fatal):', notifErr);
+  }
+}
+
+// =====================================================
+// Fetch
+// =====================================================
+
 export async function fetchMaintenanceRequests(
   userId: string,
-  userType: 'tenant' | 'landlord'
+  userType: 'tenant' | 'landlord' | 'manager'
 ): Promise<{ data: DbMaintenanceRequest[]; error: string | null }> {
   try {
-    console.log(`📡 Fetching maintenance requests for ${userType}:`, userId);
-
     let query = supabase.from('maintenance_requests').select('*');
 
     if (userType === 'tenant') {
       query = query.eq('tenant_id', userId);
     } else {
+      // landlord and manager both filter by landlord_id
       query = query.eq('landlord_id', userId);
     }
 
@@ -170,26 +226,19 @@ export async function fetchMaintenanceRequests(
       return { data: [], error: error.message };
     }
 
-    console.log('✅ Fetched maintenance requests:', data?.length || 0);
     return { data: data || [], error: null };
-  } catch (error) {
-    console.error('❌ Error in fetchMaintenanceRequests:', error);
+  } catch (err) {
     return {
       data: [],
-      error: error instanceof Error ? error.message : 'Failed to fetch maintenance requests',
+      error: err instanceof Error ? err.message : 'Failed to fetch maintenance requests',
     };
   }
 }
 
-/**
- * Get a single maintenance request by ID
- */
 export async function getMaintenanceRequestById(
   requestId: string
 ): Promise<{ data: DbMaintenanceRequest | null; error: string | null }> {
   try {
-    console.log('📡 Fetching maintenance request:', requestId);
-
     const { data, error } = await supabase
       .from('maintenance_requests')
       .select('*')
@@ -201,57 +250,54 @@ export async function getMaintenanceRequestById(
       return { data: null, error: error.message };
     }
 
-    console.log('✅ Fetched maintenance request:', data.id);
     return { data, error: null };
-  } catch (error) {
-    console.error('❌ Error in getMaintenanceRequestById:', error);
+  } catch (err) {
     return {
       data: null,
-      error: error instanceof Error ? error.message : 'Failed to fetch maintenance request',
+      error: err instanceof Error ? err.message : 'Failed to fetch maintenance request',
     };
   }
 }
 
-/**
- * Update maintenance request status
- */
+// =====================================================
+// Status update (landlord / manager only)
+// =====================================================
+
 export async function updateMaintenanceStatus(
   requestId: string,
   status: string,
-  actor: 'tenant' | 'landlord' | 'system' = 'landlord',
-  userId?: string
+  actor: 'tenant' | 'landlord' | 'manager' | 'system' = 'landlord',
+  callerRole?: MaintenanceCreatorRole,
+  _userId?: string
 ): Promise<{ success: boolean; error: string | null }> {
-  try {
-    console.log('🔄 Updating maintenance request status:', requestId, status);
+  // Hard block at service layer
+  if (callerRole === 'tenant') {
+    return { success: false, error: TENANT_PERMISSION_ERROR };
+  }
 
-    // Get current request to append to activity
-    const { data: currentRequest, error: fetchError } = await supabase
+  try {
+    const { data: current, error: fetchError } = await supabase
       .from('maintenance_requests')
       .select('activity, tenant_id, landlord_id')
       .eq('id', requestId)
       .single();
 
-    if (fetchError || !currentRequest) {
+    if (fetchError || !current) {
       return { success: false, error: 'Request not found' };
     }
 
-    // Create new activity entry
     const newActivity: MaintenanceActivity = {
       id: `act-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      message: `Status updated to ${status.replace(/_/g, ' ')}`,
+      message: `Status updated to ${status.replace(/_/g, ' ')} by ${actor}.`,
       actor,
     };
 
-    const updatedActivity = [...(currentRequest.activity || []), newActivity];
-
-    // Update the request
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       status,
-      activity: updatedActivity,
+      activity: [...(current.activity || []), newActivity],
     };
 
-    // If status is resolved, set resolved_at timestamp
     if (status === 'resolved') {
       updateData.resolved_at = new Date().toISOString();
     }
@@ -266,301 +312,335 @@ export async function updateMaintenanceStatus(
       return { success: false, error: updateError.message };
     }
 
-    console.log('✅ Maintenance status updated');
-
-    // Send in-app + push notification to tenant about status change
+    // Notify tenant
     try {
-      const statusNotifData = { requestId, status };
+      const notifData = { requestId, status };
       await supabase.from('notifications').insert({
-        user_id: currentRequest.tenant_id,
+        user_id: current.tenant_id,
         type: 'maintenance_status_update',
         title: 'Maintenance Request Updated',
         message: `Your maintenance request status: ${status.replace(/_/g, ' ')}`,
-        data: statusNotifData,
+        data: notifData,
         created_at: new Date().toISOString(),
       });
-      // Push notification to tenant
       await triggerPushNotification({
-        userId: currentRequest.tenant_id,
+        userId: current.tenant_id,
         title: 'Maintenance Request Updated',
-        body: `Your request status changed to: ${status.replace(/_/g, ' ')}`,
-        data: { type: 'maintenance_status_update', ...statusNotifData },
+        body: `Status changed to: ${status.replace(/_/g, ' ')}`,
+        data: { type: 'maintenance_status_update', ...notifData },
       });
-    } catch (notifError) {
-      console.error('⚠️ Error sending status update notification:', notifError);
+    } catch (notifErr) {
+      console.warn('⚠️ Status notification failed (non-fatal):', notifErr);
     }
 
     return { success: true, error: null };
-  } catch (error) {
-    console.error('❌ Error in updateMaintenanceStatus:', error);
+  } catch (err) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to update status',
+      error: err instanceof Error ? err.message : 'Failed to update status',
     };
   }
 }
 
-/**
- * Assign a vendor to a maintenance request
- */
+// =====================================================
+// Vendor assignment (landlord / manager only)
+// =====================================================
+
 export async function assignVendor(
   requestId: string,
-  vendorName: string
+  vendorName: string,
+  callerRole?: MaintenanceCreatorRole
 ): Promise<{ success: boolean; error: string | null }> {
-  try {
-    console.log('👷 Assigning vendor to request:', requestId, vendorName);
+  if (callerRole === 'tenant') {
+    return { success: false, error: TENANT_PERMISSION_ERROR };
+  }
 
-    // Get current request
-    const { data: currentRequest, error: fetchError } = await supabase
+  try {
+    const { data: current, error: fetchError } = await supabase
       .from('maintenance_requests')
       .select('activity')
       .eq('id', requestId)
       .single();
 
-    if (fetchError || !currentRequest) {
-      return { success: false, error: 'Request not found' };
-    }
+    if (fetchError || !current) return { success: false, error: 'Request not found' };
 
-    // Create activity entry
     const newActivity: MaintenanceActivity = {
       id: `act-${Date.now()}`,
       timestamp: new Date().toISOString(),
       message: `Vendor assigned: ${vendorName}`,
-      actor: 'landlord',
+      actor: callerRole === 'manager' ? 'manager' : 'landlord',
     };
 
-    const updatedActivity = [...(currentRequest.activity || []), newActivity];
-
-    const { error: updateError } = await supabase
+    const { error } = await supabase
       .from('maintenance_requests')
       .update({
         assigned_vendor: vendorName,
-        activity: updatedActivity,
+        activity: [...(current.activity || []), newActivity],
       })
       .eq('id', requestId);
 
-    if (updateError) {
-      console.error('❌ Error assigning vendor:', updateError);
-      return { success: false, error: updateError.message };
-    }
-
-    console.log('✅ Vendor assigned');
+    if (error) return { success: false, error: error.message };
     return { success: true, error: null };
-  } catch (error) {
-    console.error('❌ Error in assignVendor:', error);
+  } catch (err) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to assign vendor',
+      error: err instanceof Error ? err.message : 'Failed to assign vendor',
     };
   }
 }
 
-/**
- * Add resolution notes to a maintenance request
- */
+// =====================================================
+// Resolution notes (landlord / manager only)
+// =====================================================
+
 export async function addResolutionNotes(
   requestId: string,
-  notes: string
+  notes: string,
+  callerRole?: MaintenanceCreatorRole
 ): Promise<{ success: boolean; error: string | null }> {
-  try {
-    console.log('📝 Adding resolution notes to request:', requestId);
+  if (callerRole === 'tenant') {
+    return { success: false, error: TENANT_PERMISSION_ERROR };
+  }
 
-    // Get current request
-    const { data: currentRequest, error: fetchError } = await supabase
+  try {
+    const { data: current, error: fetchError } = await supabase
       .from('maintenance_requests')
       .select('activity')
       .eq('id', requestId)
       .single();
 
-    if (fetchError || !currentRequest) {
-      return { success: false, error: 'Request not found' };
-    }
+    if (fetchError || !current) return { success: false, error: 'Request not found' };
 
-    // Create activity entry
     const newActivity: MaintenanceActivity = {
       id: `act-${Date.now()}`,
       timestamp: new Date().toISOString(),
       message: 'Resolution notes updated.',
-      actor: 'landlord',
+      actor: callerRole === 'manager' ? 'manager' : 'landlord',
     };
 
-    const updatedActivity = [...(currentRequest.activity || []), newActivity];
-
-    const { error: updateError } = await supabase
+    const { error } = await supabase
       .from('maintenance_requests')
       .update({
         resolution_notes: notes,
-        activity: updatedActivity,
+        activity: [...(current.activity || []), newActivity],
       })
       .eq('id', requestId);
 
-    if (updateError) {
-      console.error('❌ Error adding resolution notes:', updateError);
-      return { success: false, error: updateError.message };
-    }
-
-    console.log('✅ Resolution notes added');
+    if (error) return { success: false, error: error.message };
     return { success: true, error: null };
-  } catch (error) {
-    console.error('❌ Error in addResolutionNotes:', error);
+  } catch (err) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to add resolution notes',
+      error: err instanceof Error ? err.message : 'Failed to add resolution notes',
     };
   }
 }
 
-/**
- * Link an expense/transaction to a maintenance request
- */
+// =====================================================
+// Tenant feedback (tenant only, after resolved)
+// =====================================================
+
+export async function submitTenantFeedback(
+  requestId: string,
+  feedback: string,
+  rating: number
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { data: current, error: fetchError } = await supabase
+      .from('maintenance_requests')
+      .select('activity, status')
+      .eq('id', requestId)
+      .single();
+
+    if (fetchError || !current) return { success: false, error: 'Request not found' };
+    if (current.status !== 'resolved') {
+      return { success: false, error: 'Feedback can only be submitted for resolved requests.' };
+    }
+
+    const newActivity: MaintenanceActivity = {
+      id: `act-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      message: `Tenant submitted feedback (${rating}/5 stars).`,
+      actor: 'tenant',
+    };
+
+    const { error } = await supabase
+      .from('maintenance_requests')
+      .update({
+        tenant_feedback: feedback,
+        tenant_feedback_rating: rating,
+        activity: [...(current.activity || []), newActivity],
+      })
+      .eq('id', requestId);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true, error: null };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to submit feedback',
+    };
+  }
+}
+
+// =====================================================
+// Expense linking
+// =====================================================
+
 export async function linkExpenseToRequest(
   requestId: string,
   expenseId: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
-    console.log('🔗 Linking expense to maintenance request:', requestId, expenseId);
-
-    // Get current request
-    const { data: currentRequest, error: fetchError } = await supabase
+    const { data: current, error: fetchError } = await supabase
       .from('maintenance_requests')
       .select('activity')
       .eq('id', requestId)
       .single();
 
-    if (fetchError || !currentRequest) {
-      return { success: false, error: 'Request not found' };
-    }
+    if (fetchError || !current) return { success: false, error: 'Request not found' };
 
-    // Create activity entry
     const newActivity: MaintenanceActivity = {
       id: `act-${Date.now()}`,
       timestamp: new Date().toISOString(),
-      message: 'Expense/invoice added.',
+      message: 'Expense/invoice linked.',
       actor: 'landlord',
     };
 
-    const updatedActivity = [...(currentRequest.activity || []), newActivity];
-
-    const { error: updateError } = await supabase
+    const { error } = await supabase
       .from('maintenance_requests')
       .update({
         expense_id: expenseId,
-        activity: updatedActivity,
+        activity: [...(current.activity || []), newActivity],
       })
       .eq('id', requestId);
 
-    if (updateError) {
-      console.error('❌ Error linking expense:', updateError);
-      return { success: false, error: updateError.message };
-    }
-
-    console.log('✅ Expense linked to maintenance request');
+    if (error) return { success: false, error: error.message };
     return { success: true, error: null };
-  } catch (error) {
-    console.error('❌ Error in linkExpenseToRequest:', error);
+  } catch (err) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to link expense',
+      error: err instanceof Error ? err.message : 'Failed to link expense',
     };
   }
 }
 
+// =====================================================
+// Attachment upload — signed URLs (private bucket)
+// =====================================================
+
 /**
- * Upload maintenance attachment to Supabase storage
+ * Upload a maintenance attachment.
+ *
+ * React Native does not support fetch(uri).blob() for local file URIs in a
+ * way that Supabase storage can serialize over the network. Instead we read
+ * the file as a Base64 string via expo-file-system, decode it into a
+ * Uint8Array, and upload the raw bytes — which works reliably on both iOS
+ * and Android.
  */
 export async function uploadMaintenanceAttachment(
   file: { uri: string; type: string; name: string },
   requestId: string
-): Promise<{ url: string | null; error: string | null }> {
+): Promise<{ url: string | null; signedUrl: string | null; path: string | null; error: string | null }> {
   try {
-    console.log('📤 Uploading maintenance attachment');
+    // Import the legacy namespace which exposes readAsStringAsync + EncodingType
+    const FileSystem = await import('expo-file-system/legacy');
 
-    // Convert file URI to blob for upload
-    const response = await fetch(file.uri);
-    const blob = await response.blob();
+    // Read local file as Base64
+    const base64 = await FileSystem.readAsStringAsync(file.uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
-    const fileName = `${requestId}/${Date.now()}-${file.name}`;
-    const { data, error } = await supabase.storage
-      .from('maintenance-attachments')
-      .upload(fileName, blob, {
-        contentType: file.type,
-        cacheControl: '3600',
-      });
-
-    if (error) {
-      console.error('❌ Error uploading file:', error);
-      return { url: null, error: error.message };
+    // Decode Base64 → Uint8Array (works in React Native's Hermes/JSC runtime)
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('maintenance-attachments')
-      .getPublicUrl(fileName);
+    const path = `${requestId}/${Date.now()}-${file.name}`;
 
-    console.log('✅ File uploaded successfully');
-    return { url: urlData.publicUrl, error: null };
-  } catch (error) {
-    console.error('❌ Error in uploadMaintenanceAttachment:', error);
+    const { error: uploadError } = await supabase.storage
+      .from('maintenance-attachments')
+      .upload(path, bytes, {
+        contentType: file.type,
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('❌ Upload error:', uploadError);
+      return { url: null, signedUrl: null, path: null, error: uploadError.message };
+    }
+
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from('maintenance-attachments')
+      .createSignedUrl(path, 60 * 60 * 24 * 7); // 7-day signed URL
+
+    if (signedError) {
+      return { url: null, signedUrl: null, path, error: signedError.message };
+    }
+
+    return { url: path, signedUrl: signedData.signedUrl, path, error: null };
+  } catch (err) {
+    console.error('❌ uploadMaintenanceAttachment error:', err);
     return {
       url: null,
-      error: error instanceof Error ? error.message : 'Failed to upload attachment',
+      signedUrl: null,
+      path: null,
+      error: err instanceof Error ? err.message : 'Failed to upload attachment',
     };
   }
 }
 
-/**
- * Get maintenance statistics for landlord dashboard
- */
-export async function getMaintenanceStats(
-  landlordId: string
-): Promise<{
+/** Refresh a signed URL for an existing attachment path */
+export async function getSignedAttachmentUrl(path: string): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from('maintenance-attachments')
+    .createSignedUrl(path, 60 * 60 * 24); // 24 hours
+
+  if (error) return null;
+  return data.signedUrl;
+}
+
+// =====================================================
+// Stats (landlord dashboard)
+// =====================================================
+
+export async function getMaintenanceStats(landlordId: string): Promise<{
   totalRequests: number;
   newRequests: number;
   inProgressRequests: number;
   resolvedRequests: number;
   emergencyRequests: number;
 }> {
-  try {
-    console.log('📊 Fetching maintenance stats for landlord:', landlordId);
+  const empty = {
+    totalRequests: 0,
+    newRequests: 0,
+    inProgressRequests: 0,
+    resolvedRequests: 0,
+    emergencyRequests: 0,
+  };
 
+  try {
     const { data, error } = await supabase.rpc('get_landlord_maintenance_stats', {
       landlord_uuid: landlordId,
     });
 
     if (error) {
       console.error('❌ Error fetching maintenance stats:', error);
-      return {
-        totalRequests: 0,
-        newRequests: 0,
-        inProgressRequests: 0,
-        resolvedRequests: 0,
-        emergencyRequests: 0,
-      };
+      return empty;
     }
 
-    const stats = data[0] || {
-      total_requests: 0,
-      new_requests: 0,
-      in_progress_requests: 0,
-      resolved_requests: 0,
-      emergency_requests: 0,
-    };
-
+    const s = data?.[0] || {};
     return {
-      totalRequests: Number(stats.total_requests),
-      newRequests: Number(stats.new_requests),
-      inProgressRequests: Number(stats.in_progress_requests),
-      resolvedRequests: Number(stats.resolved_requests),
-      emergencyRequests: Number(stats.emergency_requests),
+      totalRequests: Number(s.total_requests || 0),
+      newRequests: Number(s.new_requests || 0),
+      inProgressRequests: Number(s.in_progress_requests || 0),
+      resolvedRequests: Number(s.resolved_requests || 0),
+      emergencyRequests: Number(s.emergency_requests || 0),
     };
-  } catch (error) {
-    console.error('❌ Error in getMaintenanceStats:', error);
-    return {
-      totalRequests: 0,
-      newRequests: 0,
-      inProgressRequests: 0,
-      resolvedRequests: 0,
-      emergencyRequests: 0,
-    };
+  } catch {
+    return empty;
   }
 }
