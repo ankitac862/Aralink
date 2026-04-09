@@ -114,8 +114,8 @@ export default function ProfileScreen() {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      // Fixed filename so each upload overwrites the previous avatar
-      const storagePath = `${user.id}/avatar.jpg`;
+      // Policy requires path: user-<uid>/avatar.jpg
+      const storagePath = `user-${user.id}/avatar.jpg`;
 
       const { data, error } = await supabase.storage
         .from('avatars')

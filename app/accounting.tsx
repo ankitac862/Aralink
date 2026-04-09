@@ -459,6 +459,7 @@ export default function AccountingScreen() {
         </View>
 
         <ScrollView
+          key={transactionType}
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.categoriesContainer}

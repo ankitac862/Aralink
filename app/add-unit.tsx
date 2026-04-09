@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -60,6 +61,26 @@ export default function AddUnitScreen() {
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Date picker state
+  const [showDatePicker, setShowDatePicker] = useState<'availability' | 'leaseStart' | 'leaseEnd' | null>(null);
+
+  const formatDate = (iso: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString();
+  };
+
+  const handleDateChange = (_: any, date?: Date) => {
+    if (Platform.OS === 'android') setShowDatePicker(null);
+    if (!date || !showDatePicker) return;
+    const iso = date.toISOString().split('T')[0];
+    if (showDatePicker === 'availability') setFormData(prev => ({ ...prev, availabilityDate: iso }));
+    else if (showDatePicker === 'leaseStart') setFormData(prev => ({ ...prev, leaseStartDate: iso }));
+    else if (showDatePicker === 'leaseEnd') setFormData(prev => ({ ...prev, leaseEndDate: iso }));
+  };
+
+  const getDateValue = (iso: string) => iso ? new Date(iso) : new Date();
 
   const pickImage = async () => {
     try {
@@ -310,46 +331,70 @@ export default function AddUnitScreen() {
           {/* Dates */}
           <View style={styles.section}>
             <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Dates</ThemedText>
-            
+
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
                 Availability Date (Optional)
               </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="MM/DD/YYYY"
-                placeholderTextColor={secondaryTextColor}
-                value={formData.availabilityDate}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, availabilityDate: text }))}
-              />
+              <TouchableOpacity
+                style={[styles.dateButton, { backgroundColor: inputBgColor, borderColor }]}
+                onPress={() => setShowDatePicker('availability')}>
+                <MaterialCommunityIcons name="calendar" size={20} color={primaryColor} />
+                <ThemedText style={[styles.dateButtonText, { color: formData.availabilityDate ? textColor : secondaryTextColor }]}>
+                  {formData.availabilityDate ? formatDate(formData.availabilityDate) : 'Select date'}
+                </ThemedText>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.row}>
               <View style={[styles.inputGroup, { flex: 1 }]}>
                 <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                  Lease Start Date (Optional)
+                  Lease Start (Optional)
                 </ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.leaseStartDate}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, leaseStartDate: text }))}
-                />
+                <TouchableOpacity
+                  style={[styles.dateButton, { backgroundColor: inputBgColor, borderColor }]}
+                  onPress={() => setShowDatePicker('leaseStart')}>
+                  <MaterialCommunityIcons name="calendar-start" size={20} color={primaryColor} />
+                  <ThemedText style={[styles.dateButtonText, { color: formData.leaseStartDate ? textColor : secondaryTextColor }]}>
+                    {formData.leaseStartDate ? formatDate(formData.leaseStartDate) : 'Select'}
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
               <View style={[styles.inputGroup, { flex: 1 }]}>
                 <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                  Lease End Date (Optional)
+                  Lease End (Optional)
                 </ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.leaseEndDate}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, leaseEndDate: text }))}
-                />
+                <TouchableOpacity
+                  style={[styles.dateButton, { backgroundColor: inputBgColor, borderColor }]}
+                  onPress={() => setShowDatePicker('leaseEnd')}>
+                  <MaterialCommunityIcons name="calendar-end" size={20} color={primaryColor} />
+                  <ThemedText style={[styles.dateButtonText, { color: formData.leaseEndDate ? textColor : secondaryTextColor }]}>
+                    {formData.leaseEndDate ? formatDate(formData.leaseEndDate) : 'Select'}
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
             </View>
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={getDateValue(
+                  showDatePicker === 'availability' ? formData.availabilityDate :
+                  showDatePicker === 'leaseStart' ? formData.leaseStartDate :
+                  formData.leaseEndDate
+                )}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handleDateChange}
+                onTouchCancel={() => setShowDatePicker(null)}
+              />
+            )}
+            {showDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={[styles.dateConfirm, { backgroundColor: primaryColor }]}
+                onPress={() => setShowDatePicker(null)}>
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Photos */}
@@ -577,6 +622,22 @@ const styles = StyleSheet.create({
   checkboxLabel: {
     fontSize: 14,
     flex: 1,
+  },
+  dateButton: {
+    height: 48,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dateButtonText: { fontSize: 15, flex: 1 },
+  dateConfirm: {
+    marginTop: 8,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   footer: {
     paddingHorizontal: 16,
