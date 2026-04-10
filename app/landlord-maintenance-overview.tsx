@@ -169,7 +169,14 @@ export default function LandlordMaintenanceOverviewScreen() {
               <Text style={styles.cardSubtitle}>
                 {item.property} • {item.unit}
               </Text>
-              <Text style={styles.cardTenant}>Tenant: {item.tenantName}</Text>
+              <Text style={styles.cardTenant}>
+                {item.createdByRole === 'landlord'
+                  ? 'Landlord'
+                  : item.createdByRole === 'manager'
+                  ? 'Property Manager'
+                  : 'Tenant'}
+                {': '}{item.tenantName}
+              </Text>
               <View style={styles.metaRow}>
                 <MaterialCommunityIcons name="calendar" size={16} color="#94a3b8" />
                 <Text style={styles.metaText}>

@@ -36,6 +36,7 @@ interface AuthState {
   signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; error?: string }>;
+  updateProfile: (fields: { name?: string; phone?: string }) => Promise<{ success: boolean; error?: string }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
   clearError: () => void;
   setPendingVerificationEmail: (email: string | null) => void;
@@ -179,96 +180,83 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   initialize: async () => {
-    try {
-      set({ isLoading: true });
+    // Guard: don't re-initialize
+    if (get().isInitialized) return;
 
-      // Add timeout to prevent infinite hanging (10 seconds for better UX)
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('Auth initialization timeout')), 10000)
-      );
+    set({ isLoading: true });
 
-      const initPromise = (async () => {
-        // Get session with better error handling
-        let session = null;
+    // Shared auth state listener — registered regardless of session state
+    const registerListener = () => {
+      supabase.auth.onAuthStateChange(async (event, newSession) => {
         try {
-          const { data, error } = await supabase.auth.getSession();
-        
-          if (error) {
-            // If there's a session error, try to clear it and start fresh
-            console.warn('Session error, clearing:', error.message);
-            try {
-              await supabase.auth.signOut();
-            } catch (signOutError) {
-              // Ignore sign out errors
-            }
-            set({ isInitialized: true, isLoading: false });
-            return;
+          if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && newSession?.user) {
+            const profile = await getUserProfile(newSession.user.id);
+            const role = (await getStorageValue('userRole')) as UserRole | null;
+            set({ user: toAuthUser(newSession.user, profile, role ?? undefined), session: newSession });
+          } else if (event === 'SIGNED_OUT') {
+            set({ user: null, session: null });
           }
-          
-          session = data?.session;
-        } catch (sessionError: any) {
-          // Handle specific session scope errors
-          if (sessionError?.message?.includes('missing destination name scopes') || 
-              sessionError?.code === 'PGRST205' ||
-              sessionError?.message?.includes('Session')) {
-            console.warn('Session scope error detected, clearing corrupted session');
-            try {
-              await clearCorruptedSession();
-            } catch (clearError) {
-              console.error('Error clearing corrupted session:', clearError);
-            }
-          }
-          console.error('Error getting session:', sessionError);
-          set({ isInitialized: true, isLoading: false });
-          return;
+        } catch (e) {
+          console.error('Auth state change error:', e);
         }
+      });
+    };
 
-        if (session?.user) {
-          try {
-            const profile = await getUserProfile(session.user.id);
-            const savedRole = await getStorageValue('userRole') as UserRole | null;
-            const authUser = toAuthUser(session.user, profile, savedRole || undefined);
-            set({ user: authUser, session, isInitialized: true, isLoading: false });
-          } catch (userError) {
-            console.error('Error loading user profile:', userError);
-            // Still mark as initialized even if profile load fails
-            set({ isInitialized: true, isLoading: false });
-          }
-        } else {
-          set({ isInitialized: true, isLoading: false });
-        }
-
-        // Listen for auth changes with error handling
-        supabase.auth.onAuthStateChange(async (event, newSession) => {
-          try {
-            console.log('Auth state changed:', event);
-            
-            if (event === 'SIGNED_IN' && newSession?.user) {
-              const profile = await getUserProfile(newSession.user.id);
-              const savedRole = await getStorageValue('userRole') as UserRole | null;
-              const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
-              set({ user: authUser, session: newSession });
-            } else if (event === 'SIGNED_OUT') {
-              set({ user: null, session: null });
-            } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
-              const profile = await getUserProfile(newSession.user.id);
-              const savedRole = await getStorageValue('userRole') as UserRole | null;
-              const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
-              set({ user: authUser, session: newSession });
-            }
-          } catch (stateChangeError) {
-            console.error('Error in auth state change handler:', stateChangeError);
-            // Don't crash the app, just log the error
-          }
-        });
-      })();
-
-      // Race between timeout and init
-      await Promise.race([initPromise, timeoutPromise]);
-    } catch (error) {
-      console.error('Error initializing auth:', error);
+    // ── Step 1: Read local session from AsyncStorage (fast, no network) ──
+    let rawSession: Session | null = null;
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn('Session read error, clearing:', error.message);
+        try { await supabase.auth.signOut(); } catch { /* ignore */ }
+        set({ isInitialized: true, isLoading: false });
+        registerListener();
+        return;
+      }
+      rawSession = data?.session ?? null;
+    } catch (sessionError: unknown) {
+      const msg = sessionError instanceof Error ? sessionError.message : '';
+      if (msg.includes('missing destination name scopes') || msg.includes('Session')) {
+        try { await clearCorruptedSession(); } catch { /* ignore */ }
+      }
+      console.error('Error getting session:', sessionError);
       set({ isInitialized: true, isLoading: false });
+      registerListener();
+      return;
     }
+
+    // ── Step 2: No session — mark ready and listen for future sign-ins ──
+    if (!rawSession) {
+      set({ isInitialized: true, isLoading: false });
+      registerListener();
+      return;
+    }
+
+    // ── Step 3: Session exists — capture into a const so TS keeps narrowing ──
+    const activeSession: Session = rawSession;          // const, never null from here
+    const sessionUser = activeSession.user;             // const, always a User
+
+    const savedRole = (await getStorageValue('userRole')) as UserRole | null;
+
+    // Show app immediately with JWT data (no DB round-trip required)
+    set({
+      user: toAuthUser(sessionUser, null, savedRole ?? undefined),
+      session: activeSession,
+      isInitialized: true,
+      isLoading: false,
+    });
+
+    // ── Step 4: Enrich with full DB profile in the background ──
+    getUserProfile(sessionUser.id)
+      .then((profile) => {
+        if (profile) {
+          set({ user: toAuthUser(sessionUser, profile, savedRole ?? undefined) });
+        }
+      })
+      .catch((e) => console.warn('Background profile load failed (non-fatal):', e));
+
+    // ── Step 5: Register auth state listener ──
+    registerListener();
   },
 
   signUp: async (identifier, password, name, role) => {
@@ -583,6 +571,35 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (error) {
       console.error('Error updating avatar:', error);
       return { success: false, error: 'Failed to update avatar' };
+    }
+  },
+
+  updateProfile: async (fields: { name?: string; phone?: string }) => {
+    const currentUser = get().user;
+    if (!currentUser) return { success: false, error: 'No user logged in' };
+
+    try {
+      const result = await upsertUserProfile({
+        id: currentUser.id,
+        ...(fields.name !== undefined ? { full_name: fields.name } : {}),
+        ...(fields.phone !== undefined ? { phone: fields.phone } : {}),
+      });
+
+      if (result) {
+        set({
+          user: {
+            ...currentUser,
+            ...(fields.name !== undefined ? { name: fields.name } : {}),
+            ...(fields.phone !== undefined ? { phone: fields.phone } : {}),
+          },
+        });
+        return { success: true };
+      }
+
+      return { success: false, error: 'Failed to update profile' };
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      return { success: false, error: 'Failed to update profile' };
     }
   },
 

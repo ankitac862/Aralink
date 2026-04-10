@@ -62,7 +62,26 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
       Alert.alert('Permission Denied', 'You are not allowed to change the request status.');
       return;
     }
+
+    // Notes are mandatory before marking as Resolved
+    if (status === 'resolved' && !notes.trim()) {
+      Alert.alert(
+        'Notes Required',
+        'Please add resolution notes before marking this request as Resolved.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     const actor = callerRole === 'manager' ? 'manager' : 'landlord';
+
+    // If resolving and notes haven't been saved yet, save them first
+    if (status === 'resolved' && notes.trim() !== (request.resolutionNotes ?? '').trim()) {
+      setSaving(true);
+      await addResolutionNotes(request.id, notes.trim(), callerRole);
+      setSaving(false);
+    }
+
     const success = await updateRequestStatus(request.id, status as any, actor, callerRole);
     if (success) {
       Alert.alert('Updated', `Status changed to ${status.replace(/_/g, ' ')}.`);
@@ -196,15 +215,14 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
               <Text style={styles.subtitle}>
                 {request.property} • {request.unit}
               </Text>
-              <Text style={styles.tenant}>Tenant: {request.tenantName}</Text>
-              {request.createdByRole !== 'tenant' && (
-                <View style={styles.creatorBadge}>
-                  <MaterialCommunityIcons name="account-hard-hat" size={13} color="#7c3aed" />
-                  <Text style={styles.creatorBadgeText}>
-                    Created by {request.createdByRole}
-                  </Text>
-                </View>
-              )}
+              <Text style={styles.tenant}>
+                {request.createdByRole === 'landlord'
+                  ? 'Landlord'
+                  : request.createdByRole === 'manager'
+                  ? 'Property Manager'
+                  : 'Tenant'}
+                {': '}{request.tenantName}
+              </Text>
             </View>
             <StatusChip status={request.status} />
           </View>
@@ -272,16 +290,22 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
         {/* Resolution Notes */}
         {permitted.addNotes && (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Resolution Notes</Text>
+            <View style={styles.notesTitleRow}>
+              <Text style={styles.sectionTitle}>Resolution Notes</Text>
+              <View style={styles.requiredBadge}>
+                <Text style={styles.requiredText}>Required to resolve</Text>
+              </View>
+            </View>
             <TextInput
-              style={styles.notesInput}
-              placeholder="Add notes about the repair, parts ordered, follow-up etc."
+              style={[styles.notesInput, !notes.trim() && styles.notesInputWarning]}
+              placeholder="Add notes about the repair, parts ordered, follow-up etc. (required before resolving)"
+              placeholderTextColor="#94a3b8"
               multiline
               value={notes}
               onChangeText={setNotes}
             />
             <TouchableOpacity
-              style={styles.saveButton}
+              style={[styles.saveButton, saving && { opacity: 0.6 }]}
               onPress={handleSaveNotes}
               disabled={saving}>
               <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Notes'}</Text>
@@ -402,6 +426,10 @@ const styles = StyleSheet.create({
   },
   saveButton: { backgroundColor: '#16a34a', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   saveText: { color: '#fff', fontWeight: '700' },
+  notesTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  requiredBadge: { backgroundColor: '#fef3c7', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  requiredText: { fontSize: 11, fontWeight: '600', color: '#b45309' },
+  notesInputWarning: { borderColor: '#f59e0b' },
   activityRow: { flexDirection: 'row', alignItems: 'flex-start' },
   activityMessage: { fontSize: 14, color: '#111827' },
   activityMeta: { fontSize: 12, color: '#94a3b8', marginTop: 2 },

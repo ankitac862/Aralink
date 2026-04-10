@@ -187,15 +187,17 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
   }
 }
 
-// Helper function to create or update user profile
+// Helper function to update user profile (profile row is created by DB trigger on signup)
 export async function upsertUserProfile(profile: Partial<UserProfile> & { id: string }): Promise<UserProfile | null> {
+  const { id, ...fields } = profile;
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .upsert({
-        ...profile,
+      .update({
+        ...fields,
         updated_at: new Date().toISOString(),
       })
+      .eq('id', id)
       .select()
       .maybeSingle();
 
@@ -203,19 +205,14 @@ export async function upsertUserProfile(profile: Partial<UserProfile> & { id: st
       if (error.code === 'PGRST205') {
         console.warn('⚠️ profiles table not found. User profile not saved.');
       } else {
-        console.error('Error upserting user profile:', error);
+        console.error('Error updating user profile:', error);
       }
-      return null;
-    }
-
-    if (!data) {
-      console.error('❌ Profile upsert returned 0 rows - likely RLS policy blocking. Run FIX_PROFILES_RLS_SIMPLE.sql');
       return null;
     }
 
     return data;
   } catch (error) {
-    console.error('Error upserting user profile:', error);
+    console.error('Error updating user profile:', error);
     return null;
   }
 }

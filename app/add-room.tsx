@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -68,6 +69,12 @@ export default function AddRoomScreen() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const formatDate = (iso: string) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString();
+  };
 
   useEffect(() => {
     // If roomId is provided, we're editing an existing room
@@ -291,16 +298,32 @@ export default function AddRoomScreen() {
               <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
                 Availability Date
               </ThemedText>
-              <View style={[styles.dateInput, { backgroundColor: inputBgColor, borderColor }]}>
-                <TextInput
-                  style={[styles.input, { color: textColor }]}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.availabilityDate}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, availabilityDate: text }))}
+              <TouchableOpacity
+                style={[styles.dateInput, { backgroundColor: inputBgColor, borderColor }]}
+                onPress={() => setShowDatePicker(true)}>
+                <MaterialCommunityIcons name="calendar" size={20} color={primaryColor} />
+                <ThemedText style={[styles.dateButtonText, { color: formData.availabilityDate ? textColor : secondaryTextColor }]}>
+                  {formData.availabilityDate ? formatDate(formData.availabilityDate) : 'Select date'}
+                </ThemedText>
+              </TouchableOpacity>
+              {showDatePicker && (
+                <DateTimePicker
+                  value={formData.availabilityDate ? new Date(formData.availabilityDate) : new Date()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={(_, date) => {
+                    if (Platform.OS === 'android') setShowDatePicker(false);
+                    if (date) setFormData(prev => ({ ...prev, availabilityDate: date.toISOString().split('T')[0] }));
+                  }}
                 />
-                <MaterialCommunityIcons name="calendar" size={20} color={secondaryTextColor} />
-              </View>
+              )}
+              {showDatePicker && Platform.OS === 'ios' && (
+                <TouchableOpacity
+                  style={[styles.dateConfirm, { backgroundColor: primaryColor }]}
+                  onPress={() => setShowDatePicker(false)}>
+                  <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Done</ThemedText>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -501,6 +524,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
+    gap: 10,
+  },
+  dateButtonText: { fontSize: 15, flex: 1 },
+  dateConfirm: {
+    marginTop: 8,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   photosScroll: {
     marginTop: 8,
