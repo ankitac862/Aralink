@@ -187,17 +187,16 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
   }
 }
 
-// Helper function to update user profile (profile row is created by DB trigger on signup)
+// Helper function to upsert user profile (creates row if missing, updates if exists)
 export async function upsertUserProfile(profile: Partial<UserProfile> & { id: string }): Promise<UserProfile | null> {
   const { id, ...fields } = profile;
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .update({
-        ...fields,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
+      .upsert(
+        { id, ...fields, updated_at: new Date().toISOString() },
+        { onConflict: 'id' }
+      )
       .select()
       .maybeSingle();
 
@@ -205,14 +204,14 @@ export async function upsertUserProfile(profile: Partial<UserProfile> & { id: st
       if (error.code === 'PGRST205') {
         console.warn('⚠️ profiles table not found. User profile not saved.');
       } else {
-        console.error('Error updating user profile:', error);
+        console.error('Error upserting user profile:', error);
       }
       return null;
     }
 
     return data;
   } catch (error) {
-    console.error('Error updating user profile:', error);
+    console.error('Error upserting user profile:', error);
     return null;
   }
 }

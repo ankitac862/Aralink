@@ -6,9 +6,14 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-reanimated';
 
+import * as WebBrowser from 'expo-web-browser';
+
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+
+// Warm up the browser for faster OAuth on Android
+WebBrowser.warmUpAsync();
 
 export const unstable_settings = {
   anchor: 'splash', // Start with splash while auth initializes
@@ -16,7 +21,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const { initialize, isInitialized, user, isLoading } = useAuthStore();
+  const { initialize, isInitialized, user, isLoading, pendingOAuthSession } = useAuthStore();
   const segments = useSegments();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
@@ -103,11 +108,17 @@ export default function RootLayout() {
       segments[0] === 'invite-auth' ||
       (segments[0] === '(auth)' && segments[1] === 'activate-tenant');
 
-    if (!user && !inAuthGroup && !isInviteRoute) {
+    const isSocialRoleSelect =
+      segments[0] === '(auth)' && segments[1] === 'social-role-select';
+
+    if (pendingOAuthSession && !isSocialRoleSelect) {
+      // New social user needs to pick a role — send them there
+      router.replace('/(auth)/social-role-select' as any);
+    } else if (!user && !inAuthGroup && !isInviteRoute && !isSocialRoleSelect) {
       // User is not authenticated and not in auth group, redirect to auth
       router.replace('/(auth)');
-    } else if (user && inAuthGroup) {
-      // User is authenticated but in auth group, redirect to appropriate dashboard
+    } else if (user && inAuthGroup && !pendingOAuthSession) {
+      // User is authenticated in auth group (includes after completeSocialSignIn on social-role-select)
       if (user.role === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
       } else {
@@ -145,6 +156,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="splash" />
         <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(auth)/social-role-select" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="invite" />
         <Stack.Screen name="invite-auth" />
