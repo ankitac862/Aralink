@@ -18,6 +18,10 @@ export interface Conversation {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
+  // Enriched avatar URLs (populated after fetch from profiles)
+  tenant_avatar_url?: string;
+  landlord_avatar_url?: string;
+  manager_avatar_url?: string;
 }
 
 export interface Message {
@@ -122,9 +126,32 @@ class MessageService {
         console.error('❌ Error fetching conversations:', error);
         throw error;
       }
-      
-      console.log('✅ Found conversations:', data?.length || 0);
-      return data || [];
+
+      const conversations: Conversation[] = data || [];
+      if (conversations.length === 0) return conversations;
+
+      // Batch-fetch avatar URLs from profiles for all participants
+      const userIds = [...new Set([
+        ...conversations.map(c => c.tenant_id),
+        ...conversations.map(c => c.landlord_id),
+        ...conversations.filter(c => c.manager_id).map(c => c.manager_id!),
+      ])];
+
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, avatar_url')
+        .in('id', userIds);
+
+      const avatarMap = new Map<string, string>(
+        (profiles || []).filter(p => p.avatar_url).map((p: any) => [p.id, p.avatar_url])
+      );
+
+      return conversations.map(c => ({
+        ...c,
+        tenant_avatar_url: avatarMap.get(c.tenant_id),
+        landlord_avatar_url: avatarMap.get(c.landlord_id),
+        manager_avatar_url: c.manager_id ? avatarMap.get(c.manager_id) : undefined,
+      }));
     } catch (error) {
       console.error('❌ Error fetching conversations:', error);
       throw error;

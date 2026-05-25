@@ -65,7 +65,7 @@ export default function AddPropertyScreen() {
     
     // Property details
     propertyType: 'single_unit' as 'single_unit' | 'multi_unit' | 'commercial' | 'parking',
-    landlordName: '',
+    landlordName: user?.role === 'landlord' ? (user?.name || '') : '',
     
     // Rental options (conditional)
     rentCompleteProperty: false,

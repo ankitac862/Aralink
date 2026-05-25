@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { Image, StyleSheet, View, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -106,17 +106,18 @@ export default function MessagesScreen() {
       item.landlord_unread_count +
       item.manager_unread_count;
 
-    // Show the OTHER person's name (not current user's name)
+    // Show the OTHER person's name and avatar (not current user's)
     let displayName = 'Unknown';
+    let avatarUrl: string | undefined;
     if (user?.id === item.tenant_id) {
-      // Current user is tenant, show landlord's name
       displayName = item.landlord_name || item.manager_name || 'Landlord';
+      avatarUrl = item.landlord_avatar_url || item.manager_avatar_url;
     } else if (user?.id === item.landlord_id) {
-      // Current user is landlord, show tenant's name
       displayName = item.tenant_name || 'Tenant';
+      avatarUrl = item.tenant_avatar_url;
     } else if (user?.id === item.manager_id) {
-      // Current user is manager, show tenant's name
       displayName = item.tenant_name || 'Tenant';
+      avatarUrl = item.tenant_avatar_url;
     }
 
     const lastMessageTime = item.last_message_at
@@ -131,11 +132,13 @@ export default function MessagesScreen() {
         onPress={() => router.push(`/chat/${item.id}`)}
         style={[styles.conversationCard, { backgroundColor: cardBgColor }]}>
         <View style={[styles.avatar, { backgroundColor: primaryColor + '20' }]}>
-          <MaterialCommunityIcons
-            name="account-circle"
-            size={40}
-            color={primaryColor}
-          />
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+          ) : (
+            <ThemedText style={[styles.avatarInitial, { color: primaryColor }]}>
+              {displayName.charAt(0).toUpperCase()}
+            </ThemedText>
+          )}
         </View>
 
         <View style={styles.conversationContent}>
@@ -289,6 +292,16 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  avatarInitial: {
+    fontSize: 22,
+    fontWeight: '700',
   },
   conversationContent: {
     flex: 1,

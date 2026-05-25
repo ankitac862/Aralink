@@ -1,14 +1,12 @@
 /**
  * landlord-maintenance-create.tsx
  * Create a maintenance request as a landlord or manager.
- * Allows selecting tenant + property + unit manually.
+ * Address selection uses PropertyAddressSelector (property → unit → sub-unit steps).
  */
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -25,7 +23,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { useAuth } from '@/hooks/use-auth';
-import { supabase } from '@/lib/supabase';
+import { usePropertyStore } from '@/store/propertyStore';
+import PropertyAddressSelector, { SelectedPropertyData } from '@/components/PropertyAddressSelector';
 import { FormInput } from '@/components/maintenance/FormInput';
 import { CategoryDropdown } from '@/components/maintenance/CategoryDropdown';
 import { UploadButton, UploadedFile } from '@/components/maintenance/UploadButton';
@@ -39,6 +38,7 @@ const categoryOptions = [
   { label: 'HVAC', value: 'hvac', icon: 'air-conditioner' },
   { label: 'Appliance', value: 'appliance', icon: 'fridge' },
   { label: 'General Repair', value: 'general', icon: 'wrench' },
+  { label: 'Others', value: 'others', icon: 'dots-horizontal' },
 ];
 
 const urgencyLevels = [
@@ -48,16 +48,12 @@ const urgencyLevels = [
   { label: 'Emergency', value: 'emergency', icon: 'medical-bag' },
 ];
 
-interface TenantOption {
-  id: string;          // tenants.id — used for display/selection
-  profileId?: string;  // profiles.id — required for maintenance_requests.tenant_id FK
-  label: string;
-  email?: string;
+interface SelectedAddress {
+  displayLabel: string;
   propertyId: string;
-  landlordId: string;
+  propertyAddress: string;
   unitId?: string;
   subUnitId?: string;
-  propertyAddress: string;
   unitName?: string;
 }
 
@@ -66,6 +62,7 @@ export default function LandlordMaintenanceCreateScreen() {
   const insets = useSafeAreaInsets();
   const { addRequest } = useMaintenanceStore();
   const { user } = useAuth();
+  const { loadFromSupabase: loadProperties } = usePropertyStore();
 
   const callerRole: MaintenanceCreatorRole =
     (user?.role as MaintenanceCreatorRole) ?? 'landlord';
@@ -80,126 +77,45 @@ export default function LandlordMaintenanceCreateScreen() {
   const [permissionToEnter, setPermissionToEnter] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  const [tenants, setTenants] = useState<TenantOption[]>([]);
-  const [selectedTenant, setSelectedTenant] = useState<TenantOption | null>(null);
-  const [loadingTenants, setLoadingTenants] = useState(true);
-  const [tenantDropdownOpen, setTenantDropdownOpen] = useState(false);
+  const [selectedAddress, setSelectedAddress] = useState<SelectedAddress | null>(null);
 
-  // Load tenants linked to this landlord's properties.
-  // Fix: PostgREST does not support .eq() on joined table columns.
-  // Instead: fetch the landlord's property IDs first, then query
-  // tenant_property_links using .in() on those IDs.
+  // Load property store so PropertyAddressSelector has data
   useEffect(() => {
-    async function loadTenants() {
-      if (!user?.id) { setLoadingTenants(false); return; }
-      try {
-        // Step 1: get all property IDs owned by this landlord
-        const { data: ownedProps, error: propErr } = await supabase
-          .from('properties')
-          .select('id, address1, city, state, zip_code')
-          .eq('user_id', user.id);
-
-        if (propErr || !ownedProps || ownedProps.length === 0) {
-          setLoadingTenants(false);
-          return;
-        }
-
-        const propIds = ownedProps.map((p: any) => p.id);
-        const propMap: Record<string, any> = {};
-        ownedProps.forEach((p: any) => { propMap[p.id] = p; });
-
-        // Step 2: get active tenant_property_links for those properties
-        const { data: links, error: linkErr } = await supabase
-          .from('tenant_property_links')
-          .select('tenant_id, property_id, unit_id, sub_unit_id, status')
-          .in('property_id', propIds)
-          .eq('status', 'active');
-
-        if (linkErr || !links || links.length === 0) {
-          setLoadingTenants(false);
-          return;
-        }
-
-        // Step 3: fetch tenant names from tenants table
-        // tenant_property_links.tenant_id references tenants.id (not profiles.id)
-        const tenantIds = [...new Set(links.map((l: any) => l.tenant_id))];
-        const { data: tenantRows } = await supabase
-          .from('tenants')
-          .select('id, first_name, last_name, email')
-          .in('id', tenantIds);
-
-        const tenantMap: Record<string, any> = {};
-        (tenantRows || []).forEach((t: any) => { tenantMap[t.id] = t; });
-
-        // Step 3b: fetch profiles.id by email so we can use it for the FK
-        const tenantEmails = (tenantRows || []).map((t: any) => t.email).filter(Boolean);
-        const { data: profileRows } = tenantEmails.length > 0
-          ? await supabase.from('profiles').select('id, email').in('email', tenantEmails)
-          : { data: [] };
-
-        const profileIdByEmail: Record<string, string> = {};
-        (profileRows || []).forEach((p: any) => {
-          if (p.email) profileIdByEmail[p.email] = p.id;
-        });
-
-        // Step 4: fetch unit/subunit names in parallel
-        const unitIds = [...new Set(links.map((l: any) => l.unit_id).filter(Boolean))];
-        const subUnitIds = [...new Set(links.map((l: any) => l.sub_unit_id).filter(Boolean))];
-
-        const [{ data: unitsData }, { data: subUnitsData }] = await Promise.all([
-          unitIds.length > 0
-            ? supabase.from('units').select('id, name').in('id', unitIds)
-            : Promise.resolve({ data: [] }),
-          subUnitIds.length > 0
-            ? supabase.from('sub_units').select('id, name').in('id', subUnitIds)
-            : Promise.resolve({ data: [] }),
-        ]);
-
-        const unitMap: Record<string, string> = {};
-        (unitsData || []).forEach((u: any) => { unitMap[u.id] = u.name; });
-        const subUnitMap: Record<string, string> = {};
-        (subUnitsData || []).forEach((s: any) => { subUnitMap[s.id] = s.name; });
-
-        // Step 5: build options using tenants table for names
-        const options: TenantOption[] = links.map((link: any) => {
-          const property = propMap[link.property_id] || {};
-          const tenant = tenantMap[link.tenant_id] || {};
-          const addressParts = [property.address1, property.city, property.state].filter(Boolean);
-          const propertyAddress = addressParts.join(', ') || 'Unknown property';
-
-          const unitName = link.sub_unit_id
-            ? subUnitMap[link.sub_unit_id]
-            : link.unit_id
-            ? unitMap[link.unit_id]
-            : undefined;
-
-          const firstName = (tenant.first_name || '').trim();
-          const lastName = (tenant.last_name || '').trim();
-          const displayName = [firstName, lastName].filter(Boolean).join(' ') || tenant.email || link.tenant_id;
-
-          return {
-            id: link.tenant_id,
-            profileId: tenant.email ? profileIdByEmail[tenant.email] : undefined,
-            email: tenant.email,
-            label: displayName,
-            propertyId: link.property_id,
-            landlordId: user.id,
-            unitId: link.unit_id || undefined,
-            subUnitId: link.sub_unit_id || undefined,
-            propertyAddress,
-            unitName,
-          };
-        });
-
-        setTenants(options);
-      } catch (err) {
-        console.error('Error loading tenants:', err);
-      } finally {
-        setLoadingTenants(false);
-      }
-    }
-    loadTenants();
+    if (user?.id) loadProperties(user.id);
   }, [user?.id]);
+
+  const handleAddressSelect = (data: SelectedPropertyData) => {
+    const addressParts = [
+      data.property.address1,
+      data.property.city,
+      data.property.state,
+    ].filter(Boolean);
+    const propertyAddress = addressParts.join(', ') || data.property.name || 'Property';
+
+    let unitName: string | undefined;
+    let displayLabel: string;
+
+    if (data.subUnit) {
+      const u = data.unit?.name || '';
+      const s = data.subUnit.name || '';
+      unitName = [u, s].filter(Boolean).join(' · ');
+      displayLabel = `${propertyAddress} · ${unitName}`;
+    } else if (data.unit) {
+      unitName = data.unit.name;
+      displayLabel = `${propertyAddress} · ${unitName}`;
+    } else {
+      displayLabel = `${propertyAddress} · Main Address`;
+    }
+
+    setSelectedAddress({
+      displayLabel,
+      propertyId: data.property.id,
+      propertyAddress,
+      unitId: data.unit?.id,
+      subUnitId: data.subUnit?.id,
+      unitName,
+    });
+  };
 
   const handleUpload = (file: UploadedFile) => setAttachments((prev) => [...prev, file]);
   const handleRemoveFile = (uri: string) =>
@@ -214,38 +130,25 @@ export default function LandlordMaintenanceCreateScreen() {
       Alert.alert('Error', 'You must be logged in.');
       return;
     }
-    if (!selectedTenant) {
-      Alert.alert('Missing Tenant', 'Please select a tenant for this request.');
+    if (!selectedAddress) {
+      Alert.alert('Missing Address', 'Please select an address for this request.');
       return;
     }
 
     setSubmitting(true);
     try {
-      // Use profileId for the FK constraint (maintenance_requests.tenant_id → profiles.id)
-      // Fall back to selectedTenant.id if no profile found (edge case)
-      const tenantProfileId = selectedTenant.profileId || selectedTenant.id;
-
-      if (!selectedTenant.profileId) {
-        Alert.alert(
-          'Tenant Not Found',
-          'This tenant does not have a Aaralink account yet. They need to accept their invite before a maintenance request can be logged.'
-        );
-        setSubmitting(false);
-        return;
-      }
-
       const id = await addRequest(
         {
-          tenantId: tenantProfileId,
-          landlordId: selectedTenant.landlordId || user.id,
-          propertyId: selectedTenant.propertyId,
-          unitId: selectedTenant.unitId,
-          subUnitId: selectedTenant.subUnitId,
+          tenantId: user.id, // landlord is the reporter for property-initiated requests
+          landlordId: user.id,
+          propertyId: selectedAddress.propertyId,
+          unitId: selectedAddress.unitId,
+          subUnitId: selectedAddress.subUnitId,
           createdById: user.id,
           createdByRole: callerRole,
-          tenantName: selectedTenant.label,
-          property: selectedTenant.propertyAddress,
-          unit: selectedTenant.unitName || 'N/A',
+          tenantName: 'N/A',
+          property: selectedAddress.propertyAddress,
+          unit: selectedAddress.unitName || 'N/A',
           category: category as any,
           title,
           description,
@@ -275,15 +178,6 @@ export default function LandlordMaintenanceCreateScreen() {
     }
   };
 
-  if (loadingTenants) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color="#2563eb" />
-        <Text style={{ color: '#64748b', marginTop: 12 }}>Loading tenants…</Text>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
       <View style={[styles.appBar, { paddingTop: insets.top + 8 }]}>
@@ -297,37 +191,25 @@ export default function LandlordMaintenanceCreateScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <ProgressHeader
           title="Log a maintenance issue"
-          subtitle="You are creating this request on behalf of a tenant."
+          subtitle="Select the address and describe the issue."
           step={1}
           totalSteps={1}
         />
 
-        <View style={styles.card}>
-          {/* Tenant dropdown */}
-          <FormInput label="Tenant" description="Select the tenant this request is for">
-            <TouchableOpacity
-              style={styles.dropdownTrigger}
-              onPress={() => tenants.length > 0 && setTenantDropdownOpen(true)}
-              activeOpacity={0.7}>
-              <View style={{ flex: 1 }}>
-                {selectedTenant ? (
-                  <>
-                    <Text style={styles.dropdownSelectedName}>{selectedTenant.label}</Text>
-                    <Text style={styles.dropdownSelectedSub}>
-                      {selectedTenant.propertyAddress}
-                      {selectedTenant.unitName ? ` · ${selectedTenant.unitName}` : ''}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.dropdownPlaceholder}>
-                    {tenants.length === 0 ? 'No active tenants found' : 'Select a tenant…'}
-                  </Text>
-                )}
-              </View>
-              <MaterialCommunityIcons name="chevron-down" size={20} color="#64748b" />
-            </TouchableOpacity>
-          </FormInput>
+        {/* Address — step-by-step: property → unit → sub-unit */}
+        <View style={styles.addressGroup}>
+          <Text style={styles.addressLabel}>ADDRESS</Text>
+          <PropertyAddressSelector
+            onSelect={handleAddressSelect}
+            selectedPropertyId={selectedAddress?.propertyId}
+            selectedUnitId={selectedAddress?.unitId}
+            selectedSubUnitId={selectedAddress?.subUnitId}
+            label=""
+            placeholder="Select an address..."
+          />
+        </View>
 
+        <View style={styles.card}>
           <FormInput label="Category">
             <CategoryDropdown value={category} onSelect={setCategory} options={categoryOptions} />
           </FormInput>
@@ -432,57 +314,6 @@ export default function LandlordMaintenanceCreateScreen() {
           </Text>
         </TouchableOpacity>
       </View>
-
-      {/* Tenant picker modal */}
-      <Modal
-        visible={tenantDropdownOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setTenantDropdownOpen(false)}>
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setTenantDropdownOpen(false)}>
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Select Tenant</Text>
-            <FlatList
-              data={tenants}
-              keyExtractor={(item) => item.id}
-              ItemSeparatorComponent={() => <View style={styles.separator} />}
-              renderItem={({ item }) => {
-                const active = selectedTenant?.id === item.id;
-                return (
-                  <TouchableOpacity
-                    style={[styles.modalItem, active && styles.modalItemActive]}
-                    onPress={() => {
-                      setSelectedTenant(item);
-                      setTenantDropdownOpen(false);
-                    }}>
-                    <View style={styles.modalItemAvatar}>
-                      <Text style={styles.modalItemAvatarText}>
-                        {item.label.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.modalItemName, active && { color: '#2563eb' }]}>
-                        {item.label}
-                      </Text>
-                      <Text style={styles.modalItemSub}>
-                        {item.propertyAddress}
-                        {item.unitName ? ` · ${item.unitName}` : ''}
-                      </Text>
-                    </View>
-                    {active && (
-                      <MaterialCommunityIcons name="check-circle" size={20} color="#2563eb" />
-                    )}
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </View>
   );
 }
@@ -501,68 +332,18 @@ const styles = StyleSheet.create({
   appBarTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
   content: { padding: 16, paddingBottom: 120, gap: 16 },
   card: { backgroundColor: '#fff', borderRadius: 18, padding: 20, gap: 12 },
-  // Tenant dropdown trigger
-  dropdownTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    gap: 8,
+
+  // Address selector
+  addressGroup: { marginBottom: 0 },
+  addressLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#4c739a',
+    marginBottom: 4,
   },
-  dropdownPlaceholder: { fontSize: 15, color: '#94a3b8' },
-  dropdownSelectedName: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  dropdownSelectedSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  // Tenant picker modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    maxHeight: '70%',
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#e2e8f0',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 12,
-  },
-  separator: { height: 1, backgroundColor: '#f1f5f9' },
-  modalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 12,
-  },
-  modalItemActive: { backgroundColor: '#eff6ff', borderRadius: 12, paddingHorizontal: 8 },
-  modalItemAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#dbeafe',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalItemAvatarText: { fontSize: 16, fontWeight: '700', color: '#2563eb' },
-  modalItemName: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  modalItemSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
