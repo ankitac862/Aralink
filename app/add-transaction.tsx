@@ -482,6 +482,44 @@ export default function AddTransactionScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* Unit Selection Modal */}
+      <Modal
+        visible={showUnitModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowUnitModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
+              <ThemedText style={[styles.modalTitle, { color: textColor }]}>Select Unit</ThemedText>
+              <TouchableOpacity onPress={() => setShowUnitModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textColor} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {availableUnits.map((unit) => (
+                <TouchableOpacity
+                  key={unit.id}
+                  style={[styles.modalItem, { borderBottomColor: borderColor }]}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, unitId: unit.id, subunitId: '' }));
+                    setShowUnitModal(false);
+                  }}
+                >
+                  <ThemedText style={[styles.modalItemText, { color: formData.unitId === unit.id ? primaryColor : textColor }]}>
+                    {unit.name}
+                  </ThemedText>
+                  {formData.unitId === unit.id && (
+                    <MaterialCommunityIcons name="check" size={20} color={primaryColor} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Subunit Selection Modal */}
       <Modal
         visible={showSubunitModal}

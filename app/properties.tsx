@@ -1,14 +1,15 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  TextInput, 
-  View, 
+import { useState, useMemo, useEffect } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Pressable,
-  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -31,14 +32,14 @@ export default function PropertiesScreen() {
   const { user } = useAuthStore();
 
   // Get properties and filter state from store
-  const { 
-    properties, 
-    selectedPropertyIds, 
-    togglePropertySelection, 
+  const {
+    properties,
+    selectedPropertyIds,
     clearPropertySelection,
     setSelectedPropertyIds,
     loadFromSupabase,
     isLoading,
+    updateProperty,
   } = usePropertyStore();
 
   // Load properties from API on mount
@@ -58,7 +59,6 @@ export default function PropertiesScreen() {
   const dangerColor = '#D0021B';
   const primaryColor = '#137fec';
   const modalBgColor = isDark ? '#1a242d' : '#ffffff';
-  const overlayColor = 'rgba(0, 0, 0, 0.5)';
 
   // Filter properties based on search and selected filters
   const filteredProperties = useMemo(() => {
@@ -93,22 +93,52 @@ export default function PropertiesScreen() {
   const getOccupancyStats = (property: Property) => {
     const totalUnits = property.units.length;
     const occupiedUnits = property.units.filter(u => u.isOccupied).length;
-    return { totalUnits, occupiedUnits };
+    // For single-unit properties the meaningful number is rooms, not the wrapper unit
+    const roomCount = property.propertyType === 'single_unit'
+      ? (property.units[0]?.subUnits?.length ?? 0)
+      : null;
+    return { totalUnits, occupiedUnits, roomCount };
   };
 
   const PropertyCard = ({ property }: { property: Property }) => {
-    const statusColor = property.status === 'active' ? successColor : dangerColor;
-    const { totalUnits, occupiedUnits } = getOccupancyStats(property);
+    const isActive = property.status === 'active';
+    const statusColor = isActive ? successColor : dangerColor;
+    const { totalUnits, occupiedUnits, roomCount } = getOccupancyStats(property);
+    const [togglingStatus, setTogglingStatus] = useState(false);
+
+    const handleToggleStatus = () => {
+      Alert.alert(
+        isActive ? 'Deactivate Property' : 'Activate Property',
+        isActive
+          ? 'Are you sure you want to deactivate this property?'
+          : 'Are you sure you want to activate this property?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: isActive ? 'Deactivate' : 'Activate',
+            style: isActive ? 'destructive' : 'default',
+            onPress: async () => {
+              setTogglingStatus(true);
+              await updateProperty(property.id, { status: isActive ? 'inactive' : 'active' });
+              if (user?.id) await loadFromSupabase(user.id, true);
+              setTogglingStatus(false);
+            },
+          },
+        ]
+      );
+    };
+
+    const showRentAmount =
+      property.propertyType !== 'multi_unit' &&
+      property.rentCompleteProperty &&
+      property.rentAmount;
 
     return (
       <TouchableOpacity
         onPress={() => router.push(`/property-detail?id=${property.id}`)}
         style={[styles.propertyCard, { backgroundColor: cardBgColor, borderColor }]}>
         {property.photos && property.photos.length > 0 ? (
-          <Image 
-            source={{ uri: property.photos[0] }} 
-            style={styles.propertyImage} 
-          />
+          <Image source={{ uri: property.photos[0] }} style={styles.propertyImage} />
         ) : (
           <View style={[styles.propertyImage, styles.propertyImagePlaceholder, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
             <MaterialCommunityIcons name="home-outline" size={48} color={secondaryTextColor} />
@@ -119,22 +149,40 @@ export default function PropertiesScreen() {
             <ThemedText type="subtitle" style={[styles.propertyTitle, { color: textColor }]}>
               {property.address1 || 'Unknown Address'}
             </ThemedText>
-            <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-              <ThemedText
-                style={[styles.statusText, { color: statusColor, fontSize: 12, fontWeight: '500' }]}>
-                {property.status === 'active' ? 'Active' : 'Inactive'}
-              </ThemedText>
-            </View>
+            {/* Issue 37: tappable status badge to activate / deactivate */}
+            <TouchableOpacity
+              style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}
+              onPress={handleToggleStatus}
+              disabled={togglingStatus}
+            >
+              {togglingStatus ? (
+                <ActivityIndicator size="small" color={statusColor} style={{ marginHorizontal: 4 }} />
+              ) : (
+                <>
+                  <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                  <ThemedText style={[styles.statusText, { color: statusColor }]}>
+                    {isActive ? 'Active' : 'Inactive'}
+                  </ThemedText>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
+
           <ThemedText style={[styles.cityText, { color: secondaryTextColor }]}>
             {property.city}, {property.state} {property.zipCode}
           </ThemedText>
+
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <MaterialCommunityIcons name="home-group" size={14} color={secondaryTextColor} />
+              <MaterialCommunityIcons
+                name={roomCount !== null ? 'door' : 'home-group'}
+                size={14}
+                color={secondaryTextColor}
+              />
               <ThemedText style={[styles.unitsText, { color: textColor }]}>
-                {totalUnits} {totalUnits === 1 ? 'Unit' : 'Units'}
+                {roomCount !== null
+                  ? `${roomCount} ${roomCount === 1 ? 'Room' : 'Rooms'}`
+                  : `${totalUnits} ${totalUnits === 1 ? 'Unit' : 'Units'}`}
               </ThemedText>
             </View>
             <View style={styles.statItem}>
@@ -143,10 +191,22 @@ export default function PropertiesScreen() {
                 {occupiedUnits} Occupied
               </ThemedText>
             </View>
+            {/* Issue 38: show rent amount when property is rented as a whole */}
+            {showRentAmount && (
+              <View style={styles.statItem}>
+                <MaterialCommunityIcons name="currency-usd" size={14} color={secondaryTextColor} />
+                <ThemedText style={[styles.unitsText, { color: textColor }]}>
+                  ${property.rentAmount!.toLocaleString()}/mo
+                </ThemedText>
+              </View>
+            )}
           </View>
+
           <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
             <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
-              {property.propertyType === 'single_unit' ? 'Single Unit' : 'Multi-Unit'}
+              {property.propertyType === 'single_unit' ? 'Single Unit' :
+               property.propertyType === 'multi_unit' ? 'Multi-Unit' :
+               property.propertyType === 'commercial' ? 'Commercial' : 'Parking'}
             </ThemedText>
           </View>
         </View>

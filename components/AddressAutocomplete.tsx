@@ -34,6 +34,7 @@ import {
 
 interface AddressAutocompleteProps {
   onAddressSelect: (address: StructuredAddress) => void;
+  onError?: () => void; // called when the Places API is unavailable
   initialAddress?: StructuredAddress;
   placeholder?: string;
   label?: string;
@@ -43,6 +44,7 @@ interface AddressAutocompleteProps {
 
 export default function AddressAutocomplete({
   onAddressSelect,
+  onError,
   initialAddress,
   placeholder = 'Start typing address...',
   label = 'Address',
@@ -70,7 +72,7 @@ export default function AddressAutocomplete({
   const [sessionToken] = useState(generateSessionToken());
 
   // Debounce timer ref
-  const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  const debounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Update input value when initialAddress changes
   useEffect(() => {
@@ -90,9 +92,13 @@ export default function AddressAutocomplete({
 
       setIsLoading(true);
       const result = await getAddressPredictions(text, sessionToken);
-      
+
       if (result.error) {
         console.warn('Address prediction error:', result.error.message);
+        // API unavailable (missing key, network failure, quota) — let parent switch to manual mode
+        if (result.error.type !== 'NO_RESULTS') {
+          onError?.();
+        }
       }
 
       setPredictions(result.predictions);
@@ -106,17 +112,13 @@ export default function AddressAutocomplete({
   const handleInputChange = (text: string) => {
     setInputValue(text);
 
-    // Clear previous timer
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
     }
 
-    // Set new debounce timer
-    const timer = setTimeout(() => {
+    debounceTimer.current = setTimeout(() => {
       fetchPredictions(text);
     }, 300);
-
-    setDebounceTimer(timer);
   };
 
   // Handle prediction selection

@@ -328,6 +328,18 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         const savedProperty = await createPropertyInDb(dbPropertyData as any);
         
         if (savedProperty) {
+          // For non-multi-unit properties, always auto-create a default unit so the
+          // property never shows 0 units regardless of the rentCompleteProperty setting.
+          if (propertyData.propertyType !== 'multi_unit') {
+            await createUnitInDb({
+              property_id: savedProperty.id,
+              name: 'Main Unit',
+              description: '',
+              unit_type: 'apartment',
+              is_occupied: false,
+            });
+          }
+
           // Refresh list from API to get the latest data with correct UUIDs
           await get().loadFromSupabase(userId);
           set({ isLoading: false });

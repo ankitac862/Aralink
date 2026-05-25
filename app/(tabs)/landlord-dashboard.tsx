@@ -1,10 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Href, useRouter } from 'expo-router';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
+  ActivityIndicator,
   Dimensions,
   FlatList,
+  Image,
   ListRenderItem,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -12,7 +14,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
-  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React from 'react';
@@ -25,15 +26,10 @@ import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { getUserProfile, supabase, fetchLandlordNotifications } from '@/lib/supabase';
 
-interface PortfolioOverview {
-  activeLeases: number;
-  occupancyRate: number;
-}
-
 interface RentCollection {
   collected: number;
-  pending: number;
-  notPaid: number;
+  overdue: number;   // unpaid rent (no longer splits into pending/not-paid)
+  advance: number;   // collected > total: cash paid in advance
   total: number;
   month: string;
   year: number;
@@ -71,7 +67,7 @@ export default function LandlordDashboardScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
-  const { properties, loadFromSupabase } = usePropertyStore();
+  const { loadFromSupabase } = usePropertyStore();
   
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [userName, setUserName] = useState('');
@@ -87,12 +83,16 @@ export default function LandlordDashboardScreen() {
   });
   const [rentCollection, setRentCollection] = useState<RentCollection>({
     collected: 0,
-    pending: 0,
-    notPaid: 0,
+    overdue: 0,
+    advance: 0,
     total: 0,
     month: new Date().toLocaleDateString('en-US', { month: 'long' }),
     year: new Date().getFullYear(),
   });
+  const [rentPeriod, setRentPeriod] = useState<1 | 3 | 6 | 12>(1);
+  const [rawRentTxns, setRawRentTxns] = useState<{ type: string; category: string; amount: number; date: string; status: string }[]>([]);
+  const [rentMonths, setRentMonths] = useState<{ label: string; start: string; end: string }[]>([]);
+  const [expectedMonthlyRent, setExpectedMonthlyRent] = useState(0);
   
   // Chart carousel
   const chartScrollRef = useRef<ScrollView>(null);
@@ -120,6 +120,29 @@ export default function LandlordDashboardScreen() {
     }, [user?.id])
   );
 
+  // Recalculate rent collection client-side when the period toggle changes
+  useEffect(() => {
+    if (rentMonths.length < 12) return;
+    const periodMonths = rentMonths.slice(12 - rentPeriod);
+    const periodStart = periodMonths[0].start;
+    const periodEnd = periodMonths[periodMonths.length - 1].end;
+    const periodTxns = rawRentTxns.filter(t => t.date >= periodStart && t.date <= periodEnd);
+    const collected = periodTxns
+      .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
+      .reduce((s, t) => s + (t.amount || 0), 0);
+    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * rentPeriod : collected;
+    const overdue = expectedMonthlyRent > 0 ? Math.max(0, total - collected) : 0;
+    const advance = expectedMonthlyRent > 0 ? Math.max(0, collected - total) : 0;
+    setRentCollection({
+      collected,
+      overdue,
+      advance,
+      total,
+      month: periodMonths[0].label,
+      year: new Date().getFullYear(),
+    });
+  }, [rentPeriod, rawRentTxns, rentMonths, expectedMonthlyRent]);
+
   // Load data in background without blocking UI
   const loadDashboardDataInBackground = async () => {
     if (!user?.id) return;
@@ -138,12 +161,12 @@ export default function LandlordDashboardScreen() {
       // Load properties asynchronously
       loadFromSupabase(user.id).catch(err => console.error('Properties load error:', err));
 
-      // Build last-6-months labels
+      // Build last-12-months labels (supports all period options: 1M/3M/6M/12M)
       const months: { label: string; start: string; end: string }[] = [];
       const dMonth = new Date();
-      dMonth.setMonth(dMonth.getMonth() - 5);
-      
-      for (let i = 0; i < 6; i++) {
+      dMonth.setMonth(dMonth.getMonth() - 11);
+
+      for (let i = 0; i < 12; i++) {
         const start = new Date(dMonth.getFullYear(), dMonth.getMonth(), 1).toISOString();
         const end = new Date(dMonth.getFullYear(), dMonth.getMonth() + 1, 0, 23, 59, 59).toISOString();
         months.push({
@@ -154,7 +177,7 @@ export default function LandlordDashboardScreen() {
         dMonth.setMonth(dMonth.getMonth() + 1);
       }
 
-      // Fetch ALL transactions for the last 6 months
+      // Fetch ALL transactions for the last 12 months
       const [
         { count: propertyCount },
         { count: tenantCount },
@@ -166,11 +189,11 @@ export default function LandlordDashboardScreen() {
       ] = await Promise.all([
         supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
-        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
+        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).not('status', 'in', '(draft,terminated)'),
         supabase.from('maintenance_requests').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['pending', 'in_progress']),
         supabase.from('applicants').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['invited', 'applied']),
         supabase.from('tenant_property_links').select('rent_amount').eq('landlord_id', user.id).eq('status', 'active'),
-        supabase.from('transactions').select('type, category, amount, date, status').eq('user_id', user.id).gte('date', months[0].start).lte('date', months[5].end)
+        supabase.from('transactions').select('type, category, amount, date, status').eq('user_id', user.id).gte('date', months[0].start).lte('date', months[11].end)
       ]);
 
       // Calculate occupancy rate
@@ -179,8 +202,8 @@ export default function LandlordDashboardScreen() {
         occupancyRate = Math.round(((tenantCount || 0) / (propertyCount || 0)) * 100);
       }
 
-      // --- Calculate Income vs Expense Graph Data ---
-      const incomeExpenseResult = months.map(({ label, start, end }) => {
+      // Income vs Expense: use last 6 of the 12 months (months[6..11])
+      const incomeExpenseResult = months.slice(6).map(({ label, start, end }) => {
         const bucket = (txns || []).filter(t => t.date >= start && t.date <= end);
         const income = bucket
           .filter(t => t.type === 'income' && t.status !== 'pending')
@@ -192,18 +215,19 @@ export default function LandlordDashboardScreen() {
       });
       setIncomeExpenseData(incomeExpenseResult);
 
-      // --- Calculate Rent Collection for current month (months[5]) ---
-      const totalExpectedRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
-      
-      const currentMonthTxns = (txns || []).filter(t => t.date >= months[5].start && t.date <= months[5].end);
-      const collectedRent = currentMonthTxns
+      // Store raw data so the period toggle can recalculate client-side
+      const monthlyRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
+      setExpectedMonthlyRent(monthlyRent);
+      setRentMonths(months);
+      setRawRentTxns(txns || []);
+
+      // Initial calculation for current month (period = 1, months[11])
+      const currentTxns = (txns || []).filter(t => t.date >= months[11].start && t.date <= months[11].end);
+      const collected = currentTxns
         .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
         .reduce((sum, t) => sum + (t.amount || 0), 0);
-      const pendingRent = currentMonthTxns
-        .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'pending')
-        .reduce((sum, t) => sum + (t.amount || 0), 0);
-      
-      const notPaidRent = Math.max(0, totalExpectedRent - collectedRent - pendingRent);
+      const overdue = monthlyRent > 0 ? Math.max(0, monthlyRent - collected) : 0;
+      const advance = monthlyRent > 0 ? Math.max(0, collected - monthlyRent) : 0;
 
       setStats({
         propertyCount: propertyCount || 0,
@@ -215,10 +239,10 @@ export default function LandlordDashboardScreen() {
       });
 
       setRentCollection({
-        collected: collectedRent,
-        pending: pendingRent,
-        notPaid: notPaidRent,
-        total: totalExpectedRent,
+        collected,
+        overdue,
+        advance,
+        total: monthlyRent > 0 ? monthlyRent : collected,
         month: new Date().toLocaleDateString('en-US', { month: 'long' }),
         year: new Date().getFullYear(),
       });
@@ -386,11 +410,22 @@ export default function LandlordDashboardScreen() {
             onPress={() => router.push('/profile')}>
             <View style={styles.headerTop}>
               <View style={styles.profileSection}>
-                <View style={[styles.profilePicture, { backgroundColor: isDark ? '#475569' : '#e2e8f0' }]}>
-                  <MaterialCommunityIcons name="account" size={24} color={textPrimaryColor} />
-                </View>
-                <View>
-                  <ThemedText style={[styles.greeting, { color: textPrimaryColor }]}>
+                {user?.avatarUrl ? (
+                  <Image
+                    source={{ uri: user.avatarUrl }}
+                    style={styles.profilePicture}
+                  />
+                ) : (
+                  <View style={[styles.profilePicture, { backgroundColor: isDark ? '#475569' : '#e2e8f0' }]}>
+                    <MaterialCommunityIcons name="account" size={24} color={textPrimaryColor} />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <ThemedText
+                    style={[styles.greeting, { color: textPrimaryColor }]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
                     Hello, {userName || user?.name || 'there'}
                   </ThemedText>
                   <ThemedText style={[styles.portfolioLabel, { color: textSecondaryColor }]}>
@@ -425,18 +460,31 @@ export default function LandlordDashboardScreen() {
                 <View>
                   <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rent Collection</ThemedText>
                   <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
-                    For {rentCollection.month} {rentCollection.year}
+                    {rentPeriod === 1
+                      ? `${rentCollection.month} ${rentCollection.year}`
+                      : `Last ${rentPeriod} months`}
                   </ThemedText>
                 </View>
-                <View style={[styles.chartBadge, { backgroundColor: '#34C75920' }]}>
-                  <ThemedText style={[styles.chartBadgeText, { color: '#34C759' }]}>This Month</ThemedText>
+                {/* Period toggle: 1M / 3M / 6M / 12M */}
+                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                  {([1, 3, 6, 12] as const).map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[styles.rentPeriodBtn, rentPeriod === p && { backgroundColor: '#34C759' }]}
+                      onPress={() => setRentPeriod(p)}
+                    >
+                      <ThemedText style={[styles.rentPeriodBtnText, { color: rentPeriod === p ? '#fff' : textSecondaryColor }]}>
+                        {p}M
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
 
               <RentChart
                 collected={rentCollection.collected}
-                pending={rentCollection.pending}
-                notPaid={rentCollection.notPaid}
+                overdue={rentCollection.overdue}
+                advance={rentCollection.advance}
                 total={rentCollection.total}
               />
 
@@ -446,13 +494,15 @@ export default function LandlordDashboardScreen() {
                   <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Paid</ThemedText>
                 </View>
                 <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: '#FF9500' }]} />
-                  <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Pending</ThemedText>
-                </View>
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: isDark ? '#1e3a8a' : '#bfdbfe' }]} />
+                  <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
                   <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Overdue</ThemedText>
                 </View>
+                {rentCollection.advance > 0 && (
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: '#AF52DE' }]} />
+                    <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>In Advance</ThemedText>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -988,5 +1038,20 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginLeft: 8,
     marginTop: 4,
+  },
+  rentPeriodToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 3,
+    gap: 3,
+  },
+  rentPeriodBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  rentPeriodBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

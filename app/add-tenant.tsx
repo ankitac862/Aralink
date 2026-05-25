@@ -238,11 +238,24 @@ export default function AddTenantScreen() {
     return null;
   }, [selectedProperty, selectedUnit, selectedSubUnit]);
 
+  // Format date as MM/DD/YYYY
+  const formatLeaseDate = (d: Date) =>
+    `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+
+  // Default lease: start today, end 1 year from today
+  const defaultLeaseDates = () => {
+    const today = new Date();
+    const end = new Date(today);
+    end.setFullYear(today.getFullYear() + 1);
+    return { startDate: formatLeaseDate(today), endDate: formatLeaseDate(end) };
+  };
+
   // Reset dependent selections when property changes
   const handlePropertyChange = (propertyId: string) => {
     const property = properties.find(p => p.id === propertyId);
     const shouldAutoSelectUnit = property && property.propertyType !== 'multi_unit' && property.rentCompleteProperty === false;
     const autoUnitId = shouldAutoSelectUnit ? property.units?.[0]?.id || '' : '';
+    const { startDate, endDate } = defaultLeaseDates();
 
     setFormData(prev => ({
       ...prev,
@@ -250,6 +263,8 @@ export default function AddTenantScreen() {
       unitId: autoUnitId,
       subUnitId: '',
       rentAmount: '',
+      startDate: prev.startDate || startDate,
+      endDate: prev.endDate || endDate,
     }));
     setShowPropertyDropdown(false);
 
@@ -261,11 +276,14 @@ export default function AddTenantScreen() {
 
   // Reset sub-unit when unit changes
   const handleUnitChange = (unitId: string) => {
+    const { startDate, endDate } = defaultLeaseDates();
     setFormData(prev => ({
       ...prev,
       unitId,
       subUnitId: '',
       rentAmount: '',
+      startDate: prev.startDate || startDate,
+      endDate: prev.endDate || endDate,
     }));
     setShowUnitDropdown(false);
 
@@ -278,10 +296,13 @@ export default function AddTenantScreen() {
 
   // Set rent when sub-unit changes
   const handleSubUnitChange = (subUnitId: string) => {
+    const { startDate, endDate } = defaultLeaseDates();
     setFormData(prev => ({
       ...prev,
       subUnitId,
       rentAmount: '',
+      startDate: prev.startDate || startDate,
+      endDate: prev.endDate || endDate,
     }));
     setShowSubUnitDropdown(false);
 
@@ -507,8 +528,11 @@ export default function AddTenantScreen() {
         await usePropertyStore.getState().loadFromSupabase(user?.id!, true);
         console.log('🔄 Property store force refreshed after tenant addition');
 
-        // Show success message - tenant is always auto-activated when added via this form
-        const successMessage = inviteResult.notificationQueued
+        // Show success message — note when email couldn't be sent
+        const emailFailed = inviteResult.emailQueued === false && !inviteResult.notificationQueued;
+        const successMessage = emailFailed
+          ? 'Tenant has been saved. The invite email could not be sent — please follow up with them directly or resend later.'
+          : inviteResult.notificationQueued
           ? 'Tenant has been assigned to the property. They can now view their property details in the app.'
           : 'Tenant has been assigned to the property and will receive an email confirmation.';
         

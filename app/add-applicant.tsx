@@ -225,7 +225,10 @@ export default function AddApplicantScreen() {
       }
 
       // Show success message based on how applicant was notified
-      const successMessage = inviteResult.notificationQueued
+      const emailFailed = inviteResult.emailQueued === false && !inviteResult.notificationQueued;
+      const successMessage = emailFailed
+        ? 'Applicant has been saved. The invite email could not be sent — please follow up with them directly or resend the invite later.'
+        : inviteResult.notificationQueued
         ? 'In-app notification sent to applicant. They can now view and apply for this property.'
         : 'Email invitation sent to applicant. They will receive instructions to apply for this property.';
 

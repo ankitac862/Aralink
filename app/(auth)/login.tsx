@@ -27,22 +27,24 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [showPassword, setShowPassword] = useState(false);
+  const [loadingProvider, setLoadingProvider] = useState<'email' | 'google' | 'apple' | 'facebook' | null>(null);
   const [formData, setFormData] = useState({
     identifier: '',
     password: '',
   });
 
   // Get auth store state and actions
-  const { 
-    signIn, 
-    signInWithGoogle, 
-    signInWithApple, 
+  const {
+    signIn,
+    signInWithGoogle,
+    signInWithApple,
     signInWithFacebook,
     resetPassword,
-    isLoading,
     error,
     clearError,
   } = useAuthStore();
+
+  const isLoading = loadingProvider !== null;
 
   const isAndroid = Platform.OS === 'android';
   const isDark = colorScheme === 'dark';
@@ -61,19 +63,18 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
     }
 
     clearError();
+    setLoadingProvider('email');
     const result = await signIn(formData.identifier, formData.password);
-    
+    setLoadingProvider(null);
+
     if (result.success && result.user) {
-      // Navigate based on user role
       const userRole = result.user.role;
       console.log('Login successful, user role:', userRole);
-      
       if (userRole === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
       } else if (userRole === 'manager') {
         router.replace('/(tabs)/landlord-dashboard');
       } else {
-        // Default to landlord dashboard for landlord role
         router.replace('/(tabs)/landlord-dashboard');
       }
     } else {
@@ -83,32 +84,38 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
 
   const handleGoogleSignIn = async () => {
     clearError();
+    setLoadingProvider('google');
     const result = await signInWithGoogle();
-    
-    if (!result.success) {
+    setLoadingProvider(null);
+    if (result.isNewUser) {
+      router.push('/(auth)/social-role-select' as any);
+    } else if (!result.success) {
       Alert.alert('Google Sign In Failed', result.error || 'An error occurred');
     }
-    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleAppleSignIn = async () => {
     clearError();
+    setLoadingProvider('apple');
     const result = await signInWithApple();
-    
-    if (!result.success) {
+    setLoadingProvider(null);
+    if (result.isNewUser) {
+      router.push('/(auth)/social-role-select' as any);
+    } else if (!result.success) {
       Alert.alert('Apple Sign In Failed', result.error || 'An error occurred');
     }
-    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleFacebookSignIn = async () => {
     clearError();
+    setLoadingProvider('facebook');
     const result = await signInWithFacebook();
-    
-    if (!result.success) {
+    setLoadingProvider(null);
+    if (result.isNewUser) {
+      router.push('/(auth)/social-role-select' as any);
+    } else if (!result.success) {
       Alert.alert('Facebook Sign In Failed', result.error || 'An error occurred');
     }
-    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleForgotPassword = () => {
@@ -247,7 +254,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               disabled={isLoading}
               onPress={handleLogin}
             >
-              {isLoading ? (
+              {loadingProvider === 'email' ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <ThemedText style={styles.submitButtonText}>Log In</ThemedText>
@@ -278,7 +285,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               disabled={isLoading}
               onPress={handleGoogleSignIn}
             >
-              {isLoading ? (
+              {loadingProvider === 'google' ? (
                 <ActivityIndicator size="small" color={primaryColor} />
               ) : (
                 <>
@@ -303,7 +310,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
                 disabled={isLoading}
                 onPress={handleAppleSignIn}
               >
-                {isLoading ? (
+                {loadingProvider === 'apple' ? (
                   <ActivityIndicator size="small" color={primaryColor} />
                 ) : (
                   <>
@@ -328,7 +335,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               disabled={isLoading}
               onPress={handleFacebookSignIn}
             >
-              {isLoading ? (
+              {loadingProvider === 'facebook' ? (
                 <ActivityIndicator size="small" color={primaryColor} />
               ) : (
                 <>

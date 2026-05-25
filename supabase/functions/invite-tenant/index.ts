@@ -319,16 +319,26 @@ serve(async (req) => {
         const alreadyRegistered = errorMsg.toLowerCase().includes('already');
 
         if (!alreadyRegistered) {
-          console.error('Unexpected invite error:', inviteError);
-          return json({ error: errorMsg || 'Invite failed' }, 500);
+          // Email send failure — try to look up by email; if not found, create a placeholder profile
+          console.warn('[invite-tenant] inviteUserByEmail error:', errorMsg, '— attempting fallback lookup');
+          tenantId = await findAuthUserIdByEmail(tenantEmail);
+          if (!tenantId) {
+            // No auth user and couldn't create one — fail only in this case
+            console.error('Could not create or find auth user for:', tenantEmail);
+            return json({ error: errorMsg || 'Invite failed' }, 500);
+          }
+          emailSent = await sendRecoveryForApplicant(tenantEmail, redirectToAuth);
+          if (!emailSent) console.warn('[invite-tenant] Recovery email also failed. Saving without email.');
+          inviteFlow = 'tenant';
+        } else {
+          tenantId = await findAuthUserIdByEmail(tenantEmail);
+          if (!tenantId) {
+            return json({ error: 'User could not be created or found. Try again.' }, 500);
+          }
+          emailSent = await sendRecoveryForApplicant(tenantEmail, redirectToAuth);
+          if (!emailSent) console.warn('[invite-tenant] Recovery email failed for already-registered user.');
+          inviteFlow = 'tenant';
         }
-
-        tenantId = await findAuthUserIdByEmail(tenantEmail);
-        if (!tenantId) {
-          return json({ error: 'User could not be created or found. Try again.' }, 500);
-        }
-        emailSent = await sendRecoveryForApplicant(tenantEmail, redirectToAuth);
-        inviteFlow = 'tenant';
       } else {
         tenantId = invitedUser.user.id;
         emailSent = true;
@@ -370,10 +380,8 @@ serve(async (req) => {
 
       emailSent = await sendRecoveryForApplicant(tenantEmail, redirectToAuth);
       if (!emailSent) {
-        return json(
-          { error: 'Could not send email for existing user. Check SUPABASE_ANON_KEY and redirect URLs.' },
-          500,
-        );
+        // Email failure is non-fatal for existing users — data will be saved, tenant marked inactive
+        console.warn('[invite-tenant] Could not send recovery email for existing user. Proceeding without email.');
       }
 
       const { error: profileUpsertError } = await supabase.from('profiles').upsert(

@@ -1,11 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -19,6 +20,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
 
@@ -26,10 +28,12 @@ export default function AddUnitScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { propertyId } = useLocalSearchParams<{ propertyId: string }>();
-  
-  const { addUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
+  const { propertyId, unitId } = useLocalSearchParams<{ propertyId: string; unitId?: string }>();
+
+  const { addUnit, updateUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
   const { user } = useAuthStore();
+
+  const isEditing = !!unitId;
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -64,6 +68,35 @@ export default function AddUnitScreen() {
 
   // Date picker state
   const [showDatePicker, setShowDatePicker] = useState<'availability' | 'leaseStart' | 'leaseEnd' | null>(null);
+
+  // Pre-populate form when editing an existing unit
+  useEffect(() => {
+    if (isEditing && unitId && propertyId) {
+      const property = getPropertyById(propertyId);
+      const unit = property?.units.find(u => u.id === unitId);
+      if (unit) {
+        setFormData({
+          name: unit.name,
+          description: unit.description || '',
+          bedrooms: unit.bedrooms?.toString() || '',
+          bathrooms: unit.bathrooms?.toString() || '',
+          area: unit.area?.toString() || '',
+          rentEntireUnit: unit.rentEntireUnit || false,
+          defaultRentPrice: unit.defaultRentPrice?.toString() || '',
+          availabilityDate: unit.availabilityDate || '',
+          leaseStartDate: unit.leaseStartDate || '',
+          leaseEndDate: unit.leaseEndDate || '',
+          photos: unit.photos || [],
+          amenities: {
+            inUnitLaundry: unit.amenities?.inUnitLaundry || false,
+            balcony: unit.amenities?.balcony || false,
+            dishwasher: unit.amenities?.dishwasher || false,
+            parkingIncluded: unit.amenities?.parkingIncluded || false,
+          },
+        });
+      }
+    }
+  }, [isEditing, unitId, propertyId, getPropertyById]);
 
   const formatDate = (iso: string) => {
     if (!iso) return '';
@@ -140,10 +173,38 @@ export default function AddUnitScreen() {
       return;
     }
 
+    // Duplicate unit name check (skip for the unit being edited)
+    const property = getPropertyById(propertyId);
+    if (property) {
+      const duplicate = property.units.find(
+        u => u.name.trim().toLowerCase() === formData.name.trim().toLowerCase() && u.id !== unitId
+      );
+      if (duplicate) {
+        Alert.alert('Duplicate Unit', `A unit named "${formData.name.trim()}" already exists. Please use a different name.`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     try {
-      await addUnit(propertyId, {
+      // Upload local photos to Supabase Storage first.
+      // Passing raw local file:// URIs to the DB causes the insert to hang.
+      let uploadedPhotoUrls: string[] = [];
+      if (formData.photos.length > 0 && user?.id) {
+        const localPhotos = formData.photos.filter(uri => !uri.startsWith('http'));
+        const existingUrls = formData.photos.filter(uri => uri.startsWith('http'));
+        if (localPhotos.length > 0) {
+          uploadedPhotoUrls = await uploadMultipleImages(
+            localPhotos,
+            STORAGE_BUCKETS.UNIT_PHOTOS,
+            `units/${propertyId}`
+          );
+        }
+        uploadedPhotoUrls = [...existingUrls, ...uploadedPhotoUrls];
+      }
+
+      const unitPayload = {
         name: formData.name,
         description: formData.description || undefined,
         bedrooms: formData.bedrooms ? parseInt(formData.bedrooms) : undefined,
@@ -156,9 +217,15 @@ export default function AddUnitScreen() {
         availabilityDate: formData.availabilityDate || undefined,
         leaseStartDate: formData.leaseStartDate || undefined,
         leaseEndDate: formData.leaseEndDate || undefined,
-        photos: formData.photos.length > 0 ? formData.photos : undefined,
+        photos: uploadedPhotoUrls.length > 0 ? uploadedPhotoUrls : undefined,
         amenities: formData.amenities,
-      });
+      };
+
+      if (isEditing && unitId) {
+        await updateUnit(propertyId, unitId, unitPayload);
+      } else {
+        await addUnit(propertyId, unitPayload);
+      }
 
       // Reload property data from Supabase to refresh UI
       if (user?.id) {
@@ -180,7 +247,7 @@ export default function AddUnitScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Add Unit</ThemedText>
+        <ThemedText style={[styles.headerTitle, { color: textColor }]}>{isEditing ? 'Edit Unit' : 'Add Unit'}</ThemedText>
         <View style={{ width: 24 }} />
       </View>
 
@@ -375,7 +442,8 @@ export default function AddUnitScreen() {
               </View>
             </View>
 
-            {showDatePicker && (
+            {/* Android: renders inline */}
+            {showDatePicker && Platform.OS === 'android' && (
               <DateTimePicker
                 value={getDateValue(
                   showDatePicker === 'availability' ? formData.availabilityDate :
@@ -383,18 +451,47 @@ export default function AddUnitScreen() {
                   formData.leaseEndDate
                 )}
                 mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                display="default"
                 onChange={handleDateChange}
-                onTouchCancel={() => setShowDatePicker(null)}
               />
             )}
-            {showDatePicker && Platform.OS === 'ios' && (
-              <TouchableOpacity
-                style={[styles.dateConfirm, { backgroundColor: primaryColor }]}
-                onPress={() => setShowDatePicker(null)}>
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+
+            {/* iOS: render in a modal so it's never clipped by the scroll view */}
+            <Modal
+              visible={showDatePicker !== null && Platform.OS === 'ios'}
+              transparent
+              animationType="slide"
+            >
+              <View style={styles.datePickerOverlay}>
+                <View style={[styles.datePickerSheet, { backgroundColor: cardBgColor }]}>
+                  <View style={[styles.datePickerHeader, { borderBottomColor: borderColor }]}>
+                    <ThemedText style={[styles.datePickerTitle, { color: textColor }]}>
+                      {showDatePicker === 'availability' ? 'Availability Date' :
+                       showDatePicker === 'leaseStart' ? 'Lease Start Date' : 'Lease End Date'}
+                    </ThemedText>
+                    <TouchableOpacity
+                      style={[styles.datePickerDone, { backgroundColor: primaryColor }]}
+                      onPress={() => setShowDatePicker(null)}
+                    >
+                      <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Done</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={getDateValue(
+                        showDatePicker === 'availability' ? formData.availabilityDate :
+                        showDatePicker === 'leaseStart' ? formData.leaseStartDate :
+                        formData.leaseEndDate
+                      )}
+                      mode="date"
+                      display="spinner"
+                      onChange={handleDateChange}
+                      style={{ width: '100%' }}
+                    />
+                  )}
+                </View>
+              </View>
+            </Modal>
           </View>
 
           {/* Photos */}
@@ -463,7 +560,7 @@ export default function AddUnitScreen() {
           disabled={isSubmitting}
         >
           <ThemedText style={styles.submitButtonText}>
-            {isSubmitting ? 'Submitting...' : 'Add Unit'}
+            {isSubmitting ? 'Saving...' : isEditing ? 'Save Changes' : 'Add Unit'}
           </ThemedText>
         </TouchableOpacity>
       </View>
@@ -654,5 +751,33 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  datePickerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  datePickerSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 32,
+    overflow: 'hidden',
+  },
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  datePickerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  datePickerDone: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
 });
