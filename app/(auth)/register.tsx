@@ -58,8 +58,9 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
   const navigateToDashboard = (role: UserRole) => {
     if (role === 'tenant') {
       router.replace('/(tabs)/tenant-dashboard');
+    } else if (role === 'ara_partner') {
+      router.replace('/ara-partner/dashboard' as any);
     } else {
-      // landlord and manager go to landlord dashboard
       router.replace('/(tabs)/landlord-dashboard');
     }
   };
@@ -292,6 +293,12 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                 icon="briefcase"
                 title="Property Manager"
                 description="Manage properties for landlords"
+              />
+              <UserTypeCard
+                type="ara_partner"
+                icon="handshake"
+                title="AaraPartner"
+                description="Refer landlords and earn commission"
               />
             </View>
 

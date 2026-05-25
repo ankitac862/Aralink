@@ -4,7 +4,7 @@ import { create } from 'zustand';
 
 import { clearCorruptedSession, getUserProfile, supabase, upsertUserProfile, UserProfile } from '@/lib/supabase';
 
-export type UserRole = 'landlord' | 'tenant' | 'manager';
+export type UserRole = 'landlord' | 'tenant' | 'manager' | 'ara_partner' | 'admin';
 
 export interface AuthUser {
   id: string;
@@ -247,13 +247,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               const profile = await getUserProfile(newSession.user.id);
               const savedRole = await getStorageValue('userRole') as UserRole | null;
               const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
+              // Always persist the resolved role so TOKEN_REFRESHED has a correct fallback
+              await setStorageValue('userRole', authUser.role);
               set({ user: authUser, session: newSession });
             } else if (event === 'SIGNED_OUT') {
               set({ user: null, session: null });
             } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
+              // On token refresh, keep existing role — don't re-derive from storage
+              // which may have a stale role from a previous session
+              const currentUser = get().user;
               const profile = await getUserProfile(newSession.user.id);
-              const savedRole = await getStorageValue('userRole') as UserRole | null;
-              const authUser = toAuthUser(newSession.user, profile, savedRole || undefined);
+              const authUser = toAuthUser(newSession.user, profile, currentUser?.role || undefined);
               set({ user: authUser, session: newSession });
             }
           } catch (stateChangeError) {
