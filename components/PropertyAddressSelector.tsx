@@ -107,7 +107,7 @@ export default function PropertyAddressSelector({
     }
     
     if (selectedUnit) {
-      text += ` - ${selectedUnit.name || `Unit ${selectedUnit.unitNumber}`}`;
+      text += ` - ${selectedUnit.name}`;
     }
     
     return text;
@@ -176,10 +176,10 @@ export default function PropertyAddressSelector({
   const completeSelection = (property: Property, unit?: Unit, subUnit?: SubUnit) => {
     // Calculate rent amount based on level
     let rentAmount: number | undefined;
-    if (subUnit?.rentAmount) {
-      rentAmount = subUnit.rentAmount;
-    } else if (unit?.rentAmount) {
-      rentAmount = unit.rentAmount;
+    if (subUnit?.rentPrice) {
+      rentAmount = subUnit.rentPrice;
+    } else if (unit?.defaultRentPrice) {
+      rentAmount = unit.defaultRentPrice;
     } else if (property.rentAmount) {
       rentAmount = property.rentAmount;
     }
@@ -190,7 +190,7 @@ export default function PropertyAddressSelector({
       subUnit,
       fullAddress: getFullAddress(property),
       rentAmount,
-      parkingIncluded: unit?.parkingIncluded ?? property.parkingIncluded,
+      parkingIncluded: unit?.amenities?.parkingIncluded ?? property.parkingIncluded,
     };
 
     onSelect(data);
@@ -250,16 +250,16 @@ export default function PropertyAddressSelector({
       </View>
       <View style={styles.listItemContent}>
         <ThemedText style={[styles.listItemTitle, { color: textColor }]}>
-          {item.name || `Unit ${item.unitNumber}`}
+          {item.name}
         </ThemedText>
         {item.bedrooms && (
           <ThemedText style={[styles.listItemSubtitle, { color: secondaryTextColor }]}>
             {item.bedrooms} bed, {item.bathrooms || 1} bath
           </ThemedText>
         )}
-        {item.rentAmount && (
+        {item.defaultRentPrice && (
           <ThemedText style={[styles.listItemMeta, { color: primaryColor }]}>
-            ${item.rentAmount}/mo
+            ${item.defaultRentPrice}/mo
           </ThemedText>
         )}
       </View>
@@ -287,13 +287,13 @@ export default function PropertyAddressSelector({
         <ThemedText style={[styles.listItemTitle, { color: textColor }]}>
           {item.name || `Room ${item.id.slice(-4)}`}
         </ThemedText>
-        {item.rentAmount && (
+        {item.rentPrice && (
           <ThemedText style={[styles.listItemMeta, { color: primaryColor }]}>
-            ${item.rentAmount}/mo
+            ${item.rentPrice}/mo
           </ThemedText>
         )}
       </View>
-      <MaterialCommunityIcons name="check" size={24} color={primaryColor} />
+      <MaterialCommunityIcons name="checkbox-blank-circle-outline" size={24} color={secondaryTextColor} />
     </TouchableOpacity>
   );
 
@@ -358,7 +358,7 @@ export default function PropertyAddressSelector({
               <MaterialCommunityIcons name="home" size={16} color={secondaryTextColor} />
               <ThemedText style={[styles.breadcrumbText, { color: secondaryTextColor }]} numberOfLines={1}>
                 {selectedProperty?.address1}
-                {selectedUnit && ` → ${selectedUnit.name || `Unit ${selectedUnit.unitNumber}`}`}
+                {selectedUnit && ` → ${selectedUnit.name}`}
               </ThemedText>
             </View>
           )}
@@ -412,7 +412,7 @@ export default function PropertyAddressSelector({
                           Use property-level address only
                         </ThemedText>
                       </View>
-                      <MaterialCommunityIcons name="check" size={24} color={primaryColor} />
+                      <MaterialCommunityIcons name="checkbox-blank-circle-outline" size={24} color={secondaryTextColor} />
                     </TouchableOpacity>
                   }
                 />
@@ -437,10 +437,10 @@ export default function PropertyAddressSelector({
                           Entire Unit
                         </ThemedText>
                         <ThemedText style={[styles.listItemSubtitle, { color: secondaryTextColor }]}>
-                          {selectedUnit.name || `Unit ${selectedUnit.unitNumber}`} - No specific room
+                          {selectedUnit.name} - No specific room
                         </ThemedText>
                       </View>
-                      <MaterialCommunityIcons name="check" size={24} color={primaryColor} />
+                      <MaterialCommunityIcons name="checkbox-blank-circle-outline" size={24} color={secondaryTextColor} />
                     </TouchableOpacity>
                   }
                 />

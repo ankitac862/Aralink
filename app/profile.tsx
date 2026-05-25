@@ -20,6 +20,13 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { supabase } from '@/lib/supabase';
 
+interface PortfolioStats {
+  leaseCount: number;
+  tenantCount: number;
+  propertyCount: number;
+  occupancyRate: number;
+}
+
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -27,10 +34,12 @@ export default function ProfileScreen() {
   const { user, updateAvatar, updateProfile } = useAuthStore();
 
   const [isEditMode, setIsEditMode] = useState(false);
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [portfolioStats, setPortfolioStats] = useState<PortfolioStats | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101622' : '#f1f5f9';
@@ -41,15 +50,40 @@ export default function ProfileScreen() {
   const primary = '#2563eb';
   const inputBg = isDark ? '#141c27' : '#f8fafc';
 
-  // Only sync form fields from store on mount, not on every user update.
-  // This prevents background profile loads from wiping in-progress edits.
+  // Split stored full name into first/last on mount
   useEffect(() => {
     if (user) {
-      setFullName(user.name || '');
+      const parts = (user.name || '').trim().split(' ');
+      setFirstName(parts[0] || '');
+      setLastName(parts.slice(1).join(' ') || '');
       setPhone(user.phone || '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // mount only
+  }, []);
+
+  // Load portfolio stats for landlords
+  useEffect(() => {
+    if (!user?.id || user.role !== 'landlord') return;
+    (async () => {
+      const [
+        { count: propertyCount },
+        { count: tenantCount },
+        { count: leaseCount },
+      ] = await Promise.all([
+        supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
+        supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
+        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).not('status', 'in', '(draft,terminated)'),
+      ]);
+      const p = propertyCount || 0;
+      const t = tenantCount || 0;
+      setPortfolioStats({
+        propertyCount: p,
+        tenantCount: t,
+        leaseCount: leaseCount || 0,
+        occupancyRate: p > 0 ? Math.min(100, Math.round((t / p) * 100)) : 0,
+      });
+    })();
+  }, [user?.id, user?.role]);
 
   const getRoleLabel = (role: string) => {
     switch (role) {
@@ -78,27 +112,21 @@ export default function ProfileScreen() {
 
   const handlePickAvatar = async () => {
     if (!user) return;
-
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission Required', 'Please allow access to your photo library.');
       return;
     }
-
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
     });
-
     if (result.canceled || !result.assets[0]) return;
-
     setIsUploadingAvatar(true);
     try {
       const uri = result.assets[0].uri;
-
-      // Read file as base64 using fetch + FileReader (available in RN 0.73+/Expo SDK 54)
       const response = await fetch(uri);
       const blob = await response.blob();
       const base64: string = await new Promise((resolve, reject) => {
@@ -107,51 +135,55 @@ export default function ProfileScreen() {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-
       const binaryString = atob(base64);
       const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      // Policy requires path: user-<uid>/avatar.jpg
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
       const storagePath = `user-${user.id}/avatar.jpg`;
-
       const { data, error } = await supabase.storage
         .from('avatars')
-        .upload(storagePath, bytes, {
-          contentType: 'image/jpeg',
-          upsert: true, // overwrite existing
-        });
-
-      if (error) {
-        Alert.alert('Error', error.message || 'Failed to upload image.');
-        return;
-      }
-
-      // Append timestamp to bust React Native's image cache
+        .upload(storagePath, bytes, { contentType: 'image/jpeg', upsert: true });
+      if (error) { Alert.alert('Error', error.message || 'Failed to upload image.'); return; }
       const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(data.path);
       const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
-
       const res = await updateAvatar(publicUrl);
-      if (!res.success) {
-        Alert.alert('Error', res.error || 'Failed to save profile picture.');
-      }
-      // No alert on success — image updates visually immediately
-    } catch (e) {
+      if (!res.success) Alert.alert('Error', res.error || 'Failed to save profile picture.');
+    } catch {
       Alert.alert('Error', 'Failed to upload image. Please try again.');
     } finally {
       setIsUploadingAvatar(false);
     }
   };
 
+  const stripDigits = (text: string) => text.replace(/[0-9]/g, '');
+
+  const handlePhoneChange = (text: string) => {
+    const stripped = text.replace(/[^\d+]/g, '');
+    setPhone(
+      stripped.startsWith('+')
+        ? '+' + stripped.slice(1).replace(/\+/g, '')
+        : stripped.replace(/\+/g, '')
+    );
+  };
+
   const handleSave = async () => {
-    if (!fullName.trim()) {
-      Alert.alert('Validation', 'Full name cannot be empty.');
+    if (!firstName.trim()) {
+      Alert.alert('Validation', 'First name cannot be empty.');
       return;
     }
+    const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(' ');
+    if (/[0-9]/.test(fullName)) {
+      Alert.alert('Validation', 'Name must not contain numbers.');
+      return;
+    }
+    if (phone.trim()) {
+      const digitsOnly = phone.replace(/\D/g, '');
+      if (digitsOnly.length !== 10 && digitsOnly.length !== 11) {
+        Alert.alert('Validation', 'Phone number must be 10 digits or 11 digits with country code.');
+        return;
+      }
+    }
     setIsSaving(true);
-    const res = await updateProfile({ name: fullName.trim(), phone: phone.trim() });
+    const res = await updateProfile({ name: fullName, phone: phone.trim() });
     setIsSaving(false);
     if (res.success) {
       setIsEditMode(false);
@@ -161,9 +193,10 @@ export default function ProfileScreen() {
   };
 
   const handleCancel = () => {
-    // Reset to current saved values from store
     const { user: currentUser } = useAuthStore.getState();
-    setFullName(currentUser?.name || '');
+    const parts = (currentUser?.name || '').trim().split(' ');
+    setFirstName(parts[0] || '');
+    setLastName(parts.slice(1).join(' ') || '');
     setPhone(currentUser?.phone || '');
     setIsEditMode(false);
   };
@@ -197,11 +230,7 @@ export default function ProfileScreen() {
         <View style={styles.avatarBlock}>
           <View style={styles.avatarWrap}>
             {user.avatarUrl ? (
-              <Image
-                source={{ uri: user.avatarUrl }}
-                style={styles.avatar}
-                key={user.avatarUrl}
-              />
+              <Image source={{ uri: user.avatarUrl }} style={styles.avatar} key={user.avatarUrl} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: primary }]}>
                 <ThemedText style={styles.initials}>{getInitials()}</ThemedText>
@@ -211,14 +240,11 @@ export default function ProfileScreen() {
               style={[styles.cameraBtn, { backgroundColor: primary }]}
               onPress={handlePickAvatar}
               disabled={isUploadingAvatar}>
-              {isUploadingAvatar ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <MaterialCommunityIcons name="camera" size={16} color="#fff" />
-              )}
+              {isUploadingAvatar
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <MaterialCommunityIcons name="camera" size={16} color="#fff" />}
             </TouchableOpacity>
           </View>
-
           <ThemedText style={[styles.displayName, { color: textColor }]}>
             {user.name || 'Your Name'}
           </ThemedText>
@@ -229,6 +255,43 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* Portfolio Overview (landlord only) */}
+        {user.role === 'landlord' && (
+          <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
+            <View style={[styles.cardHeader, { borderBottomColor: border }]}>
+              <MaterialCommunityIcons name="chart-bar" size={18} color={primary} />
+              <ThemedText style={[styles.cardTitle, { color: textColor }]}>Portfolio Overview</ThemedText>
+            </View>
+            {portfolioStats === null ? (
+              <View style={styles.statsLoading}>
+                <ActivityIndicator size="small" color={primary} />
+              </View>
+            ) : (
+              <View style={styles.statsRow}>
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.propertyCount}</ThemedText>
+                  <ThemedText style={[styles.statLabel, { color: subText }]}>Properties</ThemedText>
+                </View>
+                <View style={[styles.statDivider, { backgroundColor: border }]} />
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.leaseCount}</ThemedText>
+                  <ThemedText style={[styles.statLabel, { color: subText }]}>Active Leases</ThemedText>
+                </View>
+                <View style={[styles.statDivider, { backgroundColor: border }]} />
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.tenantCount}</ThemedText>
+                  <ThemedText style={[styles.statLabel, { color: subText }]}>Tenants</ThemedText>
+                </View>
+                <View style={[styles.statDivider, { backgroundColor: border }]} />
+                <View style={styles.statItem}>
+                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.occupancyRate}%</ThemedText>
+                  <ThemedText style={[styles.statLabel, { color: subText }]}>Occupancy</ThemedText>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Personal Details Card */}
         <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
           <View style={[styles.cardHeader, { borderBottomColor: border }]}>
@@ -236,21 +299,42 @@ export default function ProfileScreen() {
             <ThemedText style={[styles.cardTitle, { color: textColor }]}>Personal Details</ThemedText>
           </View>
 
-          {/* Full Name */}
+          {/* First Name */}
           <View style={styles.field}>
-            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Full Name</ThemedText>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>First Name</ThemedText>
             {isEditMode ? (
               <TextInput
                 style={[styles.input, { backgroundColor: inputBg, borderColor: border, color: textColor }]}
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Enter your full name"
+                value={firstName}
+                onChangeText={(t) => setFirstName(stripDigits(t))}
+                placeholder="Enter first name"
                 placeholderTextColor={subText}
                 autoCapitalize="words"
               />
             ) : (
               <ThemedText style={[styles.fieldValue, { color: textColor }]}>
-                {user.name || 'Not set'}
+                {firstName || 'Not set'}
+              </ThemedText>
+            )}
+          </View>
+
+          <View style={[styles.divider, { backgroundColor: border }]} />
+
+          {/* Last Name */}
+          <View style={styles.field}>
+            <ThemedText style={[styles.fieldLabel, { color: subText }]}>Last Name</ThemedText>
+            {isEditMode ? (
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBg, borderColor: border, color: textColor }]}
+                value={lastName}
+                onChangeText={(t) => setLastName(stripDigits(t))}
+                placeholder="Enter last name"
+                placeholderTextColor={subText}
+                autoCapitalize="words"
+              />
+            ) : (
+              <ThemedText style={[styles.fieldValue, { color: textColor }]}>
+                {lastName || 'Not set'}
               </ThemedText>
             )}
           </View>
@@ -261,9 +345,7 @@ export default function ProfileScreen() {
           <View style={styles.field}>
             <ThemedText style={[styles.fieldLabel, { color: subText }]}>Email Address</ThemedText>
             <View style={styles.lockedRow}>
-              <ThemedText style={[styles.fieldValue, { color: textColor, flex: 1 }]}>
-                {user.email}
-              </ThemedText>
+              <ThemedText style={[styles.fieldValue, { color: textColor, flex: 1 }]}>{user.email}</ThemedText>
               <View style={[styles.lockBadge, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
                 <MaterialCommunityIcons name="lock-outline" size={13} color={subText} />
                 <ThemedText style={[styles.lockText, { color: subText }]}>Cannot change</ThemedText>
@@ -280,8 +362,8 @@ export default function ProfileScreen() {
               <TextInput
                 style={[styles.input, { backgroundColor: inputBg, borderColor: border, color: textColor }]}
                 value={phone}
-                onChangeText={setPhone}
-                placeholder="Enter your phone number"
+                onChangeText={handlePhoneChange}
+                placeholder="e.g. 4165551234 or +14165551234"
                 placeholderTextColor={subText}
                 keyboardType="phone-pad"
               />
@@ -299,16 +381,11 @@ export default function ProfileScreen() {
             <MaterialCommunityIcons name="shield-account-outline" size={18} color={primary} />
             <ThemedText style={[styles.cardTitle, { color: textColor }]}>Account</ThemedText>
           </View>
-
           <View style={styles.field}>
             <ThemedText style={[styles.fieldLabel, { color: subText }]}>Account Type</ThemedText>
-            <ThemedText style={[styles.fieldValue, { color: textColor }]}>
-              {getRoleLabel(user.role)}
-            </ThemedText>
+            <ThemedText style={[styles.fieldValue, { color: textColor }]}>{getRoleLabel(user.role)}</ThemedText>
           </View>
-
           <View style={[styles.divider, { backgroundColor: border }]} />
-
           <View style={styles.field}>
             <ThemedText style={[styles.fieldLabel, { color: subText }]}>Login Method</ThemedText>
             <ThemedText style={[styles.fieldValue, { color: textColor }]}>
@@ -321,7 +398,7 @@ export default function ProfileScreen() {
 
         {isEditMode && (
           <ThemedText style={[styles.emailNote, { color: subText }]}>
-            * Email address cannot be changed. Contact support if needed.
+            * Email address cannot be changed. Contact support at support@aaralink.com or +1 (800) 000-0000.
           </ThemedText>
         )}
       </ScrollView>
@@ -339,11 +416,9 @@ export default function ProfileScreen() {
             style={[styles.saveBtn, { backgroundColor: primary, opacity: isSaving ? 0.7 : 1 }]}
             onPress={handleSave}
             disabled={isSaving}>
-            {isSaving ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <ThemedText style={styles.saveBtnText}>Save Changes</ThemedText>
-            )}
+            {isSaving
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <ThemedText style={styles.saveBtnText}>Save Changes</ThemedText>}
           </TouchableOpacity>
         </View>
       )}
@@ -364,97 +439,49 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: '700' },
   scroll: { padding: 16, gap: 16 },
 
-  // Avatar
   avatarBlock: { alignItems: 'center', paddingVertical: 12, gap: 8 },
   avatarWrap: { position: 'relative', marginBottom: 4 },
   avatar: { width: 104, height: 104, borderRadius: 52 },
   avatarFallback: { justifyContent: 'center', alignItems: 'center' },
   initials: { fontSize: 40, fontWeight: '700', color: '#fff' },
   cameraBtn: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
+    position: 'absolute', bottom: 2, right: 2,
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#fff',
   },
   displayName: { fontSize: 20, fontWeight: '700', marginTop: 4 },
-  roleBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
+  roleBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
   roleText: { fontSize: 13, fontWeight: '600' },
 
-  // Card
-  card: {
-    borderRadius: 14,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
+  // Portfolio stats
+  statsLoading: { paddingVertical: 20, alignItems: 'center' },
+  statsRow: { flexDirection: 'row', paddingVertical: 16 },
+  statItem: { flex: 1, alignItems: 'center', gap: 4 },
+  statValue: { fontSize: 22, fontWeight: '700' },
+  statLabel: { fontSize: 11, fontWeight: '500', textAlign: 'center' },
+  statDivider: { width: 1, marginVertical: 4 },
+
+  card: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
   cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1,
   },
   cardTitle: { fontSize: 14, fontWeight: '700' },
 
-  // Fields
   field: { paddingHorizontal: 16, paddingVertical: 12 },
   fieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
   fieldValue: { fontSize: 15, fontWeight: '400' },
   divider: { height: 1, marginHorizontal: 16 },
-  input: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    marginTop: 2,
-  },
+  input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, marginTop: 2 },
   lockedRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
-  lockBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
+  lockBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   lockText: { fontSize: 11, fontWeight: '500' },
-
   emailNote: { fontSize: 12, textAlign: 'center', marginTop: 4 },
 
-  // Footer
-  footer: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    borderTopWidth: 1,
-  },
-  cancelBtn: {
-    flex: 1,
-    height: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  footer: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingTop: 14, borderTopWidth: 1 },
+  cancelBtn: { flex: 1, height: 48, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   cancelBtnText: { fontSize: 15, fontWeight: '600' },
-  saveBtn: {
-    flex: 2,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  saveBtn: { flex: 2, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

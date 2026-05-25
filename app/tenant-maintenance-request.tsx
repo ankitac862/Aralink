@@ -555,9 +555,9 @@ export default function TenantMaintenanceRequestScreen() {
                       </Text>
                     </View>
                     <MaterialCommunityIcons
-                      name={active ? 'check-circle' : 'chevron-right'}
-                      size={20}
-                      color={active ? '#2563eb' : '#94a3b8'}
+                      name={active ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
+                      size={22}
+                      color={active ? '#2563eb' : '#d1d5db'}
                     />
                   </TouchableOpacity>
                 );

@@ -4071,8 +4071,7 @@ export async function fetchLandlordNotifications(userId: string) {
       .from('notifications')
       .select('*')
       .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(10);
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('❌ Error fetching notifications:', error);

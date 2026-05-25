@@ -309,18 +309,36 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       );
 
       if (error) {
+        // "Error sending confirmation email" means the user account WAS created in Supabase
+        // but the email provider failed (e.g. no SMTP configured, rate-limited).
+        // Treat it as a successful signup that needs email verification.
+        if (
+          error.message.toLowerCase().includes('error sending confirmation email') ||
+          error.message.toLowerCase().includes('sending confirmation email')
+        ) {
+          await setStorageValue('userRole', role);
+          await setStorageValue('userName', name);
+          set({ isLoading: false, pendingVerificationEmail: resolved.value });
+          return {
+            success: true,
+            needsVerification: true,
+            verificationType: resolved.type,
+            verificationTarget: resolved.value,
+          };
+        }
+
         // Handle specific error cases
         let errorMessage = error.message;
-        
+
         // Check for duplicate credential error
-        if (error.message.includes('User already registered') || 
+        if (error.message.includes('User already registered') ||
             error.message.includes('already been registered') ||
             error.message.includes('already exists')) {
           errorMessage = resolved.type === 'phone'
             ? 'An account with this phone number already exists. Please login instead.'
             : 'An account with this email already exists. Please login instead.';
         }
-        
+
         set({ isLoading: false, error: errorMessage });
         return { success: false, error: errorMessage };
       }
@@ -742,9 +760,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     try {
-      // Update profile in database
+      // Update profile in database — always include NOT NULL columns
       const result = await upsertUserProfile({
         id: currentUser.id,
+        user_type: currentUser.role,
+        full_name: currentUser.name ?? '',
         avatar_url: avatarUrl,
       });
 
@@ -773,7 +793,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const result = await upsertUserProfile({
         id: currentUser.id,
-        ...(fields.name !== undefined ? { full_name: fields.name } : {}),
+        // Always include NOT NULL columns so the upsert succeeds even when
+        // the INSERT path is taken (profile row missing).
+        user_type: currentUser.role,
+        full_name: fields.name ?? currentUser.name ?? '',
         ...(fields.phone !== undefined ? { phone: fields.phone } : {}),
       });
 

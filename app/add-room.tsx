@@ -158,6 +158,26 @@ export default function AddRoomScreen() {
       return;
     }
 
+    // Duplicate room name check
+    const property = getPropertyById(propertyId);
+    if (property) {
+      const targetUnit = unitId
+        ? property.units.find(u => u.id === unitId)
+        : property.units[0];
+      if (targetUnit) {
+        const duplicate = targetUnit.subUnits.find(
+          su => su.name.trim().toLowerCase() === formData.name.trim().toLowerCase() && su.id !== roomId
+        );
+        if (duplicate) {
+          Alert.alert(
+            'Duplicate Room',
+            `Room "${formData.name.trim()}" already exists. Please use a different number.`
+          );
+          return;
+        }
+      }
+    }
+
     setIsSubmitting(true);
 
     try {

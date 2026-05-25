@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   RefreshControl,
@@ -21,9 +21,11 @@ import { useAuth } from '@/hooks/use-auth';
 const VIEWED_KEY = 'maintenance_viewed_ids';
 
 const FILTERS = [
+  { label: 'All', value: 'all' },
   { label: 'New', value: 'new' },
   { label: 'Under Review', value: 'under_review' },
   { label: 'In Progress', value: 'in_progress' },
+  { label: 'Waiting Vendor', value: 'waiting_vendor' },
   { label: 'Resolved', value: 'resolved' },
 ];
 
@@ -33,7 +35,7 @@ export default function LandlordMaintenanceOverviewScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('new');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [refreshing, setRefreshing] = useState(false);
   const [viewedIds, setViewedIds] = useState<Set<string>>(new Set());
 
@@ -77,12 +79,11 @@ export default function LandlordMaintenanceOverviewScreen() {
         req.id.toLowerCase().includes(searchTerm);
 
       let matchStatus: boolean;
-      if (statusFilter === 'new') {
-        // "New" tab: status is 'new' OR 'under_review' OR never been opened
-        matchStatus =
-          req.status === 'new' ||
-          req.status === 'under_review' ||
-          isUnseen(req.id);
+      if (statusFilter === 'all') {
+        matchStatus = true;
+      } else if (statusFilter === 'new') {
+        // "New" tab: status is 'new' OR never been opened
+        matchStatus = req.status === 'new' || isUnseen(req.id);
       } else {
         matchStatus = req.status === statusFilter;
       }
@@ -93,10 +94,7 @@ export default function LandlordMaintenanceOverviewScreen() {
 
   // Count for the "New" badge
   const newCount = useMemo(
-    () =>
-      requests.filter(
-        (r) => r.status === 'new' || r.status === 'under_review' || isUnseen(r.id)
-      ).length,
+    () => requests.filter((r) => r.status === 'new' || isUnseen(r.id)).length,
     [requests, viewedIds]
   );
 

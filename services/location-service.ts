@@ -96,7 +96,7 @@ export async function getAddressPredictions(
       input,
       key: GOOGLE_MAPS_API_KEY,
       types: 'address',
-    // components: 'country:us|country:ca', // Restrict to US and Canada
+      components: 'country:us|country:ca',
     });
 
     if (sessionToken) {
@@ -111,7 +111,7 @@ export async function getAddressPredictions(
       throw new Error(`HTTP error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (data.status === 'ZERO_RESULTS') {
       return { predictions: [] };
@@ -179,7 +179,7 @@ export async function getPlaceDetails(
       throw new Error(`HTTP error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (data.status !== 'OK') {
       console.error('Place details API error:', data.status, data.error_message);
@@ -237,7 +237,7 @@ export async function reverseGeocode(
       throw new Error(`HTTP error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (data.status === 'ZERO_RESULTS') {
       return {

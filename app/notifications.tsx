@@ -19,6 +19,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import {
   fetchTenantNotifications,
+  fetchLandlordNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
   fetchPropertyById,
@@ -54,20 +55,22 @@ export default function NotificationsScreen() {
   const borderColor = isDark ? '#394a57' : '#E5E7EB';
   const unreadBgColor = isDark ? '#1e3a5f' : '#eff6ff';
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadNotifications();
-    }, [user])
-  );
-
   const loadNotifications = async () => {
     if (!user?.id) return;
-    
     setIsLoading(true);
-    const data = await fetchTenantNotifications(user.id);
+    const isLandlordOrManager = user.role === 'landlord' || user.role === 'manager';
+    const data = isLandlordOrManager
+      ? await fetchLandlordNotifications(user.id)
+      : await fetchTenantNotifications(user.id);
     setNotifications(data);
     setIsLoading(false);
   };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadNotifications();
+    }, [user?.id, user?.role])
+  );
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

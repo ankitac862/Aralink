@@ -3,7 +3,6 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -16,16 +15,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
-import { 
-  DbTransaction, 
-  fetchTransactions, 
-  getTransactionAggregates, 
+import {
+  DbTransaction,
+  fetchTransactions,
+  getTransactionAggregates,
   TransactionAggregates,
 } from '@/lib/supabase';
+import { usePropertyStore } from '@/store/propertyStore';
 
 type TransactionType = 'income' | 'expense';
 type TransactionCategory = 'all' | 'rent' | 'garage' | 'parking' | 'utility' | 'maintenance' | 'other';
-type TransactionStatus = 'paid' | 'pending' | 'overdue';
 
 // Group transactions by date section
 interface TransactionSection {
@@ -53,8 +52,10 @@ export default function AccountingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  
+  const { properties } = usePropertyStore();
+
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
+  const [chartPeriod, setChartPeriod] = useState<6 | 12>(12);
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory>('all');
 
   const currentCategories = transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -148,15 +149,13 @@ export default function AccountingScreen() {
     return acc;
   }, [] as TransactionSection[]);
 
-  // Calculate total for filtered transactions
-  const totalAmount = filteredTransactions.reduce((sum, t) => sum + t.amount, 0);
 
-  // Build last-6-months income vs expense data from already-fetched transactions
-  const sixMonthData = useMemo(() => {
+  // Income vs Expense chart data for selected period (6 or 12 months)
+  const chartData = useMemo(() => {
     const months: { label: string; start: string; end: string }[] = [];
     const d = new Date();
-    d.setMonth(d.getMonth() - 5);
-    for (let i = 0; i < 6; i++) {
+    d.setMonth(d.getMonth() - (chartPeriod - 1));
+    for (let i = 0; i < chartPeriod; i++) {
       const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
       const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
       months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
@@ -168,7 +167,24 @@ export default function AccountingScreen() {
       const expense = bucket.filter(t => t.type === 'expense' && t.status !== 'pending').reduce((s, t) => s + t.amount, 0);
       return { month: label, income, expense };
     });
-  }, [transactions]);
+  }, [transactions, chartPeriod]);
+
+  // Per-property income breakdown
+  const propertyRevenue = useMemo(() => {
+    const map: Record<string, { name: string; income: number; expense: number }> = {};
+    transactions
+      .filter(t => t.status !== 'pending' && t.property_id)
+      .forEach(t => {
+        const pid = t.property_id!;
+        if (!map[pid]) {
+          const prop = properties.find(p => p.id === pid);
+          map[pid] = { name: prop?.address1 || 'Unknown Property', income: 0, expense: 0 };
+        }
+        if (t.type === 'income') map[pid].income += t.amount;
+        else map[pid].expense += t.amount;
+      });
+    return Object.values(map).sort((a, b) => b.income - a.income);
+  }, [transactions, properties]);
 
   // Map category to icon
   const getCategoryIcon = (category: string): string => {
@@ -384,23 +400,34 @@ export default function AccountingScreen() {
           </View>
         </View>
 
-        {/* Income vs Expense — 6-month bar chart */}
+        {/* Income vs Expense bar chart */}
         <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
+          {/* Header + period toggle */}
           <View style={styles.incomeExpenseHeader}>
             <View>
               <ThemedText style={[styles.incomeExpenseTitle, { color: textColor }]}>
                 Income vs Expense
               </ThemedText>
               <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor }]}>
-                Last 6 months
+                Last {chartPeriod} months
               </ThemedText>
             </View>
-            <View style={[styles.incomeExpenseBadge, { backgroundColor: `${primaryColor}20` }]}>
-              <ThemedText style={[styles.incomeExpenseBadgeText, { color: primaryColor }]}>6M</ThemedText>
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+              {([6, 12] as const).map(p => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.periodBtn, chartPeriod === p && { backgroundColor: primaryColor }]}
+                  onPress={() => setChartPeriod(p)}
+                >
+                  <ThemedText style={[styles.periodBtnText, { color: chartPeriod === p ? '#fff' : secondaryTextColor }]}>
+                    {p}M
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
 
-          {sixMonthData.every(d => d.income === 0 && d.expense === 0) ? (
+          {chartData.every((d: { income: number; expense: number }) => d.income === 0 && d.expense === 0) ? (
             <View style={styles.incomeExpenseEmpty}>
               <MaterialCommunityIcons name="chart-bar" size={36} color={secondaryTextColor} />
               <ThemedText style={[styles.incomeExpenseEmptyText, { color: secondaryTextColor }]}>
@@ -408,55 +435,82 @@ export default function AccountingScreen() {
               </ThemedText>
             </View>
           ) : (() => {
-            const maxVal = Math.max(...sixMonthData.flatMap(d => [d.income, d.expense]), 1);
+            const maxVal = Math.max(...chartData.flatMap((d: { income: number; expense: number }) => [d.income, d.expense]), 1);
             const BAR_H = 110;
+            const fmtY = (v: number) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${Math.round(v)}`;
             return (
-              <View style={styles.barChartWrapper}>
-                {[1, 0.5, 0].map(frac => (
-                  <View
-                    key={frac}
-                    style={[
-                      styles.barChartGuideLine,
-                      { bottom: frac * BAR_H + 24, borderColor: isDark ? '#ffffff12' : '#00000010' },
-                    ]}
-                  />
-                ))}
-                {sixMonthData.map((d, i) => (
-                  <View key={i} style={styles.barGroup}>
-                    <View style={[styles.barsRow, { height: BAR_H }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                {/* Y-axis */}
+                <View style={styles.yAxis}>
+                  <ThemedText style={[styles.yAxisLabel, { color: secondaryTextColor }]}>{fmtY(maxVal)}</ThemedText>
+                  <ThemedText style={[styles.yAxisLabel, { color: secondaryTextColor }]}>{fmtY(maxVal / 2)}</ThemedText>
+                  <ThemedText style={[styles.yAxisLabel, { color: secondaryTextColor }]}>$0</ThemedText>
+                </View>
+                {/* Bars (scrollable for 12 months) */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+                  <View style={[styles.barChartWrapper, { width: chartPeriod * 42 }]}>
+                    {[1, 0.5, 0].map((frac: number) => (
                       <View
+                        key={frac}
                         style={[
-                          styles.barItem,
-                          { height: Math.max((d.income / maxVal) * BAR_H, 3), backgroundColor: '#34C759' },
+                          styles.barChartGuideLine,
+                          { bottom: frac * BAR_H + 24, width: chartPeriod * 42, borderColor: isDark ? '#ffffff12' : '#00000010' },
                         ]}
                       />
-                      <View
-                        style={[
-                          styles.barItem,
-                          { height: Math.max((d.expense / maxVal) * BAR_H, 3), backgroundColor: '#FF3B30' },
-                        ]}
-                      />
-                    </View>
-                    <ThemedText style={[styles.barLabel, { color: secondaryTextColor }]}>
-                      {d.month}
-                    </ThemedText>
+                    ))}
+                    {chartData.map((d: { month: string; income: number; expense: number }, i: number) => (
+                      <View key={i} style={[styles.barGroup, { width: 42 }]}>
+                        <View style={[styles.barsRow, { height: BAR_H }]}>
+                          <View style={[styles.barItem, { height: Math.max((d.income / maxVal) * BAR_H, 3), backgroundColor: '#34C759' }]} />
+                          <View style={[styles.barItem, { height: Math.max((d.expense / maxVal) * BAR_H, 3), backgroundColor: '#FF3B30' }]} />
+                        </View>
+                        <ThemedText style={[styles.barLabel, { color: secondaryTextColor }]}>{d.month}</ThemedText>
+                      </View>
+                    ))}
                   </View>
-                ))}
+                </ScrollView>
               </View>
             );
           })()}
 
-          <View style={styles.incomeExpenseLegend}>
-            <View style={styles.legendRow}>
-              <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
-              <ThemedText style={[styles.legendLabel, { color: textColor }]}>Income</ThemedText>
-            </View>
-            <View style={styles.legendRow}>
-              <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
-              <ThemedText style={[styles.legendLabel, { color: textColor }]}>Expense</ThemedText>
+          {/* Legends + axis labels */}
+          <View style={styles.chartFooter}>
+            <View style={styles.incomeExpenseLegend}>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
+                <ThemedText style={[styles.legendLabel, { color: textColor }]}>Income (Y-axis: $)</ThemedText>
+              </View>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
+                <ThemedText style={[styles.legendLabel, { color: textColor }]}>Expense (X-axis: month)</ThemedText>
+              </View>
             </View>
           </View>
         </View>
+
+        {/* Revenue by Property */}
+        {propertyRevenue.length > 0 && (
+          <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.incomeExpenseTitle, { color: textColor }]}>Revenue by Property</ThemedText>
+            <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor, marginBottom: 12 }]}>
+              Income vs expense per property
+            </ThemedText>
+            {propertyRevenue.map((p: { name: string; income: number; expense: number }, i: number) => {
+              const maxP = Math.max(...propertyRevenue.map((r: { income: number }) => r.income), 1);
+              return (
+                <View key={i} style={styles.propRow}>
+                  <ThemedText style={[styles.propName, { color: textColor }]} numberOfLines={1}>{p.name}</ThemedText>
+                  <View style={styles.propBars}>
+                    <View style={[styles.propBar, { width: `${(p.income / maxP) * 100}%` as any, backgroundColor: '#34C759' }]} />
+                    <View style={[styles.propBar, { width: `${(p.expense / maxP) * 100}%` as any, backgroundColor: '#FF3B30', opacity: 0.7 }]} />
+                  </View>
+                  <ThemedText style={[styles.propAmount, { color: '#34C759' }]}>${p.income.toLocaleString()}</ThemedText>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
 
         <ScrollView
           key={transactionType}
@@ -521,16 +575,18 @@ export default function AccountingScreen() {
               </TouchableOpacity>
             </View>
           ) : (
-            groupedTransactions.map((section) => (
-              <View key={section.title} style={styles.section}>
-                <ThemedText style={[styles.sectionTitle, { color: secondaryTextColor }]}>
-                  {section.title}
-                </ThemedText>
-                <View style={styles.sectionTransactions}>
-                  {section.data.map(renderTransaction)}
+            <>
+              {groupedTransactions.map((section) => (
+                <View key={section.title} style={styles.section}>
+                  <ThemedText style={[styles.sectionTitle, { color: secondaryTextColor }]}>
+                    {section.title}
+                  </ThemedText>
+                  <View style={styles.sectionTransactions}>
+                    {section.data.map(renderTransaction)}
+                  </View>
                 </View>
-              </View>
-            ))
+              ))}
+            </>
           )}
         </View>
       </ScrollView>
@@ -993,6 +1049,66 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+  },
+  // Period toggle (6M / 12M)
+  periodToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 3,
+    gap: 3,
+  },
+  periodBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  periodBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  // Y-axis
+  yAxis: {
+    width: 36,
+    height: 134,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    paddingBottom: 24,
+    paddingRight: 4,
+  },
+  yAxisLabel: {
+    fontSize: 9,
+    fontWeight: '500',
+  },
+  // Chart footer (legends + axis note)
+  chartFooter: {
+    marginTop: 12,
+  },
+  // Property revenue rows
+  propRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  propName: {
+    fontSize: 12,
+    fontWeight: '500',
+    width: 90,
+  },
+  propBars: {
+    flex: 1,
+    gap: 3,
+  },
+  propBar: {
+    height: 8,
+    borderRadius: 4,
+    minWidth: 4,
+  },
+  propAmount: {
+    fontSize: 12,
+    fontWeight: '700',
+    width: 70,
+    textAlign: 'right',
   },
 });
 

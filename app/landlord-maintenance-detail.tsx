@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -60,6 +60,12 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
   const handleStatusChange = async (status: string) => {
     if (!permitted.changeStatus) {
       Alert.alert('Permission Denied', 'You are not allowed to change the request status.');
+      return;
+    }
+
+    // A resolved request cannot be cancelled
+    if (request.status === 'resolved' && status === 'cancelled') {
+      Alert.alert('Not Allowed', 'A resolved request cannot be cancelled.');
       return;
     }
 

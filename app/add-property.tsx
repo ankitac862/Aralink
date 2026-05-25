@@ -212,7 +212,7 @@ export default function AddPropertyScreen() {
         : (formData.address2 || structuredAddress.unit);
 
       // Pass the user ID to save to Supabase
-      await addProperty({
+      const savedPropertyId = await addProperty({
         // Use structured address fields (from autocomplete or manual)
         address1: fullStreetAddress,
         address2: unitValue || undefined,
@@ -220,10 +220,7 @@ export default function AddPropertyScreen() {
         state: province,
         zipCode: postalCode,
         country: country,
-        
-        // Store latitude/longitude if available
-        // Note: These would need to be added to the Property type
-        
+
         // Property details - NO name/location field
         propertyType: formData.propertyType,
         landlordName: formData.landlordName || undefined,
@@ -231,13 +228,20 @@ export default function AddPropertyScreen() {
         description: formData.description || undefined,
         photos: uploadedPhotoUrls.length > 0 ? uploadedPhotoUrls : undefined,
         parkingIncluded: formData.propertyType !== 'multi_unit' ? formData.parkingIncluded : undefined,
-        rentAmount: formData.propertyType !== 'multi_unit' && formData.rentAmount 
-          ? parseFloat(formData.rentAmount) 
+        rentAmount: formData.propertyType !== 'multi_unit' && formData.rentAmount
+          ? parseFloat(formData.rentAmount)
           : undefined,
         utilities: formData.utilities,
       }, user?.id);
-      
-      router.back();
+
+      // For multi-unit properties, go straight to the property detail so the landlord
+      // can immediately start adding units — navigating back to the list leaves them
+      // with no obvious next step.
+      if (formData.propertyType === 'multi_unit' && savedPropertyId) {
+        router.replace(`/property-detail?id=${savedPropertyId}`);
+      } else {
+        router.back();
+      }
     } catch (error) {
       console.error('Error adding property:', error);
       Alert.alert('Error', 'Failed to add property. Please try again.');
@@ -295,6 +299,7 @@ export default function AddPropertyScreen() {
                 {/* Google Maps Address Autocomplete */}
                 <AddressAutocomplete
                   onAddressSelect={handleAddressSelect}
+                  onError={() => setManualAddressMode(true)}
                   initialAddress={structuredAddress.formattedAddress ? structuredAddress : undefined}
                   placeholder="Start typing address..."
                   label="Street Address"
