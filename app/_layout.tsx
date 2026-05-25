@@ -121,6 +121,8 @@ export default function RootLayout() {
       // User is authenticated in auth group (includes after completeSocialSignIn on social-role-select)
       if (user.role === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
+      } else if (user.role === 'ara_partner') {
+        router.replace('/ara-partner/dashboard' as any);
       } else {
         router.replace('/(tabs)/landlord-dashboard');
       }
@@ -203,6 +205,9 @@ export default function RootLayout() {
         <Stack.Screen name="finalize-lease-terms" />
         <Stack.Screen name="lease-preview" />
         <Stack.Screen name="lease-sent" />
+
+        {/* AaraPartner Routes */}
+        <Stack.Screen name="ara-partner" />
 
         {/* Maintenance Flow Routes */}
         <Stack.Screen name="tenant-maintenance-request" />

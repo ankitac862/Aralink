@@ -116,7 +116,7 @@ export interface UserProfile {
   id: string;
   email: string;
   full_name: string;
-  user_type: 'landlord' | 'tenant' | 'manager';
+  user_type: 'landlord' | 'tenant' | 'manager' | 'ara_partner' | 'admin';
   account_status?: 'active' | 'pending' | 'invited' | 'suspended';
   phone?: string;
   avatar_url?: string;

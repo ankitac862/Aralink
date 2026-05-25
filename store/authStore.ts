@@ -4,7 +4,7 @@ import { create } from 'zustand';
 
 import { clearCorruptedSession, getUserProfile, supabase, upsertUserProfile, UserProfile } from '@/lib/supabase';
 
-export type UserRole = 'landlord' | 'tenant' | 'manager';
+export type UserRole = 'landlord' | 'tenant' | 'manager' | 'ara_partner' | 'admin';
 
 export interface AuthUser {
   id: string;
