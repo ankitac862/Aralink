@@ -320,12 +320,19 @@ export default function LandlordDashboardScreen() {
       icon: 'toolbox', 
       route: '/landlord-maintenance-overview' 
     },
-    { 
-      id: '6', 
-      title: 'New Applicants', 
-      subtitle: `${stats.applicantCount} new`, 
-      icon: 'file-document', 
-      route: '/landlord-applications' 
+    {
+      id: '6',
+      title: 'New Applicants',
+      subtitle: `${stats.applicantCount} new`,
+      icon: 'file-document',
+      route: '/landlord-applications'
+    },
+    {
+      id: '7',
+      title: 'Marketplace',
+      subtitle: 'Find vendors',
+      icon: 'store',
+      route: '/marketplace',
     },
   ];
 

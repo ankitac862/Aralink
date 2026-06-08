@@ -216,6 +216,10 @@ export default function RootLayout() {
         <Stack.Screen name="tenant-maintenance-detail" />
         <Stack.Screen name="landlord-maintenance-overview" />
         <Stack.Screen name="landlord-maintenance-detail" />
+
+        {/* Marketplace */}
+        <Stack.Screen name="marketplace" />
+        <Stack.Screen name="vendor-select" />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
