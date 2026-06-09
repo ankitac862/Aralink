@@ -14,14 +14,14 @@ export interface AuthUser {
   phone?: string;
   avatarUrl?: string;
   isSocialLogin: boolean;
-  socialProvider?: 'google' | 'apple' | 'facebook' | null;
+  socialProvider?: 'google' | null;
   emailVerified: boolean;
 }
 
 interface PendingOAuthSession {
   user: User;
   session: Session;
-  provider: 'google' | 'apple' | 'facebook';
+  provider: 'google';
 }
 
 interface AuthState {
@@ -39,8 +39,6 @@ interface AuthState {
   signIn: (identifier: string, password: string) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signOut: () => Promise<void>;
   signInWithGoogle: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
-  signInWithApple: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
-  signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
   completeSocialSignIn: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; error?: string }>;
@@ -155,11 +153,7 @@ const toAuthUser = (user: User, profile: UserProfile | null, defaultRole?: UserR
     'tenant';
 
   const provider = user.app_metadata?.provider;
-  const isSocialLogin = profile?.is_social_login || 
-    provider === 'google' || 
-    provider === 'apple' || 
-    provider === 'facebook' || 
-    false;
+  const isSocialLogin = profile?.is_social_login || provider === 'google' || false;
 
   return {
     id: user.id,
@@ -573,154 +567,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       return { success: true, isNewUser: false };
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      set({ isLoading: false, error: errorMessage });
-      return { success: false, error: errorMessage };
-    }
-  },
-
-  signInWithApple: async (role?: UserRole) => {
-    try {
-      set({ isLoading: true, error: null });
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'apple',
-        options: {
-          redirectTo: 'aralink://oauth-redirect',
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error || !data?.url) {
-        set({ isLoading: false, error: error?.message || 'Failed to get Apple sign-in URL' });
-        return { success: false, error: error?.message || 'Failed to get Apple sign-in URL' };
-      }
-
-      const { openAuthSessionAsync } = await import('expo-web-browser');
-      const result = await openAuthSessionAsync(data.url, 'aralink://oauth-redirect');
-
-      if (result.type !== 'success' || !result.url) {
-        set({ isLoading: false });
-        return { success: false, error: 'Apple sign-in was cancelled' };
-      }
-
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-      if (code) {
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data; sessionError = res.error;
-      } else if (accessToken) {
-        const res = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken || '' });
-        sessionData = res.data; sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        set({
-          pendingOAuthSession: { user: sessionData.user, session: sessionData.session, provider: 'apple' },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-      return { success: true, isNewUser: false };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      set({ isLoading: false, error: errorMessage });
-      return { success: false, error: errorMessage };
-    }
-  },
-
-  signInWithFacebook: async (role?: UserRole) => {
-    try {
-      set({ isLoading: true, error: null });
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'facebook',
-        options: {
-          redirectTo: 'aralink://oauth-redirect',
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error || !data?.url) {
-        set({ isLoading: false, error: error?.message || 'Failed to get Facebook sign-in URL' });
-        return { success: false, error: error?.message || 'Failed to get Facebook sign-in URL' };
-      }
-
-      const { openAuthSessionAsync } = await import('expo-web-browser');
-      const result = await openAuthSessionAsync(data.url, 'aralink://oauth-redirect');
-
-      if (result.type !== 'success' || !result.url) {
-        set({ isLoading: false });
-        return { success: false, error: 'Facebook sign-in was cancelled' };
-      }
-
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-      if (code) {
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data; sessionError = res.error;
-      } else if (accessToken) {
-        const res = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken || '' });
-        sessionData = res.data; sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        set({
-          pendingOAuthSession: { user: sessionData.user, session: sessionData.session, provider: 'facebook' },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-      return { success: true, isNewUser: false };
-    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       set({ isLoading: false, error: errorMessage });
       return { success: false, error: errorMessage };

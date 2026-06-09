@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   KeyboardAvoidingView,
@@ -21,7 +22,8 @@ import { useAuth } from '@/hooks/use-auth';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { canApprove, canChangeStatus, canAssignVendor, canAddResolutionNotes } from '@/lib/maintenancePermissions';
 import type { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
-import { VENDORS, VENDOR_CITIES, VENDOR_CATEGORIES, type Vendor } from '@/constants/vendors';
+import type { Vendor } from '@/constants/vendors';
+import { fetchVendors } from '@/services/vendorService';
 
 const STATUS_ACTIONS = [
   { label: 'Under Review', value: 'under_review' },
@@ -164,6 +166,8 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
 
   // Vendor selection modal state
   const [vendorModalVisible, setVendorModalVisible] = useState(false);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
   const [filterCity, setFilterCity] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [cityDropOpen, setCityDropOpen] = useState(false);
@@ -181,22 +185,26 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
 
   const isResolved = request?.status === 'resolved';
 
+  // Derive available cities from live vendor data
+  const availableCities = useMemo(
+    () => [...new Set(vendors.map((v) => v.city))].sort(),
+    [vendors]
+  );
+
   // Filtered vendors for the inline modal
   const filteredVendors = useMemo(() => {
     if (!filterCity) return [];
-    return VENDORS.filter((v) => {
-      const cityMatch = v.city === filterCity;
-      const catMatch = !filterCategory || v.category === filterCategory;
-      return cityMatch && catMatch;
-    }).sort((a, b) => (b.isSponsored ? 1 : 0) - (a.isSponsored ? 1 : 0));
-  }, [filterCity, filterCategory]);
+    return vendors.filter((v) => {
+      return v.city === filterCity && (!filterCategory || v.category === filterCategory);
+    });
+  }, [vendors, filterCity, filterCategory]);
 
   // Categories available for the selected city
   const availableCategories = useMemo(() => {
-    if (!filterCity) return [...VENDOR_CATEGORIES];
-    const cats = new Set(VENDORS.filter((v) => v.city === filterCity).map((v) => v.category));
-    return VENDOR_CATEGORIES.filter((c) => cats.has(c));
-  }, [filterCity]);
+    if (!filterCity) return [...new Set(vendors.map((v) => v.category))].sort();
+    const cats = new Set(vendors.filter((v) => v.city === filterCity).map((v) => v.category));
+    return [...cats].sort();
+  }, [vendors, filterCity]);
 
   // Activity entries that are NOT comments
   const activityLog = useMemo(
@@ -210,6 +218,13 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
     setCityDropOpen(false);
     setCatDropOpen(false);
     setVendorModalVisible(true);
+    if (vendors.length === 0) {
+      setVendorsLoading(true);
+      fetchVendors().then((data) => {
+        setVendors(data);
+        setVendorsLoading(false);
+      });
+    }
   };
 
   const handleSelectVendor = async (vendor: Vendor) => {
@@ -634,7 +649,7 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
               label="Location"
               placeholder="Select city…"
               value={filterCity}
-              options={[...VENDOR_CITIES]}
+              options={availableCities}
               isOpen={cityDropOpen}
               required
               onToggle={() => {
@@ -670,7 +685,12 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
           )}
 
           {/* Vendor list */}
-          {!filterCity ? (
+          {vendorsLoading ? (
+            <View style={vm.emptyState}>
+              <ActivityIndicator size="large" color="#2563eb" />
+              <Text style={vm.emptyText}>Loading vendors…</Text>
+            </View>
+          ) : !filterCity ? (
             <View style={vm.emptyState}>
               <MaterialCommunityIcons name="city-variant-outline" size={52} color="#cbd5e1" />
               <Text style={vm.emptyText}>Select a city to see available vendors.</Text>

@@ -15,8 +15,6 @@ export interface AuthContextType {
   signUp: (email: string, password: string, name: string, role: UserRole) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   signInWithGoogle: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
-  signInWithApple: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
-  signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
 }
@@ -32,8 +30,6 @@ export const AuthContext = createContext<AuthContextType>({
   signUp: async () => ({ success: false, error: 'Not implemented' }),
   signOut: async () => {},
   signInWithGoogle: async () => ({ success: false, error: 'Not implemented' }),
-  signInWithApple: async () => ({ success: false, error: 'Not implemented' }),
-  signInWithFacebook: async () => ({ success: false, error: 'Not implemented' }),
   updateUserRole: async () => ({ success: false, error: 'Not implemented' }),
   resetPassword: async () => ({ success: false, error: 'Not implemented' }),
 });

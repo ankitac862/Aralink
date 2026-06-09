@@ -6,7 +6,7 @@ export interface User {
   role: 'landlord' | 'tenant' | 'manager';
   phone?: string;
   createdAt: string;
-  socialProvider?: 'google' | 'apple' | 'facebook';
+  socialProvider?: 'google';
   profilePicture?: string;
 }
 
