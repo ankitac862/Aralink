@@ -148,8 +148,13 @@ async function registerForPushNotificationsAsync() {
       return;
     }
 
-    token = (await Notifications.getExpoPushTokenAsync()).data;
-    console.log('📱 Push token:', token);
+    try {
+      token = (await Notifications.getExpoPushTokenAsync()).data;
+      console.log('📱 Push token:', token);
+    } catch (e: any) {
+      console.warn('⚠️ Push token unavailable (Firebase not configured):', e?.message);
+      return undefined;
+    }
   } else {
     console.log('⚠️ Must use physical device for Push Notifications');
   }

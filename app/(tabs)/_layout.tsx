@@ -1,5 +1,6 @@
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Platform, View } from 'react-native';
+import { useEffect } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -13,9 +14,20 @@ type UserRole = 'landlord' | 'manager' | 'tenant' | null;
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { user, isInitialized } = useAuthStore();
+  const router = useRouter();
   const userRole = (user?.role as UserRole) ?? 'tenant';
 
+  useEffect(() => {
+    if (isInitialized && user?.role === 'ara_partner') {
+      router.replace('/ara-partner/dashboard' as any);
+    }
+  }, [isInitialized, user?.role]);
+
   if (!isInitialized) {
+    return null;
+  }
+
+  if (user?.role === 'ara_partner') {
     return null;
   }
 
@@ -66,26 +78,22 @@ export default function TabLayout() {
                 height: 60,
               },
         }}>
-        {/* Tab 1: Dashboard - Role based (changes based on user type) */}
-        {isLandlordOrManager ? (
-          <Tabs.Screen
-            name="landlord-dashboard"
-            options={{
-              title: 'Dashboard',
-              tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-            }}
-          />
-        ) : (
-          <Tabs.Screen
-            name="tenant-dashboard"
-            options={{
-              title: 'Dashboard',
-              tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-            }}
-          />
-        )}
-
-        {/* Tab 2: Messages (for all users) */}
+        <Tabs.Screen
+          name="landlord-dashboard"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+            href: isLandlordOrManager ? undefined : null,
+          }}
+        />
+        <Tabs.Screen
+          name="tenant-dashboard"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+            href: isLandlordOrManager ? null : undefined,
+          }}
+        />
         <Tabs.Screen
           name="messages"
           options={{
@@ -93,8 +101,6 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => <IconSymbol size={28} name="message.fill" color={color} />,
           }}
         />
-
-        {/* Tab 3: Notifications (for all users) */}
         <Tabs.Screen
           name="alerts"
           options={{
@@ -102,8 +108,6 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell.fill" color={color} />,
           }}
         />
-
-        {/* Tab 4: Settings (for all users) */}
         <Tabs.Screen
           name="settings"
           options={{
@@ -111,24 +115,6 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => <IconSymbol size={28} name="gear" color={color} />,
           }}
         />
-
-        {/* Hide unused dashboard from tabs */}
-        {isLandlordOrManager && (
-          <Tabs.Screen
-            name="tenant-dashboard"
-            options={{
-              href: null, // Hide from tabs
-            }}
-          />
-        )}
-        {!isLandlordOrManager && (
-          <Tabs.Screen
-            name="landlord-dashboard"
-            options={{
-              href: null, // Hide from tabs
-            }}
-          />
-        )}
       </Tabs>
   );
 

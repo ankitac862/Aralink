@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -44,6 +44,10 @@ export default function AraPartnerDashboard() {
     }, [user?.id])
   );
 
+  const [profileBannerDismissed, setProfileBannerDismissed] = useState(false);
+  const profileIncomplete = profile && (!profile.phone || !profile.companyName);
+  const showProfileBanner = profileIncomplete && !profileBannerDismissed;
+
   const approved = referrals.filter((r) => r.status === 'approved').length;
   const pending = referrals.filter((r) => r.status === 'pending').length;
   const totalPaid = payouts
@@ -82,32 +86,49 @@ export default function AraPartnerDashboard() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {isLoading && <ActivityIndicator color={primaryColor} style={{ marginVertical: 16 }} />}
 
-        {/* Stats Row */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-            <View style={[styles.statIcon, { backgroundColor: `${primaryColor}18` }]}>
-              <MaterialCommunityIcons name="check-circle" size={18} color={primaryColor} />
-            </View>
+        {/* Stats Panel */}
+        <View style={[styles.statsPanel, { backgroundColor: cardBg, borderColor }]}>
+          <View style={styles.statItem}>
             <ThemedText style={[styles.statValue, { color: primaryColor }]}>{approved}</ThemedText>
             <ThemedText style={[styles.statLabel, { color: subText }]}>Approved</ThemedText>
           </View>
-          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-            <View style={[styles.statIcon, { backgroundColor: '#FF950018' }]}>
-              <MaterialCommunityIcons name="clock-outline" size={18} color="#FF9500" />
-            </View>
+          <View style={[styles.statDivider, { backgroundColor: borderColor }]} />
+          <View style={styles.statItem}>
             <ThemedText style={[styles.statValue, { color: '#FF9500' }]}>{pending}</ThemedText>
             <ThemedText style={[styles.statLabel, { color: subText }]}>Pending</ThemedText>
           </View>
-          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-            <View style={[styles.statIcon, { backgroundColor: '#34C75918' }]}>
-              <MaterialCommunityIcons name="cash" size={18} color="#34C759" />
-            </View>
-            <ThemedText style={[styles.statValue, { color: '#34C759' }]}>
-              ${totalPaid.toFixed(0)}
-            </ThemedText>
+          <View style={[styles.statDivider, { backgroundColor: borderColor }]} />
+          <View style={styles.statItem}>
+            <ThemedText style={[styles.statValue, { color: '#34C759' }]}>${totalPaid.toFixed(0)}</ThemedText>
             <ThemedText style={[styles.statLabel, { color: subText }]}>Paid Out</ThemedText>
           </View>
         </View>
+
+        {/* Complete Profile Banner */}
+        {showProfileBanner && (
+          <View style={[styles.profileBanner, { backgroundColor: isDark ? '#0f1e2e' : '#F0F7FF', borderColor: isDark ? '#1e3a5f' : '#BAD6F8' }]}>
+            <View style={[styles.profileBannerIcon, { backgroundColor: isDark ? '#1e3a5f' : '#DBEAFE' }]}>
+              <MaterialCommunityIcons name="account-edit-outline" size={20} color={isDark ? '#60a5fa' : '#2563EB'} />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <ThemedText style={[styles.profileBannerTitle, { color: isDark ? '#e2eeff' : '#1E3A5F' }]}>
+                Complete your profile
+              </ThemedText>
+              <ThemedText style={[styles.profileBannerSub, { color: isDark ? '#7bafd4' : '#4A7FB5' }]}>
+                Add your {[!profile?.phone && 'phone number', !profile?.companyName && 'company name'].filter(Boolean).join(' & ')} to finish setup
+              </ThemedText>
+            </View>
+            <TouchableOpacity
+              onPress={() => router.push('/ara-partner/profile?edit=true' as any)}
+              style={[styles.profileBannerBtn, { backgroundColor: isDark ? '#1e3a5f' : '#2563EB' }]}
+            >
+              <ThemedText style={styles.profileBannerBtnText}>Update</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setProfileBannerDismissed(true)} style={styles.profileBannerClose}>
+              <MaterialCommunityIcons name="close" size={15} color={isDark ? '#4a7fb5' : '#93B8DC'} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Pending Payout Banner */}
         {pendingPayout > 0 && (
@@ -219,27 +240,20 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   scroll: { paddingHorizontal: 16, paddingBottom: 40, paddingTop: 16 },
-  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  statCard: {
-    flex: 1,
+  statsPanel: {
+    flexDirection: 'row',
     borderRadius: 14,
-    padding: 12,
-    alignItems: 'center',
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-    gap: 4,
+    marginBottom: 14,
+    overflow: 'hidden',
   },
-  statIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+  statItem: {
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 2,
+    paddingVertical: 14,
+    gap: 3,
   },
+  statDivider: { width: StyleSheet.hairlineWidth },
   statValue: { fontSize: 20, fontWeight: '800' },
   statLabel: { fontSize: 11 },
   banner: {
@@ -288,4 +302,19 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', marginVertical: 16, fontSize: 14 },
   signOutBtn: { marginTop: 24, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 },
   signOutText: { color: '#FF3B30', fontSize: 14, fontWeight: '600' },
+  profileBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 14,
+  },
+  profileBannerTitle: { fontSize: 13, fontWeight: '700' },
+  profileBannerSub: { fontSize: 11, marginTop: 1 },
+  profileBannerIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  profileBannerBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  profileBannerBtnText: { fontSize: 12, fontWeight: '700', color: '#fff' },
+  profileBannerClose: { padding: 4, marginLeft: 2 },
 });

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
@@ -10,14 +10,20 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import React from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAraPartnerStore, Referral } from '@/store/araPartnerStore';
+import { useAraPartnerStore, Referral, ReferralStatus } from '@/store/araPartnerStore';
 
 const PRIMARY = '#2A64F5';
+type Filter = 'all' | ReferralStatus;
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+];
 
 export default function MyReferrals() {
   const router = useRouter();
@@ -25,13 +31,17 @@ export default function MyReferrals() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const { referrals, loadReferrals, isLoading } = useAraPartnerStore();
+  const [filter, setFilter] = useState<Filter>('all');
 
   const bgColor = isDark ? '#101922' : '#F4F6F8';
   const cardBg = isDark ? '#1a202c' : '#ffffff';
   const textColor = isDark ? '#F4F6F8' : '#111827';
   const subText = isDark ? '#94a3b8' : '#6B7280';
+  const borderColor = isDark ? '#334155' : '#E5E7EB';
 
   useFocusEffect(useCallback(() => { loadReferrals(); }, []));
+
+  const filtered = filter === 'all' ? referrals : referrals.filter((r) => r.status === filter);
 
   const renderItem = ({ item }: { item: Referral }) => {
     const activeRule = item.commissionRules?.find((r) => !r.endDate);
@@ -95,24 +105,47 @@ export default function MyReferrals() {
         </TouchableOpacity>
       </View>
 
+      {/* Filter Tabs */}
+      <View style={[styles.filterRow, { borderBottomColor: borderColor }]}>
+        {FILTERS.map((f) => (
+          <TouchableOpacity
+            key={f.key}
+            style={[styles.filterTab, filter === f.key && { borderBottomColor: PRIMARY, borderBottomWidth: 2 }]}
+            onPress={() => setFilter(f.key)}
+          >
+            <ThemedText style={[styles.filterLabel, { color: filter === f.key ? PRIMARY : subText }]}>
+              {f.label}
+            </ThemedText>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {isLoading ? (
         <ActivityIndicator color={PRIMARY} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
-          data={referrals}
+          data={filtered}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             <View style={styles.empty}>
               <MaterialCommunityIcons name="clipboard-text-off" size={48} color={subText} />
-              <ThemedText style={[styles.emptyText, { color: subText }]}>No referrals yet</ThemedText>
-              <TouchableOpacity
-                style={styles.emptyBtn}
-                onPress={() => router.push('/ara-partner/submit-referral' as any)}
-              >
-                <ThemedText style={styles.emptyBtnText}>Submit Your First Referral</ThemedText>
-              </TouchableOpacity>
+              {filter === 'all' ? (
+                <>
+                  <ThemedText style={[styles.emptyText, { color: subText }]}>No referrals yet</ThemedText>
+                  <TouchableOpacity
+                    style={styles.emptyBtn}
+                    onPress={() => router.push('/ara-partner/submit-referral' as any)}
+                  >
+                    <ThemedText style={styles.emptyBtnText}>Submit Your First Referral</ThemedText>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <ThemedText style={[styles.emptyText, { color: subText }]}>
+                  No {filter} referrals
+                </ThemedText>
+              )}
             </View>
           }
         />
@@ -166,4 +199,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   emptyBtnText: { color: '#fff', fontWeight: '700' },
+  filterRow: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, marginHorizontal: 20, marginTop: 4 },
+  filterTab: { flex: 1, alignItems: 'center', paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  filterLabel: { fontSize: 13, fontWeight: '600' },
 });

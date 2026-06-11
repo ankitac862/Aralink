@@ -10,6 +10,7 @@ export default function AuthLayout() {
       <Stack.Screen name="verify-email" />
       <Stack.Screen name="forgot-password" />
       <Stack.Screen name="activate-tenant" />
+      <Stack.Screen name="social-role-select" options={{ gestureEnabled: false }} />
     </Stack>
   );
 }

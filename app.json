@@ -25,7 +25,6 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "enableOnBackInvokedCallback": true,
       "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
@@ -46,7 +45,9 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -58,8 +59,9 @@
       "googleClientIdIos": "229949367486-visth6tu5tti0k5su4kvokpjifqee7ur.apps.googleusercontent.com",
       "router": {},
       "eas": {
-        "projectId": "435fd33d-8d9a-4d2a-bc5e-0a581e85c5a7"
+        "projectId": "3d4d8605-3dba-4b6a-8102-d1cdacbb7f1b"
       }
-    }
+    },
+    "owner": "kshitizbakshis-organization"
   }
 }
