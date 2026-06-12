@@ -1,6 +1,17 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
-import { triggerPushNotification } from '@/lib/sendPushNotification';
+
+// Inline helper to avoid a require-cycle with sendPushNotification.ts
+async function triggerPushNotification(payload: {
+  userId: string; title: string; body: string;
+  data?: Record<string, unknown>; channelId?: string;
+}): Promise<void> {
+  try {
+    await supabase.functions.invoke('send-push-notification', { body: payload });
+  } catch (err) {
+    console.error('⚠️ Push notification error:', err);
+  }
+}
 
 // Supabase configuration
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';

@@ -12,9 +12,6 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 
-// Warm up the browser for faster OAuth on Android
-WebBrowser.warmUpAsync();
-
 export const unstable_settings = {
   anchor: 'splash', // Start with splash while auth initializes
 };
@@ -31,6 +28,10 @@ export default function RootLayout() {
 
   useEffect(() => {
     setIsMounted(true);
+    if (Platform.OS === 'android') {
+      WebBrowser.warmUpAsync();
+      return () => { WebBrowser.coolDownAsync(); };
+    }
   }, []);
 
   /**
@@ -102,6 +103,8 @@ export default function RootLayout() {
     }
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inTabsGroup = segments[0] === '(tabs)';
+    const inAraPartnerGroup = segments[0] === 'ara-partner';
 
     const isInviteRoute =
       segments[0] === 'invite' ||
@@ -112,21 +115,19 @@ export default function RootLayout() {
       segments[0] === '(auth)' && segments[1] === 'social-role-select';
 
     if (pendingOAuthSession && !isSocialRoleSelect) {
-      // New social user needs to pick a role — send them there
       router.replace('/(auth)/social-role-select' as any);
     } else if (!user && !inAuthGroup && !isInviteRoute && !isSocialRoleSelect) {
-      // User is not authenticated and not in auth group, redirect to auth
       router.replace('/(auth)');
+    } else if (user && user.role === 'ara_partner' && !inAraPartnerGroup) {
+      // ara_partner must always be in /ara-partner/* — never in (tabs) or (auth)
+      router.replace('/ara-partner/dashboard' as any);
     } else if (user && inAuthGroup && !pendingOAuthSession) {
-      // User is authenticated in auth group (includes after completeSocialSignIn on social-role-select)
       if (user.role === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
-      } else if (user.role === 'ara_partner') {
-        router.replace('/ara-partner/dashboard' as any);
       } else {
         router.replace('/(tabs)/landlord-dashboard');
       }
-    } else if (user && !inAuthGroup && !isInviteRoute) {
+    } else if (user && !inAuthGroup && !isInviteRoute && !inAraPartnerGroup) {
       (async () => {
         const pendingToken = await AsyncStorage.getItem('pendingInviteToken');
         if (pendingToken) {

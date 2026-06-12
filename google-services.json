@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "632209756493",
+    "project_id": "aralink",
+    "storage_bucket": "aralink.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:632209756493:android:f02fc95365a74114122704",
+        "android_client_info": {
+          "package_name": "com.aralink.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_0iDLjofn34rvPd3TruVp6swQ9r9tAnA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

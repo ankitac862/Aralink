@@ -13,8 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import React from 'react';
-
+import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -96,7 +95,13 @@ export default function SubmitReferral() {
 
           <View style={[styles.card, { backgroundColor: cardBg, borderColor, marginTop: 14 }]}>
             <ThemedText style={[styles.cardTitle, { color: textColor }]}>Property Details</ThemedText>
-            <Field label="Property Address *" value={form.propertyAddress} onChangeText={(v: string) => setForm({ ...form, propertyAddress: v })} placeholder="e.g. 238 Glengarry Ave, Windsor, ON" inputBg={inputBg} textColor={textColor} subText={subText} borderColor={borderColor} />
+            <AddressAutocomplete
+              label="Property Address *"
+              placeholder="e.g. 238 Glengarry Ave, Windsor, ON"
+              required
+              onAddressSelect={(address) => setForm({ ...form, propertyAddress: address.formattedAddress })}
+              onError={() => setForm({ ...form, propertyAddress: form.propertyAddress })}
+            />
             <View style={[styles.infoBox, { backgroundColor: isDark ? '#1e3a5f' : '#EFF6FF' }]}>
               <MaterialCommunityIcons name="information" size={16} color={PRIMARY} />
               <ThemedText style={[styles.infoText, { color: PRIMARY }]}>

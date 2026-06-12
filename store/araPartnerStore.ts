@@ -11,6 +11,7 @@ export interface AraPartner {
   email?: string;
   fullName: string;
   phone?: string;
+  companyName?: string;
   paymentMethod: PaymentMethod;
   etransferId?: string;
   bankTransit?: string;
@@ -104,6 +105,7 @@ export const useAraPartnerStore = create<AraPartnerStore>((set, get) => ({
             email: data.email,
             fullName: data.full_name,
             phone: data.phone,
+            companyName: data.company_name,
             paymentMethod: data.payment_method,
             etransferId: data.etransfer_id,
             bankTransit: data.bank_transit,
@@ -132,6 +134,7 @@ export const useAraPartnerStore = create<AraPartnerStore>((set, get) => ({
           email: data.email,
           full_name: data.fullName || '',
           phone: data.phone,
+          company_name: data.companyName,
           payment_method: data.paymentMethod || 'etransfer',
           etransfer_id: data.etransferId,
           bank_transit: data.bankTransit,
@@ -149,6 +152,7 @@ export const useAraPartnerStore = create<AraPartnerStore>((set, get) => ({
           userId: created.user_id,
           fullName: created.full_name,
           phone: created.phone,
+          companyName: created.company_name,
           paymentMethod: created.payment_method,
           etransferId: created.etransfer_id,
           bankTransit: created.bank_transit,
@@ -176,6 +180,7 @@ export const useAraPartnerStore = create<AraPartnerStore>((set, get) => ({
         .update({
           full_name: data.fullName,
           phone: data.phone,
+          company_name: data.companyName,
           payment_method: data.paymentMethod,
           etransfer_id: data.etransferId,
           bank_transit: data.bankTransit,

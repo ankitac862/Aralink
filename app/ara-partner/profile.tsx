@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -25,6 +25,7 @@ const PRIMARY = '#2A64F5';
 
 export default function AraPartnerProfile() {
   const router = useRouter();
+  const { edit } = useLocalSearchParams<{ edit?: string }>();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -38,10 +39,11 @@ export default function AraPartnerProfile() {
   const borderColor = isDark ? '#334155' : '#E5E7EB';
   const inputBg = isDark ? '#0f172a' : '#F9FAFB';
 
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(edit === 'true');
   const [form, setForm] = useState({
     fullName: '',
     phone: '',
+    companyName: '',
     paymentMethod: 'etransfer' as PaymentMethod,
     etransferId: '',
     bankTransit: '',
@@ -55,6 +57,7 @@ export default function AraPartnerProfile() {
       setForm({
         fullName: profile.fullName || user?.name || '',
         phone: profile.phone || user?.phone || '',
+        companyName: profile.companyName || '',
         paymentMethod: profile.paymentMethod || 'etransfer',
         etransferId: profile.etransferId || '',
         bankTransit: profile.bankTransit || '',
@@ -90,6 +93,7 @@ export default function AraPartnerProfile() {
     const data = {
       fullName: form.fullName.trim(),
       phone: form.phone.trim() || undefined,
+      companyName: form.companyName.trim() || undefined,
       paymentMethod: form.paymentMethod,
       etransferId: form.paymentMethod === 'etransfer' ? form.etransferId.trim() : undefined,
       bankTransit: form.paymentMethod === 'bank' ? form.bankTransit.trim() : undefined,
@@ -115,6 +119,7 @@ export default function AraPartnerProfile() {
       setForm({
         fullName: profile.fullName || '',
         phone: profile.phone || '',
+        companyName: profile.companyName || '',
         paymentMethod: profile.paymentMethod || 'etransfer',
         etransferId: profile.etransferId || '',
         bankTransit: profile.bankTransit || '',
@@ -161,11 +166,13 @@ export default function AraPartnerProfile() {
               <>
                 <Field label="Full Name *" value={form.fullName} onChangeText={(v: string) => setForm({ ...form, fullName: v })} placeholder="Your full name" inputBg={inputBg} textColor={textColor} subText={subText} borderColor={borderColor} />
                 <Field label="Phone" value={form.phone} onChangeText={(v: string) => setForm({ ...form, phone: v })} placeholder="e.g. +1 416 555 0100" keyboardType="phone-pad" inputBg={inputBg} textColor={textColor} subText={subText} borderColor={borderColor} />
+                <Field label="Company Name" value={form.companyName} onChangeText={(v: string) => setForm({ ...form, companyName: v })} placeholder="Optional" inputBg={inputBg} textColor={textColor} subText={subText} borderColor={borderColor} />
               </>
             ) : (
               <>
                 <InfoRow label="Full Name" value={form.fullName || '—'} subText={subText} textColor={textColor} />
                 <InfoRow label="Phone" value={form.phone || '—'} subText={subText} textColor={textColor} />
+                <InfoRow label="Company" value={form.companyName || '—'} subText={subText} textColor={textColor} />
               </>
             )}
           </View>

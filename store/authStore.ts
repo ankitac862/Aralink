@@ -198,15 +198,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           // causes a race where the user lands on the dashboard before role selection.
           if (event === 'SIGNED_IN' && get().isLoading) return;
 
-          if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && newSession?.user) {
+          if (event === 'SIGNED_IN' && newSession?.user) {
             const profile = await getUserProfile(newSession.user.id);
             const role = (await getStorageValue('userRole')) as UserRole | null;
-            set({ user: toAuthUser(newSession.user, profile, role ?? undefined), session: newSession });
-          } else if (event === 'SIGNED_OUT') {
+            const authUser = toAuthUser(newSession.user, profile, role ?? undefined);
+            await setStorageValue('userRole', authUser.role);
+            set({ user: authUser, session: newSession });
+          } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
+            // Use the in-memory role as primary source to prevent role flipping
+            const currentRole = get().user?.role;
+            const profile = await getUserProfile(newSession.user.id);
+            const authUser = toAuthUser(newSession.user, profile, currentRole ?? undefined);
+            set({ user: authUser, session: newSession });
+          } else if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !newSession)) {
+            // TOKEN_REFRESHED with no session = refresh token was invalid/expired
             set({ user: null, session: null });
           }
         } catch (e) {
-          console.error('Auth state change error:', e);
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('Refresh Token Not Found') || msg.includes('Invalid Refresh Token')) {
+            console.warn('Auth: refresh token expired, signing out.');
+            set({ user: null, session: null });
+            try { await clearCorruptedSession(); } catch { /* ignore */ }
+          } else {
+            console.warn('Auth state change error:', msg);
+          }
         }
       });
     };
@@ -216,8 +232,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error) {
-        console.warn('Session read error, clearing:', error.message);
-        try { await supabase.auth.signOut(); } catch { /* ignore */ }
+        const isExpiredToken =
+          error.message.includes('Refresh Token Not Found') ||
+          error.message.includes('Invalid Refresh Token');
+        if (isExpiredToken) {
+          console.warn('Session expired, clearing and redirecting to login.');
+        } else {
+          console.warn('Session read error, clearing:', error.message);
+        }
+        try { await clearCorruptedSession(); } catch { /* ignore */ }
         set({ isInitialized: true, isLoading: false });
         registerListener();
         return;
@@ -225,10 +248,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       rawSession = data?.session ?? null;
     } catch (sessionError: unknown) {
       const msg = sessionError instanceof Error ? sessionError.message : '';
-      if (msg.includes('missing destination name scopes') || msg.includes('Session')) {
-        try { await clearCorruptedSession(); } catch { /* ignore */ }
+      const isExpiredToken =
+        msg.includes('Refresh Token Not Found') ||
+        msg.includes('Invalid Refresh Token');
+      if (isExpiredToken) {
+        console.warn('Session expired (thrown), clearing and redirecting to login.');
+      } else {
+        console.warn('Error getting session:', msg);
       }
-      console.error('Error getting session:', sessionError);
+      try { await clearCorruptedSession(); } catch { /* ignore */ }
       set({ isInitialized: true, isLoading: false });
       registerListener();
       return;
@@ -242,27 +270,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     // ── Step 3: Session exists — capture into a const so TS keeps narrowing ──
-    const activeSession: Session = rawSession;          // const, never null from here
-    const sessionUser = activeSession.user;             // const, always a User
+    const activeSession: Session = rawSession;
+    const sessionUser = activeSession.user;
 
     const savedRole = (await getStorageValue('userRole')) as UserRole | null;
 
-    // Show app immediately with JWT data (no DB round-trip required)
+    // ── Step 4: Load DB profile before initializing so navigation uses the correct role ──
+    // Awaiting here adds ~200ms but prevents routing to the wrong dashboard when a role
+    // has been changed in the DB since the last session.
+    const profile = await getUserProfile(sessionUser.id).catch(() => null);
+    const authUser = toAuthUser(sessionUser, profile, savedRole ?? undefined);
+
+    // Keep AsyncStorage in sync so the next cold start also has the right role
+    await setStorageValue('userRole', authUser.role);
+
     set({
-      user: toAuthUser(sessionUser, null, savedRole ?? undefined),
+      user: authUser,
       session: activeSession,
       isInitialized: true,
       isLoading: false,
     });
-
-    // ── Step 4: Enrich with full DB profile in the background ──
-    getUserProfile(sessionUser.id)
-      .then((profile) => {
-        if (profile) {
-          set({ user: toAuthUser(sessionUser, profile, savedRole ?? undefined) });
-        }
-      })
-      .catch((e) => console.warn('Background profile load failed (non-fatal):', e));
 
     // ── Step 5: Register auth state listener ──
     registerListener();
@@ -288,6 +315,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const signUpPayload = {
         password,
         options: {
+          emailRedirectTo: 'aralink://',
           data: {
             full_name: name,
             role: role,
@@ -465,17 +493,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     try {
-      set({ isLoading: true });
-      
       await supabase.auth.signOut();
-      await removeStorageValue('userRole');
-      await removeStorageValue('userName');
-      await removeStorageValue('pendingUserRole');
-      
-      set({ user: null, session: null, isLoading: false, pendingVerificationEmail: null });
     } catch (error) {
-      console.error('Error signing out:', error);
-      set({ isLoading: false });
+      console.warn('signOut error (clearing local state anyway):', error);
+    } finally {
+      try { await removeStorageValue('userRole'); } catch { /* ignore */ }
+      try { await removeStorageValue('userName'); } catch { /* ignore */ }
+      try { await removeStorageValue('pendingUserRole'); } catch { /* ignore */ }
+      set({ user: null, session: null, isLoading: false, pendingVerificationEmail: null });
     }
   },
 
