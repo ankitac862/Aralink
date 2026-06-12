@@ -13,11 +13,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { IdentifierInput } from '@/components/IdentifierInput';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
-import { detectIdentifierMode, filterIdentifierInput } from '@/utils/identifierInput';
 
 interface LoginScreenProps {
   onSwitchToRegister?: () => void;
@@ -154,23 +154,16 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               <ThemedText style={[styles.label, { color: textColor }]}>
                 Email or Phone Number
               </ThemedText>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                    borderColor,
-                    color: textColor,
-                  },
-                ]}
+              <IdentifierInput
+                isDark={isDark}
+                borderColor={borderColor}
+                textColor={textColor}
+                placeholderColor={placeholderColor}
+                inputBgColor={isDark ? '#1e293b' : '#F4F6F8'}
                 placeholder="Enter your email or phone number"
-                placeholderTextColor={placeholderColor}
-                keyboardType={detectIdentifierMode(formData.identifier) === 'phone' ? 'phone-pad' : 'email-address'}
                 autoCapitalize="none"
                 value={formData.identifier}
-                onChangeText={(value) =>
-                  setFormData({ ...formData, identifier: filterIdentifierInput(formData.identifier, value) })
-                }
+                onChangeText={(value) => setFormData({ ...formData, identifier: value })}
               />
             </View>
 

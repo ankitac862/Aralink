@@ -47,18 +47,15 @@
           }
         }
       ],
-<<<<<<< HEAD
       [
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",
           "color": "#4A90E2"
         }
-      ]
-=======
+      ],
       "expo-font",
       "expo-web-browser"
->>>>>>> origin
     ],
     "experiments": {
       "typedRoutes": true,

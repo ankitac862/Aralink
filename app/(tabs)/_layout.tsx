@@ -1,10 +1,7 @@
 import { Tabs, useRouter } from 'expo-router';
-import { Platform, View } from 'react-native';
-<<<<<<< HEAD
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-=======
 import { useEffect } from 'react';
->>>>>>> origin
+import { Platform, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
