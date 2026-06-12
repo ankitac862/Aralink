@@ -162,6 +162,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="invite" />
         <Stack.Screen name="invite-auth" />
+        <Stack.Screen name="oauth-redirect" />
         <Stack.Screen name="set-password" />
         <Stack.Screen name="properties" />
         <Stack.Screen name="tenants" />

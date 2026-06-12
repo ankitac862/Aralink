@@ -18,6 +18,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { activateScheduledTenancyForUser, fetchTenantNotifications, fetchLeasesByTenant, DbLease } from '@/lib/supabase';
+import { getActivityIconInfo } from '@/utils/activityIcon';
 
 interface Announcement {
   id: string;
@@ -27,6 +28,7 @@ interface Announcement {
   date: string;
   type?: string;
   data?: any;
+  is_read?: boolean;
 }
 
 interface QuickLink {
@@ -306,15 +308,16 @@ export default function TenantDashboardScreen() {
     });
     console.log('\n========================================\n');
     
-    // Convert notifications to announcements format with full data
+    // Convert notifications to activity feed format with full data
     const notificationAnnouncements: Announcement[] = notifications.map((notif: any) => ({
       id: notif.id,
-      icon: notif.type === 'invite' ? 'email-outline' : 'bell',
+      icon: getActivityIconInfo(notif.type).icon,
       title: notif.title,
       description: notif.message,
       date: new Date(notif.created_at).toLocaleDateString() + ' ' + new Date(notif.created_at).toLocaleTimeString(),
       type: notif.type,
       data: notif.data, // Store the full notification data
+      is_read: notif.is_read,
     }));
 
     const inviteSummaries = notifications
@@ -346,28 +349,8 @@ export default function TenantDashboardScreen() {
 
     console.log('🔔 Notification announcements:', notificationAnnouncements.length);
 
-    // Get base announcements
-    const baseAnnouncements = [
-      {
-        id: '1',
-        icon: 'pool',
-        title: 'Pool Maintenance This Friday',
-        description:
-          'The community pool will be closed for scheduled maintenance this Friday, June 28th.',
-        date: 'June 24, 2024',
-      },
-      {
-        id: '2',
-        icon: 'bug',
-        title: 'Pest Control Notice',
-        description:
-          'Quarterly pest control service is scheduled for all units next Monday. Please prepare accordingly.',
-        date: 'June 22, 2024',
-      },
-    ];
-
-    // Merge with static announcements
-    setAnnouncements([...notificationAnnouncements, ...baseAnnouncements]);
+    // Show at most 8 most recent activity items
+    setAnnouncements(notificationAnnouncements.slice(0, 8));
   };
 
   const quickLinks: QuickLink[] = [
@@ -377,10 +360,41 @@ export default function TenantDashboardScreen() {
     { id: '4', icon: 'gavel', label: 'Community Rules', route: '/(tabs)/explore' },
   ];
 
+  const handleActivityPress = async (item: Announcement) => {
+    const data = (item.data || {}) as Record<string, any>;
+
+    switch (item.type) {
+      case 'lease_received':
+      case 'lease':
+      case 'arrival_date_change_request':
+        router.push(data.leaseId ? `/tenant-lease-detail?id=${data.leaseId}` as any : '/tenant-leases' as any);
+        break;
+      case 'lease_rejected':
+        router.push('/tenant-leases' as any);
+        break;
+      case 'application':
+      case 'application_approved':
+      case 'application_rejected':
+        router.push('/tenant-lease-status' as any);
+        break;
+      case 'maintenance_request':
+      case 'maintenance_status_update':
+        router.push(
+          data.requestId ? `/tenant-maintenance-detail?id=${data.requestId}` as any : '/tenant-maintenance-status' as any
+        );
+        break;
+      default:
+        router.push('/notifications' as any);
+    }
+
+    const { markNotificationAsRead } = await import('@/lib/supabase');
+    await markNotificationAsRead(item.id);
+  };
+
   const renderAnnouncement: ListRenderItem<Announcement> = ({ item }) => {
     const isInvite = item.type === 'invite';
-    const CardComponent = isInvite ? TouchableOpacity : View;
-    
+    const iconInfo = getActivityIconInfo(item.type || '');
+
     const handleInviteClick = async () => {
       if (!isInvite || !item.data) {
         console.log('⚠️ Not an invite or no data:', { isInvite, hasData: !!item.data });
@@ -457,7 +471,7 @@ export default function TenantDashboardScreen() {
     };
     
     return (
-      <CardComponent
+      <TouchableOpacity
         style={[
           styles.announcementCard,
           {
@@ -468,13 +482,13 @@ export default function TenantDashboardScreen() {
             shadowRadius: 4,
           },
         ]}
-        onPress={isInvite ? handleInviteClick : undefined}>
+        onPress={isInvite ? handleInviteClick : () => handleActivityPress(item)}>
         <View
           style={[
             styles.announcementIconContainer,
-            { backgroundColor: `${primaryColor}33` },
+            { backgroundColor: isDark ? iconInfo.bgDark : iconInfo.bgLight },
           ]}>
-          <MaterialCommunityIcons name={item.icon as any} size={24} color={primaryColor} />
+          <MaterialCommunityIcons name={item.icon as any} size={18} color={isDark ? iconInfo.colorDark : iconInfo.colorLight} />
         </View>
         <View style={styles.announcementContent}>
           <ThemedText style={[styles.announcementTitle, { color: textPrimaryColor }]}>
@@ -495,10 +509,10 @@ export default function TenantDashboardScreen() {
             {item.date}
           </ThemedText>
         </View>
-        {isInvite && (
-          <MaterialCommunityIcons name="chevron-right" size={20} color={textSecondaryColor} />
+        {!item.is_read && (
+          <View style={[styles.unreadBadge, { backgroundColor: primaryColor }]} />
         )}
-      </CardComponent>
+      </TouchableOpacity>
     );
   };
 
@@ -795,18 +809,33 @@ export default function TenantDashboardScreen() {
           />
         </View>}
 
-        {/* Announcements Section */}
+        {/* Recent Activity Section */}
         <View style={styles.announcementsSection}>
-          <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>
-            Announcements
-          </ThemedText>
-          <FlatList
-            data={announcements}
-            keyExtractor={(item) => item.id}
-            renderItem={renderAnnouncement}
-            scrollEnabled={false}
-            ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-          />
+          <View style={styles.notificationHeader}>
+            <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor, marginBottom: 0 }]}>
+              Recent Activity
+            </ThemedText>
+            {announcements.length > 0 && (
+              <TouchableOpacity onPress={() => router.push('/notifications' as any)}>
+                <ThemedText style={[styles.viewAllText, { color: primaryColor }]}>View All</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+          {announcements.length === 0 ? (
+            <View style={[styles.announcementCard, { backgroundColor: cardBgColor, justifyContent: 'center' }]}>
+              <ThemedText style={{ color: textSecondaryColor, fontSize: 13, textAlign: 'center' }}>
+                No recent activity yet
+              </ThemedText>
+            </View>
+          ) : (
+            <FlatList
+              data={announcements}
+              keyExtractor={(item) => item.id}
+              renderItem={renderAnnouncement}
+              scrollEnabled={false}
+              ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+            />
+          )}
         </View>
 
         {/* Bottom Padding */}
@@ -1026,17 +1055,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 12,
   },
+  notificationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  viewAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  unreadBadge: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginLeft: 8,
+  },
   announcementCard: {
     flexDirection: 'row',
-    borderRadius: 12,
-    padding: 16,
-    gap: 12,
-    elevation: 3,
+    alignItems: 'center',
+    borderRadius: 10,
+    padding: 10,
+    gap: 10,
+    elevation: 2,
   },
   announcementIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1044,15 +1090,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   announcementTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   announcementDescription: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '400',
-    marginBottom: 4,
-    lineHeight: 16,
+    marginBottom: 2,
+    lineHeight: 14,
   },
   announcementDate: {
     fontSize: 10,

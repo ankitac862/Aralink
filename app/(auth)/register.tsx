@@ -17,6 +17,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore, UserRole } from '@/store/authStore';
+import { detectIdentifierMode, filterIdentifierInput } from '@/utils/identifierInput';
 
 interface RegisterScreenProps {
   onSwitchToLogin?: () => void;
@@ -309,10 +310,12 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                     ]}
                     placeholder="Enter your email or phone number"
                     placeholderTextColor={placeholderColor}
-                    keyboardType="email-address"
+                    keyboardType={detectIdentifierMode(formData.identifier) === 'phone' ? 'phone-pad' : 'email-address'}
                     autoCapitalize="none"
                     value={formData.identifier}
-                    onChangeText={(value) => setFormData({ ...formData, identifier: value })}
+                    onChangeText={(value) =>
+                      setFormData({ ...formData, identifier: filterIdentifierInput(formData.identifier, value) })
+                    }
                   />
                 </View>
 

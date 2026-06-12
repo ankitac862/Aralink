@@ -506,66 +506,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return { success: false, error: 'Google sign-in was cancelled' };
       }
 
-      // Parse the redirect URL — Supabase uses PKCE flow (returns ?code=) on mobile
-      // but may fall back to implicit flow (returns #access_token=) in some configs.
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-
-      if (code) {
-        // PKCE flow — exchange the one-time code for a session
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data;
-        sessionError = res.error;
-      } else if (accessToken) {
-        // Implicit flow — set session directly from tokens in hash
-        const res = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken || '',
-        });
-        sessionData = res.data;
-        sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        // New social user — hold the session and ask them to pick a role
-        set({
-          pendingOAuthSession: {
-            user: sessionData.user,
-            session: sessionData.session,
-            provider: 'google',
-          },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-
-      return { success: true, isNewUser: false };
+      return await completeOAuthRedirect(result.url, role);
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
       set({ isLoading: false, error: errorMessage });
@@ -729,6 +670,87 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ error: null });
   },
 }));
+
+// Exchange the redirect URL from a social OAuth flow (Google, etc.) for a Supabase
+// session and update the auth store. Shared by `signInWithGoogle` (when
+// `openAuthSessionAsync` resolves directly) and the `/oauth-redirect` screen
+// (the fallback when the OS opens that deep link in the app instead).
+export const completeOAuthRedirect = async (
+  redirectUrl: string,
+  role?: UserRole
+): Promise<{ success: boolean; isNewUser?: boolean; error?: string }> => {
+  try {
+    // Supabase uses PKCE flow (returns ?code=) on mobile but may fall back to
+    // implicit flow (returns #access_token=) in some configs.
+    const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
+    const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
+    const queryParams = new URLSearchParams(queryString);
+    const hashParams = new URLSearchParams(hashString);
+
+    const oauthError = queryParams.get('error_description') || hashParams.get('error_description') || queryParams.get('error') || hashParams.get('error');
+    if (oauthError) {
+      useAuthStore.setState({ isLoading: false, error: oauthError });
+      return { success: false, error: oauthError };
+    }
+
+    const code = queryParams.get('code');
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+
+    let sessionData: any;
+    let sessionError: any;
+
+    if (code) {
+      // PKCE flow — exchange the one-time code for a session
+      const res = await supabase.auth.exchangeCodeForSession(code);
+      sessionData = res.data;
+      sessionError = res.error;
+    } else if (accessToken) {
+      // Implicit flow — set session directly from tokens in hash
+      const res = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken || '',
+      });
+      sessionData = res.data;
+      sessionError = res.error;
+    } else {
+      useAuthStore.setState({ isLoading: false, error: 'No auth code or token in redirect' });
+      return { success: false, error: 'No auth code or token in redirect' };
+    }
+
+    if (sessionError) {
+      useAuthStore.setState({ isLoading: false, error: sessionError.message });
+      return { success: false, error: sessionError.message };
+    }
+
+    const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
+    const isNewUser = !profile?.user_type;
+
+    if (isNewUser && !role && sessionData?.user && sessionData?.session) {
+      // New social user — hold the session and ask them to pick a role
+      useAuthStore.setState({
+        pendingOAuthSession: {
+          user: sessionData.user,
+          session: sessionData.session,
+          provider: 'google',
+        },
+        isLoading: false,
+      });
+      return { success: true, isNewUser: true };
+    }
+
+    if (role) await setStorageValue('pendingUserRole', role);
+
+    const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
+    useAuthStore.setState({ user: authUser, session: sessionData?.session, isLoading: false });
+
+    return { success: true, isNewUser: false };
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+    useAuthStore.setState({ isLoading: false, error: errorMessage });
+    return { success: false, error: errorMessage };
+  }
+};
 
 // Export helper hooks
 export const useIsAuthenticated = () => {

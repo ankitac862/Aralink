@@ -641,6 +641,16 @@ export async function createProperty(property: Omit<DbProperty, 'id' | 'created_
       return null;
     }
 
+    if (data?.user_id) {
+      logActivity({
+        userId: data.user_id,
+        type: 'property_added',
+        title: 'Property Added',
+        message: `${data.name || data.address1 || 'A new property'} was added to your portfolio`,
+        data: { propertyId: data.id },
+      });
+    }
+
     return data;
   } catch (error) {
     console.error('Error creating property:', error);
@@ -1825,6 +1835,18 @@ export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 
         console.warn('Warning: Could not update tenant profile:', updateError);
         // Don't fail the transaction creation if profile update fails
       }
+    }
+
+    if (data) {
+      const amount = `$${Number(data.amount || 0).toLocaleString()}`;
+      const category = data.category ? data.category.charAt(0).toUpperCase() + data.category.slice(1) : 'Transaction';
+      logActivity({
+        userId: data.user_id,
+        type: data.type === 'income' ? 'payment' : 'expense',
+        title: data.type === 'income' ? 'Payment Received' : 'Expense Recorded',
+        message: data.description ? `${category} - ${amount} - ${data.description}` : `${category} - ${amount}`,
+        data: { transactionId: data.id, propertyId: data.property_id },
+      });
     }
 
     return data;
@@ -4037,6 +4059,31 @@ export async function getTransactionCategorySummary(
   } catch (error) {
     console.error('Error getting category summary:', error);
     return [];
+  }
+}
+
+// Log a recent-activity entry for a user (shows up in their dashboard's Recent Activity feed).
+// Reuses the notifications table so a single feed covers both "things to act on"
+// (applications, leases, maintenance) and "things you did" (added a property, recorded a payment).
+export async function logActivity(params: {
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  data?: Record<string, any>;
+}) {
+  try {
+    await supabase.from('notifications').insert({
+      user_id: params.userId,
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      data: params.data,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn('⚠️ logActivity failed:', error);
   }
 }
 

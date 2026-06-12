@@ -25,6 +25,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { getUserProfile, supabase, fetchLandlordNotifications } from '@/lib/supabase';
+import { getActivityIconInfo } from '@/utils/activityIcon';
 
 interface RentCollection {
   collected: number;
@@ -33,15 +34,6 @@ interface RentCollection {
   total: number;
   month: string;
   year: number;
-}
-
-interface Activity {
-  id: string;
-  icon: string;
-  title: string;
-  description: string;
-  time: string;
-  type: 'payment' | 'maintenance' | 'message' | 'application';
 }
 
 interface DashboardTile {
@@ -247,14 +239,10 @@ export default function LandlordDashboardScreen() {
         year: new Date().getFullYear(),
       });
 
-      // OPTIMIZATION 7: Load notifications asynchronously (don't block main data)
+      // OPTIMIZATION 7: Load recent activity asynchronously (don't block main data)
       fetchLandlordNotifications(user.id)
         .then(notifs => {
-          // Show recent lease-related notifications too (e.g. tenant signed; landlord countersign pending).
-          const filtered = notifs
-            .filter(n => n.type === 'application' || n.type === 'lease')
-            .slice(0, 3);
-          setNotifications(filtered);
+          setNotifications(notifs.slice(0, 8));
         })
         .catch(err => console.error('Notifications load error:', err));
 
@@ -264,25 +252,6 @@ export default function LandlordDashboardScreen() {
   };
 
 
-
-  const activities: Activity[] = [
-    {
-      id: '1',
-      icon: 'cash-multiple',
-      title: 'Rent paid for Unit 5B',
-      description: 'John Smith - $1,500',
-      time: '1h ago',
-      type: 'payment',
-    },
-    {
-      id: '2',
-      icon: 'toolbox',
-      title: 'New maintenance request',
-      description: 'Unit 3A - Leaky Faucet',
-      time: '3h ago',
-      type: 'maintenance',
-    },
-  ];
 
   const dashboardTiles: DashboardTile[] = [
     { 
@@ -370,34 +339,35 @@ export default function LandlordDashboardScreen() {
     );
   };
 
-  const renderActivity: ListRenderItem<Activity> = ({ item }) => {
-    const iconBgColor = item.type === 'payment' 
-      ? (isDark ? '#065f46' : '#d1fae5') 
-      : item.type === 'maintenance' 
-      ? (isDark ? '#78350f' : '#fef3c7') 
-      : `${primaryColor}20`;
-    const iconColor = item.type === 'payment' 
-      ? (isDark ? '#10b981' : '#059669') 
-      : item.type === 'maintenance' 
-      ? (isDark ? '#f59e0b' : '#d97706') 
-      : primaryColor;
-    
-    return (
-      <View style={[styles.activityItem, { backgroundColor: cardBgColor }]}>
-        <View style={[styles.activityIconContainer, { backgroundColor: iconBgColor }]}>
-          <MaterialCommunityIcons name={item.icon as any} size={24} color={iconColor} />
-        </View>
-        <View style={styles.activityContent}>
-          <ThemedText style={[styles.activityTitle, { color: textPrimaryColor }]}>{item.title}</ThemedText>
-          <ThemedText style={[styles.activityDescription, { color: textSecondaryColor }]}>
-            {item.description}
-          </ThemedText>
-        </View>
-        <ThemedText style={[styles.activityTime, { color: textSecondaryColor }]}>
-          {item.time}
-        </ThemedText>
-      </View>
-    );
+  const handleActivityPress = (notif: Notification) => {
+    const data = (notif.data || {}) as Record<string, any>;
+
+    switch (notif.type) {
+      case 'property_added':
+        router.push('/properties' as any);
+        return;
+      case 'payment':
+      case 'expense':
+        router.push('/accounting' as any);
+        return;
+      case 'maintenance_request':
+      case 'maintenance_status_update':
+        router.push(
+          data.requestId ? `/landlord-maintenance-detail?id=${data.requestId}` as any : '/landlord-maintenance-overview' as any
+        );
+        return;
+      case 'application':
+        router.push(
+          data.applicationId ? `/landlord-application-review?id=${data.applicationId}` as any : '/landlord-applications' as any
+        );
+        return;
+      case 'lease':
+      case 'arrival_date_change_request':
+        router.push(data.leaseId ? `/lease-detail?id=${data.leaseId}` as any : '/leases' as any);
+        return;
+      default:
+        router.push('/notifications' as any);
+    }
   };
 
   return (
@@ -624,27 +594,33 @@ export default function LandlordDashboardScreen() {
           columnWrapperStyle={styles.tilesRow}
         />
 
-        {/* Notifications Section */}
-        {notifications.length > 0 && (
-          <>
-            <View style={styles.notificationHeader}>
-              <ThemedText style={[styles.activitySectionTitle, { color: textPrimaryColor }]}>
-                Recent Notifications
-              </ThemedText>
-              <TouchableOpacity onPress={() => router.push('/landlord-applications')}>
-                <ThemedText style={[styles.viewAllText, { color: primaryColor }]}>View All</ThemedText>
-              </TouchableOpacity>
-            </View>
-            {notifications.map((notif) => (
+        {/* Recent Activity (notifications + actions like adding a property or recording a payment) */}
+        <View style={styles.notificationHeader}>
+          <ThemedText style={[styles.activitySectionTitle, { color: textPrimaryColor, marginTop: 0, marginBottom: 0 }]}>
+            Recent Activity
+          </ThemedText>
+          {notifications.length > 0 && (
+            <TouchableOpacity onPress={() => router.push('/notifications' as any)}>
+              <ThemedText style={[styles.viewAllText, { color: primaryColor }]}>View All</ThemedText>
+            </TouchableOpacity>
+          )}
+        </View>
+        {notifications.length === 0 ? (
+          <View style={[styles.notificationCard, { backgroundColor: cardBgColor, justifyContent: 'center' }]}>
+            <ThemedText style={{ color: textSecondaryColor, fontSize: 13, textAlign: 'center' }}>
+              No recent activity yet
+            </ThemedText>
+          </View>
+        ) : (
+          notifications.map((notif) => {
+            const iconInfo = getActivityIconInfo(notif.type);
+            return (
               <TouchableOpacity
                 key={notif.id}
                 style={[styles.notificationCard, { backgroundColor: cardBgColor }]}
-                onPress={() => {
-                  const leaseId = (notif.data as any)?.leaseId as string | undefined;
-                  router.push(leaseId ? `/lease-detail?id=${leaseId}` : '/landlord-applications');
-                }}>
-                <View style={[styles.notificationIcon, { backgroundColor: `${primaryColor}20` }]}>
-                  <MaterialCommunityIcons name="file-document" size={24} color={primaryColor} />
+                onPress={() => handleActivityPress(notif)}>
+                <View style={[styles.notificationIcon, { backgroundColor: isDark ? iconInfo.bgDark : iconInfo.bgLight }]}>
+                  <MaterialCommunityIcons name={iconInfo.icon as any} size={18} color={isDark ? iconInfo.colorDark : iconInfo.colorLight} />
                 </View>
                 <View style={styles.notificationContent}>
                   <ThemedText style={[styles.notificationTitle, { color: textPrimaryColor }]}>
@@ -661,19 +637,9 @@ export default function LandlordDashboardScreen() {
                   <View style={[styles.unreadBadge, { backgroundColor: primaryColor }]} />
                 )}
               </TouchableOpacity>
-            ))}
-          </>
+            );
+          })
         )}
-
-        {/* Recent Activity */}
-        <ThemedText style={[styles.activitySectionTitle, { color: textPrimaryColor }]}>Recent Activity</ThemedText>
-        <FlatList
-          data={activities}
-          keyExtractor={(item) => item.id}
-          renderItem={renderActivity}
-          scrollEnabled={false}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        />
 
         <View style={{ height: 100 }} />
         </ScrollView>
@@ -917,39 +883,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 16,
   },
-  activityItem: {
-    flexDirection: 'row',
-    padding: 12,
-    borderRadius: 16,
-    alignItems: 'center',
-    gap: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  activityIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  activityContent: {
-    flex: 1,
-  },
-  activityTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 2,
-  },
-  activityDescription: {
-    fontSize: 12,
-  },
-  activityTime: {
-    fontSize: 12,
-  },
   fabContainer: {
     position: 'absolute',
     bottom: 24,
@@ -1006,9 +939,10 @@ const styles = StyleSheet.create({
   },
   notificationCard: {
     flexDirection: 'row',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -1016,27 +950,27 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   notificationIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: 10,
   },
   notificationContent: {
     flex: 1,
   },
   notificationTitle: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   notificationMessage: {
-    fontSize: 14,
-    marginBottom: 4,
+    fontSize: 12,
+    marginBottom: 2,
   },
   notificationTime: {
-    fontSize: 12,
+    fontSize: 10,
     opacity: 0.7,
   },
   unreadBadge: {
