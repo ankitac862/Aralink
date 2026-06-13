@@ -58,8 +58,8 @@ function resolveSetPasswordRedirectUrl(redirectBaseUrl?: string | null): string 
         } catch { continue; }
       }
     }
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
-  };
+    return 'aralink://invite-auth';
+  };r
 
   const fromClient = redirectBaseUrl?.trim();
   if (fromClient) {
@@ -80,23 +80,27 @@ function resolveRedirectToForSupabaseEmail(inviteBase: string): string {
     } catch { /* fall through */ }
   }
   const withoutQuery = inviteBase.trim().split('?')[0].replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(withoutQuery)) return `http://localhost:8081${SET_PASSWORD_PATH}`;
+  // Deep link (e.g. aralink://invite-auth) — pass through as-is, `new URL().origin`
+  // returns "null" for non-http schemes so it can't be handled by the http branch below.
+  if (withoutQuery.startsWith('aralink://')) return inviteBase.trim();
+  if (!/^https?:\/\//i.test(withoutQuery)) return 'aralink://invite-auth';
   try {
     return `${new URL(withoutQuery).origin}${SET_PASSWORD_PATH}`;
   } catch {
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    return 'aralink://invite-auth';
   }
 }
 
 function normalizeRedirectToSetPassword(redirectTo: string): string {
   const t = redirectTo.trim();
-  if (!t) return `http://localhost:8081${SET_PASSWORD_PATH}`;
+  if (!t) return 'aralink://invite-auth';
+  if (t.startsWith('aralink://')) return t;
   try {
     const u = new URL(t);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'aralink://invite-auth';
     return `${u.origin}${SET_PASSWORD_PATH}`;
   } catch {
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    return 'aralink://invite-auth';
   }
 }
 
@@ -172,8 +176,13 @@ async function sendRecoveryEmailWithRedirect(email: string, redirectTo: string):
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
   if (!anonKey) { console.warn('[invite-applicant] SUPABASE_ANON_KEY not set — skipping recovery email'); return false; }
   const base = supabaseUrl.replace(/\/+$/, '');
-  let rt = `http://localhost:8081${SET_PASSWORD_PATH}`;
-  try { const u = new URL(redirectTo); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
+  const trimmedRedirect = redirectTo.trim();
+  let rt = 'aralink://invite-auth';
+  if (trimmedRedirect.startsWith('aralink://')) {
+    rt = trimmedRedirect;
+  } else {
+    try { const u = new URL(trimmedRedirect); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
+  }
   const res = await fetch(`${base}/auth/v1/recover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: anonKey, Authorization: `Bearer ${anonKey}` },
@@ -215,6 +224,19 @@ serve(async (req) => {
       .eq('id', propertyId).single();
     if (propertyError || !property) return json({ error: 'Property not found' }, 404);
     if (property.user_id !== authData.user.id) return json({ error: 'Forbidden' }, 403);
+
+    // Ensure landlord has a profile (required for invites.landlord_id foreign key)
+    await supabase.from('profiles').upsert(
+      {
+        id: authData.user.id,
+        email: authData.user.email,
+        full_name: authData.user.user_metadata?.full_name || authData.user.email?.split('@')[0],
+        user_type: 'landlord',
+        account_status: 'active',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
 
     const { data: existingProfile } = await supabase
       .from('profiles').select('id, email, user_type, account_status, has_set_password')

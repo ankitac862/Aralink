@@ -158,7 +158,7 @@ export default function TenantLeaseStep5Screen() {
           }
 
           // Upload to Supabase Storage (fallback across known buckets)
-          const candidateBuckets = ['documents', 'lease-documents', 'application-documents'];
+          const candidateBuckets = ['application-documents', 'lease-documents', 'documents'];
           let uploadedBucket: string | null = null;
           let uploadedPath: string | null = null;
           let lastUploadError: any = null;

@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -87,24 +88,27 @@ export default function TenantDetailScreen() {
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
 
-  // Load transactions for this tenant
-  useEffect(() => {
-    const loadTransactions = async () => {
-      if (!id) return;
-      
-      setLoadingTransactions(true);
-      try {
-        const data = await fetchTenantTransactions(id);
-        setTransactions(data);
-      } catch (error) {
-        console.error('Error loading tenant transactions:', error);
-      } finally {
-        setLoadingTransactions(false);
-      }
-    };
+  // Load transactions for this tenant, refreshing whenever the screen regains focus
+  // (e.g. after adding a transaction via /add-transaction)
+  const loadTransactions = useCallback(async () => {
+    if (!id) return;
 
-    loadTransactions();
+    setLoadingTransactions(true);
+    try {
+      const data = await fetchTenantTransactions(id);
+      setTransactions(data);
+    } catch (error) {
+      console.error('Error loading tenant transactions:', error);
+    } finally {
+      setLoadingTransactions(false);
+    }
   }, [id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTransactions();
+    }, [loadTransactions])
+  );
 
   useEffect(() => {
     const loadCoTenants = async () => {
@@ -156,6 +160,37 @@ export default function TenantDetailScreen() {
     loadCoTenants();
   }, [id, tenantData?.propertyId]);
   
+  // Derive Payment Overview totals/percentages from the actual transaction ledger,
+  // so the graphs reflect real paid/recorded amounts instead of static defaults.
+  const computedPayments = useMemo(() => {
+    const summary: Record<string, { paid: number; total: number; overdue: number; percentage: number }> = {
+      rent: { paid: 0, total: 0, overdue: 0, percentage: 0 },
+      maintenance: { paid: 0, total: 0, overdue: 0, percentage: 0 },
+      utility: { paid: 0, total: 0, overdue: 0, percentage: 0 },
+      other: { paid: 0, total: 0, overdue: 0, percentage: 0 },
+    };
+
+    transactions.forEach((t) => {
+      if (t.type !== 'income') return;
+      const key = (['rent', 'maintenance', 'utility'] as const).includes(t.category as any)
+        ? (t.category as 'rent' | 'maintenance' | 'utility')
+        : 'other';
+
+      summary[key].total += t.amount;
+      if (t.status === 'paid') {
+        summary[key].paid += t.amount;
+      } else if (t.status === 'overdue') {
+        summary[key].overdue += t.amount;
+      }
+    });
+
+    Object.values(summary).forEach((cat) => {
+      cat.percentage = cat.total > 0 ? Math.round((cat.paid / cat.total) * 100) : 0;
+    });
+
+    return summary;
+  }, [transactions]);
+
   // Format tenant data for display
   const tenant = tenantData ? {
     id: tenantData.id,
@@ -165,18 +200,13 @@ export default function TenantDetailScreen() {
     propertyName: property?.name || 'Unknown Property',
     unitName: tenantData.unitName || 'N/A',
     address: property ? `${property.address1}${property.address2 ? ', ' + property.address2 : ''}, ${property.city}, ${property.state}` : 'N/A',
-    createdAt: new Date(tenantData.createdAt).toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
+    createdAt: new Date(tenantData.createdAt).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
     }),
     profilePicture: tenantData.photo,
-    payments: tenantData.payments || {
-      rent: { paid: 0, total: tenantData.rentAmount || 0, percentage: 0 },
-      maintenance: { paid: 0, total: 0, percentage: 0 },
-      utility: { paid: 0, total: 0, percentage: 0 },
-      other: { paid: 0, total: 0, percentage: 0 },
-    },
+    payments: computedPayments,
   } : null;
 
   const isDark = colorScheme === 'dark';
@@ -358,6 +388,11 @@ export default function TenantDetailScreen() {
                     <ThemedText style={[styles.paymentCardAmount, { color: textColor }]}>
                       ${payment.paid.toLocaleString()} / ${payment.total.toLocaleString()}
                     </ThemedText>
+                    {payment.overdue > 0 && (
+                      <ThemedText style={styles.paymentCardOverdue}>
+                        ${payment.overdue.toLocaleString()} overdue
+                      </ThemedText>
+                    )}
                   </View>
                 </View>
               );
@@ -485,7 +520,7 @@ export default function TenantDetailScreen() {
                           </ThemedText>
                         </View>
                         <View style={styles.transactionRight}>
-                          <ThemedText 
+                          <ThemedText
                             style={[
                               styles.transactionAmount,
                               { color: transaction.type === 'income' ? '#10b981' : '#ef4444' }
@@ -493,13 +528,31 @@ export default function TenantDetailScreen() {
                           >
                             {transaction.type === 'income' ? '+' : '-'}${transaction.amount.toFixed(2)}
                           </ThemedText>
+                          {transaction.category === 'rent' &&
+                            transaction.type === 'income' &&
+                            !!tenantData?.rentAmount &&
+                            transaction.amount > tenantData.rentAmount && (
+                              <ThemedText style={styles.overpaidNote}>
+                                +${(transaction.amount - tenantData.rentAmount).toFixed(2)} over rent
+                              </ThemedText>
+                            )}
                           <View style={[
                             styles.transactionStatus,
-                            { backgroundColor: transaction.status === 'paid' ? '#dcfce7' : '#fef3c7' }
+                            {
+                              backgroundColor:
+                                transaction.status === 'paid' ? '#dcfce7'
+                                  : transaction.status === 'overdue' ? '#fee2e2'
+                                  : '#fef3c7',
+                            },
                           ]}>
                             <ThemedText style={[
                               styles.transactionStatusText,
-                              { color: transaction.status === 'paid' ? '#10b981' : '#f59e0b' }
+                              {
+                                color:
+                                  transaction.status === 'paid' ? '#10b981'
+                                    : transaction.status === 'overdue' ? '#ef4444'
+                                    : '#f59e0b',
+                              },
                             ]}>
                               {transaction.status}
                             </ThemedText>
@@ -670,6 +723,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  paymentCardOverdue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ef4444',
+  },
   ledgerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -754,6 +812,11 @@ const styles = StyleSheet.create({
   transactionAmount: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  overpaidNote: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#10b981',
   },
   transactionStatus: {
     paddingHorizontal: 8,

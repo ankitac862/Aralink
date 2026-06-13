@@ -153,11 +153,15 @@ async function sendRecoveryEmailWithRedirect(params: {
   const base = supabaseUrl.replace(/\/+$/, '');
   const recoverUrl = `${base}/auth/v1/recover`;
   const redirectTo = (() => {
+    const raw = params.redirectTo.trim();
+    // Deep link (e.g. aralink://invite-auth?token=...) — pass through as-is,
+    // `new URL().origin` returns "null" for non-http schemes.
+    if (raw.startsWith('aralink://')) return raw;
     try {
-      const u = new URL(params.redirectTo);
+      const u = new URL(raw);
       return `${u.origin}/invite-auth`;
     } catch {
-      return 'http://localhost:8081/invite-auth';
+      return 'aralink://invite-auth';
     }
   })();
 
@@ -199,7 +203,7 @@ function redirectToForGoTrue(invitePageBase: string, token: string, email: strin
     }
     return pathOnly;
   } catch {
-    return 'http://localhost:8081/invite-auth';
+    return 'aralink://invite-auth';
   }
 }
 

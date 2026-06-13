@@ -16,6 +16,7 @@ import {
   convertApplicantToTenant,
   leaseNeedsApplicantTenantConversion,
   getApplicationLeaseCardPhase,
+  approveMoveInDate,
 } from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 
@@ -53,6 +54,7 @@ export default function LandlordApplicationsScreen() {
     Record<string, ApplicationLeaseRow | null>
   >({});
   const [convertingApplicationId, setConvertingApplicationId] = useState<string | null>(null);
+  const [approvingMoveInId, setApprovingMoveInId] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -208,6 +210,24 @@ export default function LandlordApplicationsScreen() {
         },
       ]
     );
+  };
+
+  const handleApproveMoveIn = async (application: Application) => {
+    if (approvingMoveInId === application.id) return;
+    setApprovingMoveInId(application.id);
+    try {
+      const res = await approveMoveInDate(application.id);
+      if (res.success) {
+        Alert.alert('Success', 'Move-in approved!');
+        await loadApplications();
+      } else {
+        throw new Error(res.error);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to approve move-in');
+    } finally {
+      setApprovingMoveInId(null);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -381,6 +401,24 @@ export default function LandlordApplicationsScreen() {
                 )}
             </View>
           )}
+        </View>
+      )}
+
+      {/* Move-in approval: shown once the applicant has signed the lease */}
+      {item.status === 'lease_signed' && (
+        <View style={styles.actionButtonsContainer}>
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: primaryColor, flex: 1 }]}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleApproveMoveIn(item);
+            }}
+            disabled={approvingMoveInId === item.id}>
+            <MaterialCommunityIcons name="home-import-outline" size={16} color="#fff" />
+            <ThemedText style={styles.actionButtonText}>
+              {approvingMoveInId === item.id ? 'Approving…' : 'Approve Move-In'}
+            </ThemedText>
+          </TouchableOpacity>
         </View>
       )}
     </TouchableOpacity>

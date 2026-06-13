@@ -82,10 +82,12 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   };
 
   const handleGoogleSignIn = async () => {
+    console.log('[GoogleAuth] login: Continue with Google pressed');
     clearError();
     setLoadingProvider('google');
     const result = await signInWithGoogle();
     setLoadingProvider(null);
+    console.log('[GoogleAuth] login: signInWithGoogle returned', result);
     if (result.isNewUser) {
       router.push('/(auth)/social-role-select' as any);
     } else if (!result.success) {

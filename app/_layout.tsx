@@ -29,8 +29,12 @@ export default function RootLayout() {
   useEffect(() => {
     setIsMounted(true);
     if (Platform.OS === 'android') {
+      console.log('[GoogleAuth] _layout: warming up browser (Android)');
       WebBrowser.warmUpAsync();
-      return () => { WebBrowser.coolDownAsync(); };
+      return () => {
+        console.log('[GoogleAuth] _layout: cooling down browser (Android)');
+        WebBrowser.coolDownAsync();
+      };
     }
   }, []);
 
@@ -115,6 +119,7 @@ export default function RootLayout() {
       segments[0] === '(auth)' && segments[1] === 'social-role-select';
 
     if (pendingOAuthSession && !isSocialRoleSelect) {
+      console.log('[GoogleAuth] _layout: pendingOAuthSession detected, redirecting to social-role-select');
       router.replace('/(auth)/social-role-select' as any);
     } else if (!user && !inAuthGroup && !isInviteRoute && !isSocialRoleSelect) {
       router.replace('/(auth)');
@@ -122,6 +127,7 @@ export default function RootLayout() {
       // ara_partner must always be in /ara-partner/* — never in (tabs) or (auth)
       router.replace('/ara-partner/dashboard' as any);
     } else if (user && inAuthGroup && !pendingOAuthSession) {
+      console.log('[GoogleAuth] _layout: user signed in, redirecting to dashboard', { role: user.role });
       if (user.role === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
       } else {

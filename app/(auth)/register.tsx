@@ -111,9 +111,11 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
+    console.log('[GoogleAuth] register: Continue with Google pressed', { selectedUserType });
     clearError();
     const result = await signInWithGoogle(selectedUserType);
-    
+    console.log('[GoogleAuth] register: signInWithGoogle returned', result);
+
     if (!result.success) {
       Alert.alert('Google Sign Up Failed', result.error || 'An error occurred');
     }

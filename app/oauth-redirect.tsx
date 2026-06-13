@@ -29,12 +29,18 @@ export default function OAuthRedirectScreen() {
     if (handled.current) return;
     handled.current = true;
 
+    console.log('[GoogleAuth] oauth-redirect screen: mounted', params);
+
     const queryString = Object.entries(params)
       .filter(([key]) => key !== 'oauth-redirect')
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
       .join('&');
 
-    completeOAuthRedirect(`aralink://oauth-redirect?${queryString}`).then((result) => {
+    const redirectUrl = `aralink://oauth-redirect?${queryString}`;
+    console.log('[GoogleAuth] oauth-redirect screen: reconstructed redirect URL', redirectUrl);
+
+    completeOAuthRedirect(redirectUrl).then((result) => {
+      console.log('[GoogleAuth] oauth-redirect screen: completeOAuthRedirect result', result);
       if (result.success) {
         router.replace('/');
       } else {

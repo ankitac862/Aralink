@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 // Inline helper to avoid a require-cycle with sendPushNotification.ts
@@ -323,29 +324,13 @@ export async function uploadImage(
       return { success: true, url: urlData.publicUrl };
     }
 
-    const uriToBase64 = async (uri: string) => {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-    
-      return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = reject;
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          resolve(dataUrl.split(',')[1]); // remove "data:image/...;base64,"
-        };
-        reader.readAsDataURL(blob);
-      });
-    };
-    
-
-    // For native (iOS/Android), we need to read the file and convert to base64
-    // const base64 = await FileSystem.readAsStringAsync(uri, {
-    //   // Use string literal to avoid type issues across platforms
-    //   encoding: 'base64',
-    // });
-
-    const base64 = await uriToBase64(uri);
+    // For native (iOS/Android), read the file directly from disk as base64.
+    // Using fetch(uri).blob() + FileReader is unreliable for content:// URIs
+    // (e.g. the Android photo picker) in release/standalone builds, where it
+    // can silently fail even though it works in Expo Go.
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
     // Convert base64 to ArrayBuffer
     const binaryString = atob(base64);
@@ -1298,7 +1283,6 @@ export async function addTenantToProperty(params: {
       .upsert(
         {
           tenant_id: tenant.tenantId,
-          landlord_id: params.landlordUserId,
           property_id: params.propertyId,
           unit_id: params.unitId || null,
           sub_unit_id: params.subUnitId || null,
@@ -5303,19 +5287,31 @@ export async function approveMoveInDate(applicationId: string) {
   try {
     const { data: appData, error: appFetchError } = await supabase
       .from('applications')
-      .select('*, leases(*)')
+      .select('*')
       .eq('id', applicationId)
       .single();
 
     if (appFetchError) throw appFetchError;
-    
+
+    let leaseEffectiveDate: string | null = null;
+    if (!appData.proposed_move_in_date) {
+      const { data: lease } = await supabase
+        .from('leases')
+        .select('effective_date')
+        .eq('application_id', applicationId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      leaseEffectiveDate = lease?.effective_date || null;
+    }
+
     // Update application move-in status
     const { error: updateError } = await supabase
       .from('applications')
       .update({
         status: 'move_in_approved',
         move_in_status: 'approved',
-        approved_move_in_date: appData.proposed_move_in_date || appData.leases?.[0]?.effective_date || new Date().toISOString().split('T')[0]
+        approved_move_in_date: appData.proposed_move_in_date || leaseEffectiveDate || new Date().toISOString().split('T')[0]
       })
       .eq('id', applicationId);
 
