@@ -682,12 +682,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      const redirectTo =
-        Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin
-          ? `${window.location.origin.replace(/\/+$/, '')}/invite-auth`
-          : 'com.aralink.app://invite-auth';
+      const redirectTo = 'https://www.aaralink.ca/invite-auth';
 
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      // Use a separate client with implicit flow so the reset link works in any web browser.
+      // The main client uses PKCE — its verifier is stored on-device, making web links fail.
+      const { createClient } = await import('@supabase/supabase-js');
+      const implicitClient = createClient(
+        process.env.EXPO_PUBLIC_SUPABASE_URL!,
+        process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
+        { auth: { flowType: 'implicit', persistSession: false } }
+      );
+      const { error } = await implicitClient.auth.resetPasswordForEmail(email, {
         redirectTo,
       });
 
