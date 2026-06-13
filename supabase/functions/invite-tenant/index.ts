@@ -12,6 +12,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
+const SITE_URL = (Deno.env.get('SITE_URL') || 'https://www.aaralink.ca').replace(/\/+$/, '');
+
 function resolveInviteAuthRedirectUrl(redirectBaseUrl?: string | null): string {
   const isAllowedRedirectOrigin = (origin: string): boolean => {
     try {
@@ -157,7 +159,7 @@ async function sendRecoveryEmailWithRedirect(params: {
       const u = new URL(params.redirectTo);
       return `${u.origin}/invite-auth`;
     } catch {
-      return 'http://localhost:8081/invite-auth';
+      return `${SITE_URL}/invite-auth`;
     }
   })();
 
@@ -199,7 +201,7 @@ function redirectToForGoTrue(invitePageBase: string, token: string, email: strin
     }
     return pathOnly;
   } catch {
-    return 'http://localhost:8081/invite-auth';
+    return `${SITE_URL}/invite-auth`;
   }
 }
 

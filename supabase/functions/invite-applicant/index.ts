@@ -13,6 +13,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
 const SET_PASSWORD_PATH = '/invite-auth';
+const SITE_URL = (Deno.env.get('SITE_URL') || 'http://localhost:3000').replace(/\/+$/, '');
 
 function resolveSetPasswordRedirectUrl(redirectBaseUrl?: string | null): string {
   const isAllowedRedirectOrigin = (origin: string): boolean => {
@@ -58,7 +59,7 @@ function resolveSetPasswordRedirectUrl(redirectBaseUrl?: string | null): string 
         } catch { continue; }
       }
     }
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    return `${SITE_URL}${SET_PASSWORD_PATH}`;
   };
 
   const fromClient = redirectBaseUrl?.trim();
@@ -80,23 +81,23 @@ function resolveRedirectToForSupabaseEmail(inviteBase: string): string {
     } catch { /* fall through */ }
   }
   const withoutQuery = inviteBase.trim().split('?')[0].replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(withoutQuery)) return `http://localhost:8081${SET_PASSWORD_PATH}`;
+  if (!/^https?:\/\//i.test(withoutQuery)) return `${SITE_URL}${SET_PASSWORD_PATH}`;
   try {
     return `${new URL(withoutQuery).origin}${SET_PASSWORD_PATH}`;
   } catch {
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    return `${SITE_URL}${SET_PASSWORD_PATH}`;
   }
 }
 
 function normalizeRedirectToSetPassword(redirectTo: string): string {
   const t = redirectTo.trim();
-  if (!t) return `http://localhost:8081${SET_PASSWORD_PATH}`;
+  if (!t) return `${SITE_URL}${SET_PASSWORD_PATH}`;
   try {
     const u = new URL(t);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return `${SITE_URL}${SET_PASSWORD_PATH}`;
     return `${u.origin}${SET_PASSWORD_PATH}`;
   } catch {
-    return `http://localhost:8081${SET_PASSWORD_PATH}`;
+    return `${SITE_URL}${SET_PASSWORD_PATH}`;
   }
 }
 
@@ -172,7 +173,7 @@ async function sendRecoveryEmailWithRedirect(email: string, redirectTo: string):
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
   if (!anonKey) { console.warn('[invite-applicant] SUPABASE_ANON_KEY not set — skipping recovery email'); return false; }
   const base = supabaseUrl.replace(/\/+$/, '');
-  let rt = `http://localhost:8081${SET_PASSWORD_PATH}`;
+  let rt = `${SITE_URL}${SET_PASSWORD_PATH}`;
   try { const u = new URL(redirectTo); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
   const res = await fetch(`${base}/auth/v1/recover`, {
     method: 'POST',

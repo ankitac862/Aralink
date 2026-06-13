@@ -8,6 +8,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
+const SITE_URL = (Deno.env.get('SITE_URL') || 'https://www.aaralink.ca').replace(/\/+$/, '');
+
 /** Inlined — keep in sync with invite-applicant / invite-tenant. */
 function resolveInviteAuthRedirectUrl(redirectBaseUrl?: string | null): string {
   const isAllowedRedirectOrigin = (origin: string): boolean => {
@@ -56,7 +58,7 @@ function resolveInviteAuthRedirectUrl(redirectBaseUrl?: string | null): string {
         }
       }
     }
-    return 'http://localhost:8081/invite-auth';
+    return `${SITE_URL}/invite-auth`;
   };
 
   const fromClient = redirectBaseUrl?.trim();
@@ -77,13 +79,13 @@ function resolveInviteAuthRedirectUrl(redirectBaseUrl?: string | null): string {
 function normalizeSupabaseRedirectTo(base: string): string {
   const withoutQuery = base.trim().split('?')[0].replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(withoutQuery)) {
-    return 'http://localhost:8081/invite-auth';
+    return `${SITE_URL}/invite-auth`;
   }
   try {
     const u = new URL(withoutQuery);
     return `${u.origin}/invite-auth`;
   } catch {
-    return 'http://localhost:8081/invite-auth';
+    return `${SITE_URL}/invite-auth`;
   }
 }
 
