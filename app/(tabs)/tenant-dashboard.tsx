@@ -69,6 +69,17 @@ export default function TenantDashboardScreen() {
   const warningColor = '#F5A623';
   const isApplicantOnly = !propertyInfo;
 
+  // Hide "Start Application" when the only pending invite is for the same
+  // property/unit/sub-unit the tenant is already assigned to.
+  const isPendingInviteForCurrentHome =
+    pendingInvites.length === 1 &&
+    !!propertyInfo &&
+    pendingInvites[0].propertyId === propertyInfo.propertyId &&
+    (pendingInvites[0].unitId || '') === (propertyInfo.unitId || '') &&
+    (pendingInvites[0].subUnitId || '') === (propertyInfo.subUnitId || '');
+
+  const showStartApplicationButton = !isPendingInviteForCurrentHome;
+
   // Load notifications when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
@@ -710,14 +721,16 @@ export default function TenantDashboardScreen() {
         </View>}
 
         {/* Start Application Button */}
-        <TouchableOpacity
-          style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
-          onPress={handleStartApplicationPress}>
-          <View style={styles.maintenanceButtonIcon}>
-            <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
-          </View>
-          <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
-        </TouchableOpacity>
+        {showStartApplicationButton && (
+          <TouchableOpacity
+            style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
+            onPress={handleStartApplicationPress}>
+            <View style={styles.maintenanceButtonIcon}>
+              <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
+            </View>
+            <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
+          </TouchableOpacity>
+        )}
 
         {isApplicantOnly && pendingInvites.length > 0 && (
           <View style={[styles.inviteAddressCard, { backgroundColor: cardBgColor }]}> 
@@ -747,35 +760,6 @@ export default function TenantDashboardScreen() {
               <ThemedText style={[styles.maintenanceButtonText, { color: '#ffffff' }]}>Review & Sign Leases</ThemedText>
             </TouchableOpacity>
           </View>
-        )}
-
-        {/* Generate Lease Button - Show only if tenant has property assigned */}
-        {!isApplicantOnly && propertyInfo && (
-          <TouchableOpacity
-            style={[styles.maintenanceButton, { backgroundColor: '#10b981', marginBottom: 12 }]}
-            onPress={() => {
-              if (!propertyInfo) {
-                Alert.alert('No Property', 'You need to be assigned to a property first.');
-                return;
-              }
-              
-              // Navigate to lease wizard with tenant's property details
-              router.push({
-                pathname: '/lease-wizard',
-                params: {
-                  propertyId: propertyInfo.propertyId,
-                  unitId: propertyInfo.unitId,
-                  roomId: propertyInfo.subUnitId,
-                  tenantId: user?.id,
-                  tenantName: tenantInfo?.name,
-                },
-              });
-            }}>
-            <View style={styles.maintenanceButtonIcon}>
-              <MaterialCommunityIcons name="file-sign" size={20} color="#fff" />
-            </View>
-            <ThemedText style={styles.maintenanceButtonText}>Generate Lease Agreement</ThemedText>
-          </TouchableOpacity>
         )}
 
         {/* Maintenance Request Button */}

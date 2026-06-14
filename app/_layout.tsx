@@ -47,7 +47,7 @@ export default function RootLayout() {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
     const path = window.location.pathname.replace(/\/$/, '') || '/';
-    if (path.endsWith('/invite-auth')) return;
+    if (path === '/invite-auth') return;
     if (path.endsWith('/activate-tenant')) return;
 
     const hashRaw = window.location.hash.startsWith('#')
