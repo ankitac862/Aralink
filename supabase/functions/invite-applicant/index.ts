@@ -59,13 +59,8 @@ function resolveSetPasswordRedirectUrl(redirectBaseUrl?: string | null): string 
         } catch { continue; }
       }
     }
-<<<<<<< HEAD
-    return 'aralink://invite-auth';
-  };r
-=======
     return `${SITE_URL}${SET_PASSWORD_PATH}`;
   };
->>>>>>> origin
 
   const fromClient = redirectBaseUrl?.trim();
   if (fromClient) {
@@ -86,37 +81,16 @@ function resolveRedirectToForSupabaseEmail(inviteBase: string): string {
     } catch { /* fall through */ }
   }
   const withoutQuery = inviteBase.trim().split('?')[0].replace(/\/+$/, '');
-<<<<<<< HEAD
-  // Deep link (e.g. aralink://invite-auth) — pass through as-is, `new URL().origin`
-  // returns "null" for non-http schemes so it can't be handled by the http branch below.
-  if (withoutQuery.startsWith('aralink://')) return inviteBase.trim();
-  if (!/^https?:\/\//i.test(withoutQuery)) return 'aralink://invite-auth';
-  try {
-    return `${new URL(withoutQuery).origin}${SET_PASSWORD_PATH}`;
-  } catch {
-    return 'aralink://invite-auth';
-=======
   if (!/^https?:\/\//i.test(withoutQuery)) return `${SITE_URL}${SET_PASSWORD_PATH}`;
   try {
     return `${new URL(withoutQuery).origin}${SET_PASSWORD_PATH}`;
   } catch {
     return `${SITE_URL}${SET_PASSWORD_PATH}`;
->>>>>>> origin
   }
 }
 
 function normalizeRedirectToSetPassword(redirectTo: string): string {
   const t = redirectTo.trim();
-<<<<<<< HEAD
-  if (!t) return 'aralink://invite-auth';
-  if (t.startsWith('aralink://')) return t;
-  try {
-    const u = new URL(t);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'aralink://invite-auth';
-    return `${u.origin}${SET_PASSWORD_PATH}`;
-  } catch {
-    return 'aralink://invite-auth';
-=======
   if (!t) return `${SITE_URL}${SET_PASSWORD_PATH}`;
   try {
     const u = new URL(t);
@@ -124,7 +98,6 @@ function normalizeRedirectToSetPassword(redirectTo: string): string {
     return `${u.origin}${SET_PASSWORD_PATH}`;
   } catch {
     return `${SITE_URL}${SET_PASSWORD_PATH}`;
->>>>>>> origin
   }
 }
 
@@ -200,18 +173,8 @@ async function sendRecoveryEmailWithRedirect(email: string, redirectTo: string):
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
   if (!anonKey) { console.warn('[invite-applicant] SUPABASE_ANON_KEY not set — skipping recovery email'); return false; }
   const base = supabaseUrl.replace(/\/+$/, '');
-<<<<<<< HEAD
-  const trimmedRedirect = redirectTo.trim();
-  let rt = 'aralink://invite-auth';
-  if (trimmedRedirect.startsWith('aralink://')) {
-    rt = trimmedRedirect;
-  } else {
-    try { const u = new URL(trimmedRedirect); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
-  }
-=======
   let rt = `${SITE_URL}${SET_PASSWORD_PATH}`;
   try { const u = new URL(redirectTo); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
->>>>>>> origin
   const res = await fetch(`${base}/auth/v1/recover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: anonKey, Authorization: `Bearer ${anonKey}` },

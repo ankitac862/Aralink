@@ -3014,7 +3014,7 @@ export async function convertApplicantToTenant(params: {
       tenant_id: tenant.id,
       property_id: params.propertyId,
       unit_id: params.unitId,
-      status: shouldActivateNow ? 'active' : 'inactive', // Changed from pending_invite to inactive because the link isn't active until Move-In Date
+      status: shouldActivateNow ? 'active' : 'pending_invite', // pending_invite so activateScheduledTenancyForUser() can promote it on the move-in date
       created_via: 'lease_creation',
       created_by_user_id: currentUser.id, // Use the current authenticated landlord's ID
       link_start_date: moveInDate,
