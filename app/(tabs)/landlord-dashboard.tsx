@@ -91,8 +91,9 @@ export default function LandlordDashboardScreen() {
   const [chartPage, setChartPage] = useState(0);
   const SCREEN_WIDTH = Dimensions.get('window').width - 32; // card width = screen - horizontal padding
 
-  // Income vs Expense data (last 6 months)
+  // Income vs Expense data
   const [incomeExpenseData, setIncomeExpenseData] = useState<{ month: string; income: number; expense: number }[]>([]);
+  const [incomeExpensePeriod, setIncomeExpensePeriod] = useState<1 | 3 | 6 | 12>(6);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -122,9 +123,9 @@ export default function LandlordDashboardScreen() {
     const collected = periodTxns
       .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
       .reduce((s, t) => s + (t.amount || 0), 0);
-    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * rentPeriod : collected;
-    const overdue = expectedMonthlyRent > 0 ? Math.max(0, total - collected) : 0;
-    const advance = expectedMonthlyRent > 0 ? Math.max(0, collected - total) : 0;
+    const total = expectedMonthlyRent * rentPeriod;
+    const overdue = Math.max(0, total - collected);
+    const advance = Math.max(0, collected - total);
     setRentCollection({
       collected,
       overdue,
@@ -134,6 +135,37 @@ export default function LandlordDashboardScreen() {
       year: new Date().getFullYear(),
     });
   }, [rentPeriod, rawRentTxns, rentMonths, expectedMonthlyRent]);
+
+  // Recalculate income vs expense client-side when period changes
+  useEffect(() => {
+    if (rawRentTxns.length === 0 && rentMonths.length === 0) return;
+    const now = new Date();
+    const months: { label: string; start: string; end: string }[] = [];
+    if (incomeExpensePeriod === 12) {
+      const year = now.getFullYear();
+      for (let m = 0; m < 12; m++) {
+        const start = new Date(year, m, 1).toISOString().split('T')[0];
+        const end = new Date(year, m + 1, 0).toISOString().split('T')[0];
+        months.push({ label: new Date(year, m).toLocaleDateString('en-US', { month: 'short' }), start, end });
+      }
+    } else {
+      const d = new Date();
+      d.setMonth(d.getMonth() - (incomeExpensePeriod - 1));
+      for (let i = 0; i < incomeExpensePeriod; i++) {
+        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
+        d.setMonth(d.getMonth() + 1);
+      }
+    }
+    const result = months.map(({ label, start, end }) => {
+      const bucket = rawRentTxns.filter(t => t.date >= start && t.date <= end);
+      const income = bucket.filter(t => t.type === 'income' && t.status !== 'pending').reduce((s, t) => s + (t.amount || 0), 0);
+      const expense = bucket.filter(t => t.type === 'expense' && t.status !== 'pending').reduce((s, t) => s + (t.amount || 0), 0);
+      return { month: label, income, expense };
+    });
+    setIncomeExpenseData(result);
+  }, [incomeExpensePeriod, rawRentTxns, rentMonths]);
 
   // Load data in background without blocking UI
   const loadDashboardDataInBackground = async () => {
@@ -159,8 +191,8 @@ export default function LandlordDashboardScreen() {
       dMonth.setMonth(dMonth.getMonth() - 11);
 
       for (let i = 0; i < 12; i++) {
-        const start = new Date(dMonth.getFullYear(), dMonth.getMonth(), 1).toISOString();
-        const end = new Date(dMonth.getFullYear(), dMonth.getMonth() + 1, 0, 23, 59, 59).toISOString();
+        const start = new Date(dMonth.getFullYear(), dMonth.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(dMonth.getFullYear(), dMonth.getMonth() + 1, 0).toISOString().split('T')[0];
         months.push({
           label: dMonth.toLocaleDateString('en-US', { month: 'short' }),
           start,
@@ -194,19 +226,6 @@ export default function LandlordDashboardScreen() {
         occupancyRate = Math.round(((tenantCount || 0) / (propertyCount || 0)) * 100);
       }
 
-      // Income vs Expense: use last 6 of the 12 months (months[6..11])
-      const incomeExpenseResult = months.slice(6).map(({ label, start, end }) => {
-        const bucket = (txns || []).filter(t => t.date >= start && t.date <= end);
-        const income = bucket
-          .filter(t => t.type === 'income' && t.status !== 'pending')
-          .reduce((s, t) => s + (t.amount || 0), 0);
-        const expense = bucket
-          .filter(t => t.type === 'expense' && t.status !== 'pending')
-          .reduce((s, t) => s + (t.amount || 0), 0);
-        return { month: label, income, expense };
-      });
-      setIncomeExpenseData(incomeExpenseResult);
-
       // Store raw data so the period toggle can recalculate client-side
       const monthlyRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
       setExpectedMonthlyRent(monthlyRent);
@@ -218,8 +237,8 @@ export default function LandlordDashboardScreen() {
       const collected = currentTxns
         .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
         .reduce((sum, t) => sum + (t.amount || 0), 0);
-      const overdue = monthlyRent > 0 ? Math.max(0, monthlyRent - collected) : 0;
-      const advance = monthlyRent > 0 ? Math.max(0, collected - monthlyRent) : 0;
+      const overdue = Math.max(0, monthlyRent - collected);
+      const advance = Math.max(0, collected - monthlyRent);
 
       setStats({
         propertyCount: propertyCount || 0,
@@ -413,9 +432,6 @@ export default function LandlordDashboardScreen() {
                 </View>
               </View>
             </View>
-            <ThemedText style={[styles.statsText, { color: textPrimaryColor }]}>
-              {stats.leaseCount} Active {stats.leaseCount === 1 ? 'Lease' : 'Leases'} • {stats.occupancyRate}% Occupancy
-            </ThemedText>
           </TouchableOpacity>
 
         {/* ── Scrollable Chart Carousel ─────────────────────────────── */}
@@ -490,10 +506,22 @@ export default function LandlordDashboardScreen() {
               <View style={styles.chartCardHeader}>
                 <View>
                   <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Income vs Expense</ThemedText>
-                  <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>Last 6 months</ThemedText>
+                  <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
+                    {incomeExpensePeriod === 1 ? 'This month' : incomeExpensePeriod === 12 ? `Jan – Dec ${new Date().getFullYear()}` : `Last ${incomeExpensePeriod} months`}
+                  </ThemedText>
                 </View>
-                <View style={[styles.chartBadge, { backgroundColor: `${primaryColor}20` }]}>
-                  <ThemedText style={[styles.chartBadgeText, { color: primaryColor }]}>6M</ThemedText>
+                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                  {([1, 3, 6, 12] as const).map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[styles.rentPeriodBtn, incomeExpensePeriod === p && { backgroundColor: primaryColor }]}
+                      onPress={() => setIncomeExpensePeriod(p)}
+                    >
+                      <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === p ? '#fff' : textSecondaryColor }]}>
+                        {p}M
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               </View>
 

@@ -1271,13 +1271,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   titleSection: {
-    marginTop: 16,
+    marginTop: 20,
     marginBottom: 16,
   },
   propertyName: {
-    fontSize: 32,
+    fontSize: 22,
     fontWeight: '700',
-    marginBottom: 8,
+    lineHeight: 30,
+    marginBottom: 6,
   },
   locationRow: {
     flexDirection: 'row',
