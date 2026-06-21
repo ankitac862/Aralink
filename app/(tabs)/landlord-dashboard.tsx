@@ -261,19 +261,19 @@ export default function LandlordDashboardScreen() {
       icon: 'office-building', 
       route: '/properties' 
     },
-    { 
-      id: '2', 
-      title: 'My Tenants', 
-      subtitle: `${stats.tenantCount} active`, 
-      icon: 'account-group', 
-      route: '/tenants' 
+    {
+      id: '2',
+      title: 'My Tenants',
+      subtitle: '',
+      icon: 'account-group',
+      route: '/tenants',
     },
-    { 
-      id: '3', 
-      title: 'Leases', 
-      subtitle: `${stats.leaseCount} active`, 
-      icon: 'gavel', 
-      route: '/leases' 
+    {
+      id: '3',
+      title: 'Leases',
+      subtitle: '',
+      icon: 'gavel',
+      route: '/leases',
     },
     { 
       id: '4', 
@@ -292,9 +292,9 @@ export default function LandlordDashboardScreen() {
     {
       id: '6',
       title: 'New Applicants',
-      subtitle: `${stats.applicantCount} new`,
+      subtitle: '',
       icon: 'file-document',
-      route: '/landlord-applications'
+      route: '/landlord-applications',
     },
     {
       id: '7',
@@ -334,7 +334,9 @@ export default function LandlordDashboardScreen() {
         onPress={handleNavigation}>
         <MaterialCommunityIcons name={item.icon as any} size={24} color={primaryColor} />
         <ThemedText style={[styles.tileName, { color: textPrimaryColor }]}>{item.title}</ThemedText>
-        <ThemedText style={[styles.tileSubtitle, { color: textSecondaryColor }]}>{item.subtitle}</ThemedText>
+        {!!item.subtitle && (
+          <ThemedText style={[styles.tileSubtitle, { color: textSecondaryColor }]}>{item.subtitle}</ThemedText>
+        )}
       </TouchableOpacity>
     );
   };
