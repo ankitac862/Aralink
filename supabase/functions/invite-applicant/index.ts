@@ -13,7 +13,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
 const SET_PASSWORD_PATH = '/invite-auth';
-const SITE_URL = (Deno.env.get('SITE_URL') || 'http://localhost:3000').replace(/\/+$/, '');
+const SITE_URL = (Deno.env.get('SITE_URL') || 'https://www.aaralink.ca').replace(/\/+$/, '');
 
 function resolveSetPasswordRedirectUrl(redirectBaseUrl?: string | null): string {
   const isAllowedRedirectOrigin = (origin: string): boolean => {
@@ -173,12 +173,10 @@ async function sendRecoveryEmailWithRedirect(email: string, redirectTo: string):
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
   if (!anonKey) { console.warn('[invite-applicant] SUPABASE_ANON_KEY not set — skipping recovery email'); return false; }
   const base = supabaseUrl.replace(/\/+$/, '');
-  let rt = `${SITE_URL}${SET_PASSWORD_PATH}`;
-  try { const u = new URL(redirectTo); rt = `${u.origin}${SET_PASSWORD_PATH}`; } catch { /* keep default */ }
   const res = await fetch(`${base}/auth/v1/recover`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: anonKey, Authorization: `Bearer ${anonKey}` },
-    body: JSON.stringify({ email, redirect_to: rt }),
+    body: JSON.stringify({ email, redirect_to: redirectTo }),
   });
   if (!res.ok) { console.warn('[invite-applicant] recovery email failed:', await res.text()); return false; }
   return true;
@@ -217,6 +215,19 @@ serve(async (req) => {
     if (propertyError || !property) return json({ error: 'Property not found' }, 404);
     if (property.user_id !== authData.user.id) return json({ error: 'Forbidden' }, 403);
 
+    // Ensure landlord has a profile (required for invites.landlord_id foreign key)
+    await supabase.from('profiles').upsert(
+      {
+        id: authData.user.id,
+        email: authData.user.email,
+        full_name: authData.user.user_metadata?.full_name || authData.user.email?.split('@')[0],
+        user_type: 'landlord',
+        account_status: 'active',
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
+
     const { data: existingProfile } = await supabase
       .from('profiles').select('id, email, user_type, account_status, has_set_password')
       .eq('email', applicantEmail).maybeSingle();
@@ -225,11 +236,13 @@ serve(async (req) => {
 
     const token = generateToken();
     const tokenHash = await hashToken(token);
-    const inviteAuthPathOnly = normalizeRedirectToSetPassword(resolveRedirectToForSupabaseEmail(inviteAuthBase));
+    // Send the complete /invite-auth URL as redirect_to so the auth email links
+    // directly to the password-setup screen.
+    const inviteAuthUrl = normalizeRedirectToSetPassword(resolveRedirectToForSupabaseEmail(inviteAuthBase));
     const appendQuery = Deno.env.get('INVITE_REDIRECT_APPEND_QUERY') === 'true';
     const supabaseRedirectTo = appendQuery
-      ? `${inviteAuthPathOnly}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(applicantEmail)}`
-      : inviteAuthPathOnly;
+      ? `${inviteAuthUrl}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(applicantEmail)}`
+      : inviteAuthUrl;
 
     const userMeta = { full_name: applicantName || applicantEmail.split('@')[0], user_type: 'tenant' };
 

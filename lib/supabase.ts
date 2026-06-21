@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 
 // Inline helper to avoid a require-cycle with sendPushNotification.ts
@@ -323,29 +324,13 @@ export async function uploadImage(
       return { success: true, url: urlData.publicUrl };
     }
 
-    const uriToBase64 = async (uri: string) => {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-    
-      return await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = reject;
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          resolve(dataUrl.split(',')[1]); // remove "data:image/...;base64,"
-        };
-        reader.readAsDataURL(blob);
-      });
-    };
-    
-
-    // For native (iOS/Android), we need to read the file and convert to base64
-    // const base64 = await FileSystem.readAsStringAsync(uri, {
-    //   // Use string literal to avoid type issues across platforms
-    //   encoding: 'base64',
-    // });
-
-    const base64 = await uriToBase64(uri);
+    // For native (iOS/Android), read the file directly from disk as base64.
+    // Using fetch(uri).blob() + FileReader is unreliable for content:// URIs
+    // (e.g. the Android photo picker) in release/standalone builds, where it
+    // can silently fail even though it works in Expo Go.
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
     // Convert base64 to ArrayBuffer
     const binaryString = atob(base64);
@@ -650,6 +635,16 @@ export async function createProperty(property: Omit<DbProperty, 'id' | 'created_
     if (error) {
       console.error('Error creating property:', error);
       return null;
+    }
+
+    if (data?.user_id) {
+      logActivity({
+        userId: data.user_id,
+        type: 'property_added',
+        title: 'Property Added',
+        message: `${data.name || data.address1 || 'A new property'} was added to your portfolio`,
+        data: { propertyId: data.id },
+      });
     }
 
     return data;
@@ -1288,7 +1283,6 @@ export async function addTenantToProperty(params: {
       .upsert(
         {
           tenant_id: tenant.tenantId,
-          landlord_id: params.landlordUserId,
           property_id: params.propertyId,
           unit_id: params.unitId || null,
           sub_unit_id: params.subUnitId || null,
@@ -1836,6 +1830,18 @@ export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 
         console.warn('Warning: Could not update tenant profile:', updateError);
         // Don't fail the transaction creation if profile update fails
       }
+    }
+
+    if (data) {
+      const amount = `$${Number(data.amount || 0).toLocaleString()}`;
+      const category = data.category ? data.category.charAt(0).toUpperCase() + data.category.slice(1) : 'Transaction';
+      logActivity({
+        userId: data.user_id,
+        type: data.type === 'income' ? 'payment' : 'expense',
+        title: data.type === 'income' ? 'Payment Received' : 'Expense Recorded',
+        message: data.description ? `${category} - ${amount} - ${data.description}` : `${category} - ${amount}`,
+        data: { transactionId: data.id, propertyId: data.property_id },
+      });
     }
 
     return data;
@@ -3008,7 +3014,7 @@ export async function convertApplicantToTenant(params: {
       tenant_id: tenant.id,
       property_id: params.propertyId,
       unit_id: params.unitId,
-      status: shouldActivateNow ? 'active' : 'inactive', // Changed from pending_invite to inactive because the link isn't active until Move-In Date
+      status: shouldActivateNow ? 'active' : 'pending_invite', // pending_invite so activateScheduledTenancyForUser() can promote it on the move-in date
       created_via: 'lease_creation',
       created_by_user_id: currentUser.id, // Use the current authenticated landlord's ID
       link_start_date: moveInDate,
@@ -4048,6 +4054,31 @@ export async function getTransactionCategorySummary(
   } catch (error) {
     console.error('Error getting category summary:', error);
     return [];
+  }
+}
+
+// Log a recent-activity entry for a user (shows up in their dashboard's Recent Activity feed).
+// Reuses the notifications table so a single feed covers both "things to act on"
+// (applications, leases, maintenance) and "things you did" (added a property, recorded a payment).
+export async function logActivity(params: {
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  data?: Record<string, any>;
+}) {
+  try {
+    await supabase.from('notifications').insert({
+      user_id: params.userId,
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      data: params.data,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn('⚠️ logActivity failed:', error);
   }
 }
 
@@ -5256,19 +5287,31 @@ export async function approveMoveInDate(applicationId: string) {
   try {
     const { data: appData, error: appFetchError } = await supabase
       .from('applications')
-      .select('*, leases(*)')
+      .select('*')
       .eq('id', applicationId)
       .single();
 
     if (appFetchError) throw appFetchError;
-    
+
+    let leaseEffectiveDate: string | null = null;
+    if (!appData.proposed_move_in_date) {
+      const { data: lease } = await supabase
+        .from('leases')
+        .select('effective_date')
+        .eq('application_id', applicationId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      leaseEffectiveDate = lease?.effective_date || null;
+    }
+
     // Update application move-in status
     const { error: updateError } = await supabase
       .from('applications')
       .update({
         status: 'move_in_approved',
         move_in_status: 'approved',
-        approved_move_in_date: appData.proposed_move_in_date || appData.leases?.[0]?.effective_date || new Date().toISOString().split('T')[0]
+        approved_move_in_date: appData.proposed_move_in_date || leaseEffectiveDate || new Date().toISOString().split('T')[0]
       })
       .eq('id', applicationId);
 

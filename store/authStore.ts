@@ -14,14 +14,14 @@ export interface AuthUser {
   phone?: string;
   avatarUrl?: string;
   isSocialLogin: boolean;
-  socialProvider?: 'google' | 'apple' | 'facebook' | null;
+  socialProvider?: 'google' | null;
   emailVerified: boolean;
 }
 
 interface PendingOAuthSession {
   user: User;
   session: Session;
-  provider: 'google' | 'apple' | 'facebook';
+  provider: 'google';
 }
 
 interface AuthState {
@@ -39,8 +39,6 @@ interface AuthState {
   signIn: (identifier: string, password: string) => Promise<{ success: boolean; error?: string; user?: AuthUser }>;
   signOut: () => Promise<void>;
   signInWithGoogle: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
-  signInWithApple: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
-  signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
   completeSocialSignIn: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
   updateAvatar: (avatarUrl: string) => Promise<{ success: boolean; error?: string }>;
@@ -155,11 +153,7 @@ const toAuthUser = (user: User, profile: UserProfile | null, defaultRole?: UserR
     'tenant';
 
   const provider = user.app_metadata?.provider;
-  const isSocialLogin = profile?.is_social_login || 
-    provider === 'google' || 
-    provider === 'apple' || 
-    provider === 'facebook' || 
-    false;
+  const isSocialLogin = profile?.is_social_login || provider === 'google' || false;
 
   return {
     id: user.id,
@@ -511,6 +505,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signInWithGoogle: async (role?: UserRole) => {
+    console.log('[GoogleAuth] signInWithGoogle: start', { role });
     try {
       set({ isLoading: true, error: null });
 
@@ -523,6 +518,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         },
       });
 
+      console.log('[GoogleAuth] signInWithOAuth result', {
+        hasUrl: !!data?.url,
+        url: data?.url,
+        error: error?.message,
+      });
+
       if (error || !data?.url) {
         set({ isLoading: false, error: error?.message || 'Failed to get Google sign-in URL' });
         return { success: false, error: error?.message || 'Failed to get Google sign-in URL' };
@@ -530,223 +531,23 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       // Open in-app browser and wait for redirect
       const { openAuthSessionAsync } = await import('expo-web-browser');
+      console.log('[GoogleAuth] opening auth session...');
       const result = await openAuthSessionAsync(data.url, 'aralink://oauth-redirect');
+      console.log('[GoogleAuth] openAuthSessionAsync result', {
+        type: result.type,
+        url: 'url' in result ? result.url : undefined,
+      });
 
       if (result.type !== 'success' || !result.url) {
         set({ isLoading: false });
+        console.log('[GoogleAuth] sign-in cancelled or dismissed', { type: result.type });
         return { success: false, error: 'Google sign-in was cancelled' };
       }
 
-      // Parse the redirect URL — Supabase uses PKCE flow (returns ?code=) on mobile
-      // but may fall back to implicit flow (returns #access_token=) in some configs.
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-
-      if (code) {
-        // PKCE flow — exchange the one-time code for a session
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data;
-        sessionError = res.error;
-      } else if (accessToken) {
-        // Implicit flow — set session directly from tokens in hash
-        const res = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken || '',
-        });
-        sessionData = res.data;
-        sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        // New social user — hold the session and ask them to pick a role
-        set({
-          pendingOAuthSession: {
-            user: sessionData.user,
-            session: sessionData.session,
-            provider: 'google',
-          },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-
-      return { success: true, isNewUser: false };
+      return await completeOAuthRedirect(result.url, role);
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      set({ isLoading: false, error: errorMessage });
-      return { success: false, error: errorMessage };
-    }
-  },
-
-  signInWithApple: async (role?: UserRole) => {
-    try {
-      set({ isLoading: true, error: null });
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'apple',
-        options: {
-          redirectTo: 'aralink://oauth-redirect',
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error || !data?.url) {
-        set({ isLoading: false, error: error?.message || 'Failed to get Apple sign-in URL' });
-        return { success: false, error: error?.message || 'Failed to get Apple sign-in URL' };
-      }
-
-      const { openAuthSessionAsync } = await import('expo-web-browser');
-      const result = await openAuthSessionAsync(data.url, 'aralink://oauth-redirect');
-
-      if (result.type !== 'success' || !result.url) {
-        set({ isLoading: false });
-        return { success: false, error: 'Apple sign-in was cancelled' };
-      }
-
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-      if (code) {
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data; sessionError = res.error;
-      } else if (accessToken) {
-        const res = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken || '' });
-        sessionData = res.data; sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        set({
-          pendingOAuthSession: { user: sessionData.user, session: sessionData.session, provider: 'apple' },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-      return { success: true, isNewUser: false };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
-      set({ isLoading: false, error: errorMessage });
-      return { success: false, error: errorMessage };
-    }
-  },
-
-  signInWithFacebook: async (role?: UserRole) => {
-    try {
-      set({ isLoading: true, error: null });
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'facebook',
-        options: {
-          redirectTo: 'aralink://oauth-redirect',
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error || !data?.url) {
-        set({ isLoading: false, error: error?.message || 'Failed to get Facebook sign-in URL' });
-        return { success: false, error: error?.message || 'Failed to get Facebook sign-in URL' };
-      }
-
-      const { openAuthSessionAsync } = await import('expo-web-browser');
-      const result = await openAuthSessionAsync(data.url, 'aralink://oauth-redirect');
-
-      if (result.type !== 'success' || !result.url) {
-        set({ isLoading: false });
-        return { success: false, error: 'Facebook sign-in was cancelled' };
-      }
-
-      const redirectUrl = result.url;
-      const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
-      const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
-      const queryParams = new URLSearchParams(queryString);
-      const hashParams = new URLSearchParams(hashString);
-      const code = queryParams.get('code');
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-
-      let sessionData: any;
-      let sessionError: any;
-      if (code) {
-        const res = await supabase.auth.exchangeCodeForSession(code);
-        sessionData = res.data; sessionError = res.error;
-      } else if (accessToken) {
-        const res = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken || '' });
-        sessionData = res.data; sessionError = res.error;
-      } else {
-        set({ isLoading: false, error: 'No auth code or token in redirect' });
-        return { success: false, error: 'No auth code or token in redirect' };
-      }
-
-      if (sessionError) {
-        set({ isLoading: false, error: sessionError.message });
-        return { success: false, error: sessionError.message };
-      }
-
-      const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
-      const isNewUser = !profile?.user_type;
-
-      if (isNewUser && !role && sessionData?.user && sessionData?.session) {
-        set({
-          pendingOAuthSession: { user: sessionData.user, session: sessionData.session, provider: 'facebook' },
-          isLoading: false,
-        });
-        return { success: true, isNewUser: true };
-      }
-
-      if (role) await setStorageValue('pendingUserRole', role);
-      const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
-      set({ user: authUser, session: sessionData?.session, isLoading: false });
-      return { success: true, isNewUser: false };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      console.error('[GoogleAuth] signInWithGoogle: error', errorMessage, error);
       set({ isLoading: false, error: errorMessage });
       return { success: false, error: errorMessage };
     }
@@ -913,6 +714,145 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ error: null });
   },
 }));
+
+// Some Android builds deliver the `aralink://oauth-redirect` deep link both to
+// `openAuthSessionAsync` (inside `signInWithGoogle`) AND to the `/oauth-redirect`
+// route directly, so `completeOAuthRedirect` can be called twice with the same
+// one-time PKCE code. Only the first call may exchange the code; the second must
+// reuse that result instead of failing with "auth code and code verifier should
+// be non-empty".
+const oauthRedirectInFlight = new Map<string, Promise<{ success: boolean; isNewUser?: boolean; error?: string }>>();
+
+// Exchange the redirect URL from a social OAuth flow (Google, etc.) for a Supabase
+// session and update the auth store. Shared by `signInWithGoogle` (when
+// `openAuthSessionAsync` resolves directly) and the `/oauth-redirect` screen
+// (the fallback when the OS opens that deep link in the app instead).
+export const completeOAuthRedirect = async (
+  redirectUrl: string,
+  role?: UserRole
+): Promise<{ success: boolean; isNewUser?: boolean; error?: string }> => {
+  // Supabase uses PKCE flow (returns ?code=) on mobile but may fall back to
+  // implicit flow (returns #access_token=) in some configs.
+  const queryString = redirectUrl.includes('?') ? redirectUrl.split('?')[1].split('#')[0] : '';
+  const hashString = redirectUrl.includes('#') ? redirectUrl.split('#')[1] : '';
+  const queryParams = new URLSearchParams(queryString);
+  const hashParams = new URLSearchParams(hashString);
+  const dedupeKey = queryParams.get('code') || hashParams.get('access_token') || redirectUrl;
+
+  const existing = oauthRedirectInFlight.get(dedupeKey);
+  if (existing) {
+    console.log('[GoogleAuth] completeOAuthRedirect: duplicate redirect for same code, reusing in-flight result', { dedupeKey });
+    return existing;
+  }
+
+  const promise = runCompleteOAuthRedirect(redirectUrl, role, queryParams, hashParams);
+  oauthRedirectInFlight.set(dedupeKey, promise);
+  promise.finally(() => oauthRedirectInFlight.delete(dedupeKey));
+  return promise;
+};
+
+const runCompleteOAuthRedirect = async (
+  redirectUrl: string,
+  role: UserRole | undefined,
+  queryParams: URLSearchParams,
+  hashParams: URLSearchParams
+): Promise<{ success: boolean; isNewUser?: boolean; error?: string }> => {
+  console.log('[GoogleAuth] completeOAuthRedirect: start', { redirectUrl, role });
+  try {
+    const oauthError = queryParams.get('error_description') || hashParams.get('error_description') || queryParams.get('error') || hashParams.get('error');
+    if (oauthError) {
+      console.log('[GoogleAuth] completeOAuthRedirect: oauth error in redirect', oauthError);
+      useAuthStore.setState({ isLoading: false, error: oauthError });
+      return { success: false, error: oauthError };
+    }
+
+    const code = queryParams.get('code');
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+
+    console.log('[GoogleAuth] completeOAuthRedirect: parsed redirect', {
+      hasCode: !!code,
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken,
+    });
+
+    let sessionData: any;
+    let sessionError: any;
+
+    if (code) {
+      // PKCE flow — exchange the one-time code for a session
+      console.log('[GoogleAuth] completeOAuthRedirect: exchanging code for session (PKCE)');
+      const res = await supabase.auth.exchangeCodeForSession(code);
+      sessionData = res.data;
+      sessionError = res.error;
+    } else if (accessToken) {
+      // Implicit flow — set session directly from tokens in hash
+      console.log('[GoogleAuth] completeOAuthRedirect: setting session from tokens (implicit)');
+      const res = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken || '',
+      });
+      sessionData = res.data;
+      sessionError = res.error;
+    } else {
+      console.log('[GoogleAuth] completeOAuthRedirect: no code or access_token in redirect URL');
+      useAuthStore.setState({ isLoading: false, error: 'No auth code or token in redirect' });
+      return { success: false, error: 'No auth code or token in redirect' };
+    }
+
+    console.log('[GoogleAuth] completeOAuthRedirect: session result', {
+      hasUser: !!sessionData?.user,
+      hasSession: !!sessionData?.session,
+      userId: sessionData?.user?.id,
+      email: sessionData?.user?.email,
+      error: sessionError?.message,
+    });
+
+    if (sessionError) {
+      useAuthStore.setState({ isLoading: false, error: sessionError.message });
+      return { success: false, error: sessionError.message };
+    }
+
+    const profile = sessionData?.user ? await getUserProfile(sessionData.user.id) : null;
+    const isNewUser = !profile?.user_type;
+
+    console.log('[GoogleAuth] completeOAuthRedirect: profile lookup', {
+      hasProfile: !!profile,
+      userType: profile?.user_type,
+      isNewUser,
+    });
+
+    if (isNewUser && !role && sessionData?.user && sessionData?.session) {
+      // New social user — hold the session and ask them to pick a role
+      console.log('[GoogleAuth] completeOAuthRedirect: new user, awaiting role selection');
+      useAuthStore.setState({
+        pendingOAuthSession: {
+          user: sessionData.user,
+          session: sessionData.session,
+          provider: 'google',
+        },
+        isLoading: false,
+      });
+      return { success: true, isNewUser: true };
+    }
+
+    if (role) await setStorageValue('pendingUserRole', role);
+
+    const authUser = sessionData?.user ? toAuthUser(sessionData.user, profile, role) : null;
+    console.log('[GoogleAuth] completeOAuthRedirect: success, signed in', {
+      userId: authUser?.id,
+      role: authUser?.role,
+    });
+    useAuthStore.setState({ user: authUser, session: sessionData?.session, isLoading: false });
+
+    return { success: true, isNewUser: false };
+  } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+    console.error('[GoogleAuth] completeOAuthRedirect: error', errorMessage, error);
+    useAuthStore.setState({ isLoading: false, error: errorMessage });
+    return { success: false, error: errorMessage };
+  }
+};
 
 // Export helper hooks
 export const useIsAuthenticated = () => {

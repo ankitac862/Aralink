@@ -16,8 +16,6 @@ export function useAuth() {
     signUp,
     signOut,
     signInWithGoogle,
-    signInWithApple,
-    signInWithFacebook,
     updateUserRole,
     resetPassword,
     clearError,
@@ -31,14 +29,12 @@ export function useAuth() {
     isInitialized,
     isAuthenticated: !!user,
     error,
-    
+
     // Actions
     signIn,
     signUp,
     signOut,
     signInWithGoogle,
-    signInWithApple,
-    signInWithFacebook,
     updateUserRole,
     resetPassword,
     clearError,

@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -19,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { DbLease, fetchLeasesByProperty } from '@/lib/supabase';
+import { DbLease, deleteImage, fetchLeasesByProperty, STORAGE_BUCKETS, uploadMultipleImages } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
 
@@ -49,6 +50,7 @@ export default function PropertyDetailScreen() {
   const [selectedRoom, setSelectedRoom] = useState<SubUnit | null>(null);
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [propertyLeases, setPropertyLeases] = useState<DbLease[]>([]);
+  const [isUpdatingPhotos, setIsUpdatingPhotos] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const imageScrollRef = useRef<FlatList>(null);
   
@@ -135,6 +137,118 @@ export default function PropertyDetailScreen() {
     setProperty(prev => prev ? { ...prev, ...updates } : null);
     // Also refresh from store to ensure consistency
     refreshProperty();
+  };
+
+  const handleAddPhotos = async () => {
+    if (!property || !user?.id) return;
+
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your photo library.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      quality: 0.8,
+    });
+
+    if (result.canceled || !result.assets?.length) return;
+
+    setIsUpdatingPhotos(true);
+    try {
+      const folder = `properties/${user.id}`;
+      const newUrls = await uploadMultipleImages(
+        result.assets.map(asset => asset.uri),
+        STORAGE_BUCKETS.PROPERTY_IMAGES,
+        folder
+      );
+
+      if (newUrls.length === 0) {
+        Alert.alert('Error', 'Failed to upload photos. Please try again.');
+        return;
+      }
+
+      const updatedPhotos = [...(property.photos || []), ...newUrls];
+      await updateProperty(property.id, { photos: updatedPhotos });
+      setProperty(prev => prev ? { ...prev, photos: updatedPhotos } : null);
+      refreshProperty();
+    } catch (error) {
+      console.error('Error adding property photos:', error);
+      Alert.alert('Error', 'Failed to upload photos. Please try again.');
+    } finally {
+      setIsUpdatingPhotos(false);
+    }
+  };
+
+  const handleDeletePhoto = (photoUrl: string) => {
+    if (!property) return;
+
+    Alert.alert(
+      'Remove Photo',
+      'Are you sure you want to remove this photo?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setIsUpdatingPhotos(true);
+            try {
+              if (photoUrl.startsWith('http')) {
+                await deleteImage(photoUrl, STORAGE_BUCKETS.PROPERTY_IMAGES);
+              }
+              const updatedPhotos = (property.photos || []).filter(p => p !== photoUrl);
+              await updateProperty(property.id, { photos: updatedPhotos });
+              setProperty(prev => prev ? { ...prev, photos: updatedPhotos } : null);
+              refreshProperty();
+            } catch (error) {
+              console.error('Error removing property photo:', error);
+              Alert.alert('Error', 'Failed to remove photo. Please try again.');
+            } finally {
+              setIsUpdatingPhotos(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAllPhotos = () => {
+    if (!property || !property.photos?.length) return;
+
+    Alert.alert(
+      'Remove All Photos',
+      'Are you sure you want to remove all photos for this property?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove All',
+          style: 'destructive',
+          onPress: async () => {
+            setIsUpdatingPhotos(true);
+            try {
+              const photos = property.photos || [];
+              await Promise.all(
+                photos
+                  .filter(p => p.startsWith('http'))
+                  .map(p => deleteImage(p, STORAGE_BUCKETS.PROPERTY_IMAGES))
+              );
+              await updateProperty(property.id, { photos: [] });
+              setProperty(prev => prev ? { ...prev, photos: [] } : null);
+              setCurrentImageIndex(0);
+              refreshProperty();
+            } catch (error) {
+              console.error('Error removing property photos:', error);
+              Alert.alert('Error', 'Failed to remove photos. Please try again.');
+            } finally {
+              setIsUpdatingPhotos(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleAddRoom = () => {
@@ -287,6 +401,52 @@ export default function PropertyDetailScreen() {
                 ))}
             </View>
             )}
+          </View>
+        )}
+
+        {/* Manage Photos (edit mode) */}
+        {isEditMode && (
+          <View style={styles.photoManageSection}>
+            <View style={styles.photoManageHeader}>
+              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Photos</ThemedText>
+              {propertyImages.length > 0 && (
+                <TouchableOpacity onPress={handleDeleteAllPhotos} disabled={isUpdatingPhotos}>
+                  <ThemedText style={[styles.removeAllText, { color: '#ef4444' }]}>Remove All</ThemedText>
+                </TouchableOpacity>
+              )}
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.photoManageRow}
+            >
+              {propertyImages.map((photo, index) => (
+                <View key={`manage-photo-${index}`} style={styles.photoManageThumbWrapper}>
+                  <Image source={{ uri: photo }} style={styles.photoManageThumb} />
+                  <TouchableOpacity
+                    style={styles.photoRemoveBadge}
+                    onPress={() => handleDeletePhoto(photo)}
+                    disabled={isUpdatingPhotos}
+                  >
+                    <MaterialCommunityIcons name="close" size={14} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[styles.photoAddTile, { borderColor, backgroundColor: inputBgColor }]}
+                onPress={handleAddPhotos}
+                disabled={isUpdatingPhotos}
+              >
+                {isUpdatingPhotos ? (
+                  <ActivityIndicator size="small" color={primaryColor} />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="camera-plus-outline" size={24} color={primaryColor} />
+                    <ThemedText style={[styles.photoAddText, { color: primaryColor }]}>Add Photos</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         )}
 
@@ -1149,6 +1309,59 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
+  },
+  photoManageSection: {
+    marginTop: 16,
+    gap: 12,
+  },
+  photoManageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  removeAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  photoManageRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingBottom: 4,
+  },
+  photoManageThumbWrapper: {
+    position: 'relative',
+  },
+  photoManageThumb: {
+    width: 84,
+    height: 84,
+    borderRadius: 10,
+    backgroundColor: '#e5e7eb',
+  },
+  photoRemoveBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoAddTile: {
+    width: 84,
+    height: 84,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  photoAddText: {
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   infoSection: {
     paddingVertical: 16,

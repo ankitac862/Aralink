@@ -73,9 +73,11 @@ export default function SocialRoleSelectScreen() {
       return;
     }
 
+    console.log('[GoogleAuth] social-role-select: continue pressed', { selectedRole });
     setLoading(true);
     const result = await completeSocialSignIn(selectedRole);
     setLoading(false);
+    console.log('[GoogleAuth] social-role-select: completeSocialSignIn result', result);
 
     if (!result.success) {
       Alert.alert('Error', result.error || 'Failed to complete sign-in. Please try again.');

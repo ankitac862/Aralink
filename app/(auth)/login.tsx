@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { IdentifierInput } from '@/components/IdentifierInput';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -27,7 +28,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [showPassword, setShowPassword] = useState(false);
-  const [loadingProvider, setLoadingProvider] = useState<'email' | 'google' | 'apple' | 'facebook' | null>(null);
+  const [loadingProvider, setLoadingProvider] = useState<'email' | 'google' | null>(null);
   const [formData, setFormData] = useState({
     identifier: '',
     password: '',
@@ -37,8 +38,6 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const {
     signIn,
     signInWithGoogle,
-    signInWithApple,
-    signInWithFacebook,
     resetPassword,
     error,
     clearError,
@@ -83,38 +82,16 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   };
 
   const handleGoogleSignIn = async () => {
+    console.log('[GoogleAuth] login: Continue with Google pressed');
     clearError();
     setLoadingProvider('google');
     const result = await signInWithGoogle();
     setLoadingProvider(null);
+    console.log('[GoogleAuth] login: signInWithGoogle returned', result);
     if (result.isNewUser) {
       router.push('/(auth)/social-role-select' as any);
     } else if (!result.success) {
       Alert.alert('Google Sign In Failed', result.error || 'An error occurred');
-    }
-  };
-
-  const handleAppleSignIn = async () => {
-    clearError();
-    setLoadingProvider('apple');
-    const result = await signInWithApple();
-    setLoadingProvider(null);
-    if (result.isNewUser) {
-      router.push('/(auth)/social-role-select' as any);
-    } else if (!result.success) {
-      Alert.alert('Apple Sign In Failed', result.error || 'An error occurred');
-    }
-  };
-
-  const handleFacebookSignIn = async () => {
-    clearError();
-    setLoadingProvider('facebook');
-    const result = await signInWithFacebook();
-    setLoadingProvider(null);
-    if (result.isNewUser) {
-      router.push('/(auth)/social-role-select' as any);
-    } else if (!result.success) {
-      Alert.alert('Facebook Sign In Failed', result.error || 'An error occurred');
     }
   };
 
@@ -179,18 +156,13 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               <ThemedText style={[styles.label, { color: textColor }]}>
                 Email or Phone Number
               </ThemedText>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                    borderColor,
-                    color: textColor,
-                  },
-                ]}
+              <IdentifierInput
+                isDark={isDark}
+                borderColor={borderColor}
+                textColor={textColor}
+                placeholderColor={placeholderColor}
+                inputBgColor={isDark ? '#1e293b' : '#F4F6F8'}
                 placeholder="Enter your email or phone number"
-                placeholderTextColor={placeholderColor}
-                keyboardType="email-address"
                 autoCapitalize="none"
                 value={formData.identifier}
                 onChangeText={(value) => setFormData({ ...formData, identifier: value })}
@@ -297,55 +269,6 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               )}
             </TouchableOpacity>
 
-            {!isAndroid && (
-              <TouchableOpacity
-                style={[
-                  styles.socialButton,
-                  {
-                    borderColor,
-                    backgroundColor: cardBgColor,
-                  },
-                  isLoading && styles.disabledButton,
-                ]}
-                disabled={isLoading}
-                onPress={handleAppleSignIn}
-              >
-                {loadingProvider === 'apple' ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <>
-                    <MaterialCommunityIcons name="apple" size={20} color={textColor} />
-                    <ThemedText style={[styles.socialButtonText, { color: textColor }]}>
-                      Continue with Apple
-                    </ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={[
-                styles.socialButton,
-                {
-                  borderColor,
-                  backgroundColor: cardBgColor,
-                },
-                isLoading && styles.disabledButton,
-              ]}
-              disabled={isLoading}
-              onPress={handleFacebookSignIn}
-            >
-              {loadingProvider === 'facebook' ? (
-                <ActivityIndicator size="small" color={primaryColor} />
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="facebook" size={20} color="#1877F2" />
-                  <ThemedText style={[styles.socialButtonText, { color: textColor }]}>
-                    Continue with Facebook
-                  </ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
 
           {/* Footer */}

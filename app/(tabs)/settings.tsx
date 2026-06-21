@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,7 +24,6 @@ export default function SettingsScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
   const { signOut, user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
@@ -50,17 +49,6 @@ export default function SettingsScreen() {
       onPress: () => {
         Alert.alert('Coming Soon', 'Password change feature will be available soon.');
       },
-    },
-  ];
-
-  const securityItems: SettingItem[] = [
-    {
-      icon: 'shield-lock',
-      iconBg: '#34c759',
-      label: 'Two-Factor Authentication',
-      showToggle: true,
-      toggleValue: twoFactorEnabled,
-      onToggleChange: setTwoFactorEnabled,
     },
   ];
 
@@ -147,7 +135,6 @@ export default function SettingsScreen() {
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.contentInner}>
           <SettingSection title="Account" items={accountItems} />
-          <SettingSection title="Security" items={securityItems} />
 
           {/* Logout Button */}
           <View style={styles.logoutSection}>

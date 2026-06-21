@@ -1,6 +1,7 @@
 import { Tabs, useRouter } from 'expo-router';
-import { Platform, View } from 'react-native';
 import { useEffect } from 'react';
+import { Platform, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -13,6 +14,7 @@ type UserRole = 'landlord' | 'manager' | 'tenant' | null;
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const insets = useSafeAreaInsets();
   const { user, isInitialized } = useAuthStore();
   const router = useRouter();
   const userRole = (user?.role as UserRole) ?? 'tenant';
@@ -75,7 +77,9 @@ export default function TabLayout() {
                 borderTopWidth: 0,
                 borderBottomWidth: 1,
                 borderBottomColor: borderColor,
-                height: 60,
+                height: 60 + insets.bottom,
+                paddingBottom: insets.bottom,
+                paddingTop: 8,
               },
         }}>
         <Tabs.Screen

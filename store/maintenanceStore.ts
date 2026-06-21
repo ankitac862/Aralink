@@ -7,10 +7,12 @@ import {
   addResolutionNotes as addResolutionNotesService,
   submitTenantFeedback as submitTenantFeedbackService,
   getMaintenanceRequestById,
+  addComment as addCommentService,
   MaintenanceRequestInput,
   DbMaintenanceRequest,
 } from '@/services/maintenanceService';
 import { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
+import type { Vendor } from '@/constants/vendors';
 
 export type MaintenanceStatus =
   | 'new'
@@ -32,6 +34,28 @@ export interface MaintenanceActivity {
   timestamp: string;
   message: string;
   actor: 'tenant' | 'landlord' | 'manager' | 'system';
+  type?: 'comment';
+  commentText?: string;
+  createdByName?: string;
+}
+
+export interface MaintenanceComment {
+  id: string;
+  maintenanceRequestId: string;
+  commentText: string;
+  createdAt: string;
+  createdBy: string;
+  creatorRole: 'tenant' | 'landlord' | 'manager' | 'system';
+}
+
+export interface MarketplaceVendorDetails {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  category: string;
+  city: string;
+  address: string;
 }
 
 export interface MaintenanceRequest {
@@ -61,6 +85,9 @@ export interface MaintenanceRequest {
   tenantFeedback?: string;
   tenantFeedbackRating?: number;
   activity: MaintenanceActivity[];
+  comments: MaintenanceComment[];
+  // Marketplace vendor details (local, not persisted to Supabase)
+  marketplaceVendor?: MarketplaceVendorDetails;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,7 +99,7 @@ interface MaintenanceStore {
   error: string | null;
 
   addRequest: (
-    input: Omit<MaintenanceRequest, 'id' | 'status' | 'activity' | 'createdAt' | 'updatedAt'>,
+    input: Omit<MaintenanceRequest, 'id' | 'status' | 'activity' | 'comments' | 'createdAt' | 'updatedAt'>,
     callerRole?: MaintenanceCreatorRole
   ) => Promise<string | null>;
   updateRequestStatus: (
@@ -84,12 +111,28 @@ interface MaintenanceStore {
   assignVendor: (id: string, vendor: string, callerRole?: MaintenanceCreatorRole) => Promise<boolean>;
   addResolutionNotes: (id: string, notes: string, callerRole?: MaintenanceCreatorRole) => Promise<boolean>;
   submitFeedback: (id: string, feedback: string, rating: number) => Promise<boolean>;
+  addComment: (id: string, text: string, creatorName: string, callerRole?: MaintenanceCreatorRole) => Promise<boolean>;
+  setMarketplaceVendor: (requestId: string, vendor: MarketplaceVendorDetails) => void;
   selectRequest: (id?: string) => void;
   fetchRequests: (userId: string, userType: 'tenant' | 'landlord' | 'manager') => Promise<void>;
   refreshRequest: (id: string) => Promise<void>;
 }
 
+function parseComments(requestId: string, activity: MaintenanceActivity[]): MaintenanceComment[] {
+  return activity
+    .filter((a) => a.type === 'comment')
+    .map((a) => ({
+      id: a.id,
+      maintenanceRequestId: requestId,
+      commentText: a.commentText || a.message,
+      createdAt: a.timestamp,
+      createdBy: a.createdByName || a.actor,
+      creatorRole: a.actor,
+    }));
+}
+
 function dbToStore(db: DbMaintenanceRequest): MaintenanceRequest {
+  const activity: MaintenanceActivity[] = db.activity || [];
   return {
     id: db.id,
     tenantId: db.tenant_id,
@@ -116,7 +159,8 @@ function dbToStore(db: DbMaintenanceRequest): MaintenanceRequest {
     resolutionNotes: db.resolution_notes,
     tenantFeedback: db.tenant_feedback,
     tenantFeedbackRating: db.tenant_feedback_rating,
-    activity: db.activity || [],
+    activity,
+    comments: parseComments(db.id, activity),
     createdAt: db.created_at,
     updatedAt: db.updated_at,
   };
@@ -205,7 +249,20 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         set({ loading: false, error: error || 'Failed to update status' });
         return false;
       }
+      // Preserve local marketplaceVendor after refresh
+      const existing = get().requests.find((r) => r.id === id);
       await get().refreshRequest(id);
+      if (existing?.marketplaceVendor) {
+        set((state) => ({
+          requests: state.requests.map((r) =>
+            r.id === id ? { ...r, marketplaceVendor: existing.marketplaceVendor } : r
+          ),
+          selectedRequest:
+            state.selectedRequest?.id === id
+              ? { ...state.selectedRequest, marketplaceVendor: existing.marketplaceVendor }
+              : state.selectedRequest,
+        }));
+      }
       set({ loading: false });
       return true;
     } catch (err) {
@@ -222,7 +279,19 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         set({ loading: false, error: error || 'Failed to assign vendor' });
         return false;
       }
+      const existing = get().requests.find((r) => r.id === id);
       await get().refreshRequest(id);
+      if (existing?.marketplaceVendor) {
+        set((state) => ({
+          requests: state.requests.map((r) =>
+            r.id === id ? { ...r, marketplaceVendor: existing.marketplaceVendor } : r
+          ),
+          selectedRequest:
+            state.selectedRequest?.id === id
+              ? { ...state.selectedRequest, marketplaceVendor: existing.marketplaceVendor }
+              : state.selectedRequest,
+        }));
+      }
       set({ loading: false });
       return true;
     } catch (err) {
@@ -239,7 +308,15 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
         set({ loading: false, error: error || 'Failed to save notes' });
         return false;
       }
+      const existing = get().requests.find((r) => r.id === id);
       await get().refreshRequest(id);
+      if (existing?.marketplaceVendor) {
+        set((state) => ({
+          requests: state.requests.map((r) =>
+            r.id === id ? { ...r, marketplaceVendor: existing.marketplaceVendor } : r
+          ),
+        }));
+      }
       set({ loading: false });
       return true;
     } catch (err) {
@@ -265,6 +342,47 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
     }
   },
 
+  addComment: async (id, text, creatorName, callerRole) => {
+    try {
+      set({ loading: true, error: null });
+      const { success, error } = await addCommentService(id, text, creatorName, callerRole);
+      if (!success) {
+        set({ loading: false, error: error || 'Failed to add comment' });
+        return false;
+      }
+      const existing = get().requests.find((r) => r.id === id);
+      await get().refreshRequest(id);
+      if (existing?.marketplaceVendor) {
+        set((state) => ({
+          requests: state.requests.map((r) =>
+            r.id === id ? { ...r, marketplaceVendor: existing.marketplaceVendor } : r
+          ),
+          selectedRequest:
+            state.selectedRequest?.id === id
+              ? { ...state.selectedRequest, marketplaceVendor: existing.marketplaceVendor }
+              : state.selectedRequest,
+        }));
+      }
+      set({ loading: false });
+      return true;
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
+      return false;
+    }
+  },
+
+  setMarketplaceVendor: (requestId, vendor) => {
+    set((state) => ({
+      requests: state.requests.map((r) =>
+        r.id === requestId ? { ...r, marketplaceVendor: vendor } : r
+      ),
+      selectedRequest:
+        state.selectedRequest?.id === requestId
+          ? { ...state.selectedRequest, marketplaceVendor: vendor }
+          : state.selectedRequest,
+    }));
+  },
+
   selectRequest: (id) => {
     if (!id) { set({ selectedRequest: undefined }); return; }
     set({ selectedRequest: get().requests.find((r) => r.id === id) });
@@ -275,7 +393,16 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
       set({ loading: true, error: null });
       const { data, error } = await fetchMaintenanceRequests(userId, userType);
       if (error) { set({ loading: false, error }); return; }
-      set({ requests: data.map(dbToStore), loading: false });
+      // Preserve existing marketplaceVendor for requests we already have
+      const existing = get().requests;
+      const updated = data.map((db) => {
+        const stored = existing.find((r) => r.id === db.id);
+        const converted = dbToStore(db);
+        return stored?.marketplaceVendor
+          ? { ...converted, marketplaceVendor: stored.marketplaceVendor }
+          : converted;
+      });
+      set({ requests: updated, loading: false });
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : 'Unknown error' });
     }
@@ -286,10 +413,17 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
       const { data, error } = await getMaintenanceRequestById(id);
       if (error || !data) return;
       const updated = dbToStore(data);
-      set((state) => ({
-        requests: state.requests.map((r) => (r.id === id ? updated : r)),
-        selectedRequest: state.selectedRequest?.id === id ? updated : state.selectedRequest,
-      }));
+      set((state) => {
+        const existing = state.requests.find((r) => r.id === id);
+        const withVendor = existing?.marketplaceVendor
+          ? { ...updated, marketplaceVendor: existing.marketplaceVendor }
+          : updated;
+        return {
+          requests: state.requests.map((r) => (r.id === id ? withVendor : r)),
+          selectedRequest:
+            state.selectedRequest?.id === id ? withVendor : state.selectedRequest,
+        };
+      });
     } catch (err) {
       console.error('Error refreshing request:', err);
     }

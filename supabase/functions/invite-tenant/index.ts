@@ -12,8 +12,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 
-const SITE_URL = (Deno.env.get('SITE_URL') || 'https://www.aaralink.ca').replace(/\/+$/, '');
-
 function resolveInviteAuthRedirectUrl(redirectBaseUrl?: string | null): string {
   const isAllowedRedirectOrigin = (origin: string): boolean => {
     try {
@@ -154,14 +152,7 @@ async function sendRecoveryEmailWithRedirect(params: {
   }
   const base = supabaseUrl.replace(/\/+$/, '');
   const recoverUrl = `${base}/auth/v1/recover`;
-  const redirectTo = (() => {
-    try {
-      const u = new URL(params.redirectTo);
-      return `${u.origin}/invite-auth`;
-    } catch {
-      return `${SITE_URL}/invite-auth`;
-    }
-  })();
+  const redirectTo = params.redirectTo.trim();
 
   const res = await fetch(recoverUrl, {
     method: 'POST',
@@ -185,24 +176,22 @@ async function sendRecoveryForApplicant(email: string, redirectTo: string): Prom
   return false;
 }
 
-/** GoTrue rejects many `redirect_to` values → falls back to Site URL only. Prefer path-only `…/invite-auth`. */
+/**
+ * Send the complete /invite-auth URL (or deep link) as redirect_to so the auth
+ * email links directly to the password-setup screen.
+ */
 function redirectToForGoTrue(invitePageBase: string, token: string, email: string): string {
-  const raw = invitePageBase.trim().split('#')[0].split('?')[0];
+  const raw = invitePageBase.trim();
   if (raw.startsWith('aralink://')) {
     const sep = raw.includes('?') ? '&' : '?';
     return `${raw}${sep}token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
   }
   const appendQuery = Deno.env.get('INVITE_REDIRECT_APPEND_QUERY') === 'true';
-  try {
-    const u = new URL(raw.includes('://') ? raw : `http://${raw}`);
-    const pathOnly = `${u.origin}/invite-auth`;
-    if (appendQuery) {
-      return `${pathOnly}?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
-    }
-    return pathOnly;
-  } catch {
-    return `${SITE_URL}/invite-auth`;
+  if (appendQuery) {
+    const sep = raw.includes('?') ? '&' : '?';
+    return `${raw}${sep}token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
   }
+  return raw;
 }
 
 serve(async (req) => {

@@ -27,6 +27,7 @@ export default function PropertiesScreen() {
   const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'all' | 'active' | 'inactive'>('all');
 
   // Get user from auth store
   const { user } = useAuthStore();
@@ -60,10 +61,24 @@ export default function PropertiesScreen() {
   const primaryColor = '#137fec';
   const modalBgColor = isDark ? '#1a242d' : '#ffffff';
 
-  // Filter properties based on search and selected filters
+  // Tab counts
+  const tabCounts = useMemo(() => ({
+    all: properties.length,
+    active: properties.filter(p => p.status === 'active').length,
+    inactive: properties.filter(p => p.status !== 'active').length,
+  }), [properties]);
+
+  // Filter properties based on tab, search, and selected filters
   const filteredProperties = useMemo(() => {
     let result = properties;
-    
+
+    // Apply tab filter
+    if (activeTab === 'active') {
+      result = result.filter(p => p.status === 'active');
+    } else if (activeTab === 'inactive') {
+      result = result.filter(p => p.status !== 'active');
+    }
+
     // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -74,14 +89,14 @@ export default function PropertiesScreen() {
         p.state.toLowerCase().includes(query)
       );
     }
-    
+
     // Apply property selection filter
     if (selectedPropertyIds.length > 0) {
       result = result.filter((p) => selectedPropertyIds.includes(p.id));
     }
-    
+
     return result;
-  }, [properties, searchQuery, selectedPropertyIds]);
+  }, [properties, searchQuery, selectedPropertyIds, activeTab]);
 
   // Get full address for display
   const getFullAddress = (property: Property) => {
@@ -370,6 +385,30 @@ export default function PropertiesScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Status Tabs */}
+      <View style={[styles.tabBar, { borderBottomColor: borderColor }]}>
+        {(['all', 'active', 'inactive'] as const).map((tab) => {
+          const label = tab === 'all' ? 'All' : tab === 'active' ? 'Active' : 'Inactive';
+          const isSelected = activeTab === tab;
+          return (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.tab, isSelected && { borderBottomColor: primaryColor }]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <ThemedText style={[styles.tabText, { color: isSelected ? primaryColor : secondaryTextColor }]}>
+                {label}
+              </ThemedText>
+              <View style={[styles.tabCount, { backgroundColor: isSelected ? `${primaryColor}20` : isDark ? '#374151' : '#f3f4f6' }]}>
+                <ThemedText style={[styles.tabCountText, { color: isSelected ? primaryColor : secondaryTextColor }]}>
+                  {tabCounts[tab]}
+                </ThemedText>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {/* Active Filters indicator */}
       {selectedPropertyIds.length > 0 && (
         <View style={styles.activeFiltersContainer}>
@@ -393,8 +432,12 @@ export default function PropertiesScreen() {
               No properties found
             </ThemedText>
             <ThemedText style={[styles.emptyStateSubtext, { color: secondaryTextColor }]}>
-              {searchQuery || selectedPropertyIds.length > 0 
+              {searchQuery || selectedPropertyIds.length > 0
                 ? 'Try adjusting your search or filters'
+                : activeTab === 'inactive'
+                ? 'No inactive properties'
+                : activeTab === 'active'
+                ? 'No active properties'
                 : 'Add your first property to get started'}
             </ThemedText>
           </View>
@@ -713,6 +756,36 @@ const styles = StyleSheet.create({
   applyButtonText: {
     color: 'white',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    gap: 6,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tabCount: {
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  tabCountText: {
+    fontSize: 11,
     fontWeight: '700',
   },
 });

@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.aralink.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -46,8 +47,22 @@
           }
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#4A90E2"
+        }
+      ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Aralink to access your photos so you can upload property images.",
+          "cameraPermission": "Allow Aralink to access your camera so you can take property photos."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
@@ -59,9 +74,9 @@
       "googleClientIdIos": "229949367486-visth6tu5tti0k5su4kvokpjifqee7ur.apps.googleusercontent.com",
       "router": {},
       "eas": {
-        "projectId": "3d4d8605-3dba-4b6a-8102-d1cdacbb7f1b"
+        "projectId": "435fd33d-8d9a-4d2a-bc5e-0a581e85c5a7"
       }
     },
-    "owner": "kshitizbakshis-organization"
+    "owner": "ankitachopra0526"
   }
 }

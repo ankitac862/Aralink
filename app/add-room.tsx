@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
+import { supabase } from '@/lib/supabase';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -148,7 +149,9 @@ export default function AddRoomScreen() {
   };
 
   const handleSave = async () => {
-    if (!formData.name.trim()) {
+    const roomNumber = formData.name.trim();
+
+    if (!roomNumber) {
       Alert.alert('Error', 'Please enter a room number');
       return;
     }
@@ -158,23 +161,20 @@ export default function AddRoomScreen() {
       return;
     }
 
-    // Duplicate room name check
+    // Duplicate check via Supabase (reliable regardless of local store state)
     const property = getPropertyById(propertyId);
-    if (property) {
-      const targetUnit = unitId
-        ? property.units.find(u => u.id === unitId)
-        : property.units[0];
-      if (targetUnit) {
-        const duplicate = targetUnit.subUnits.find(
-          su => su.name.trim().toLowerCase() === formData.name.trim().toLowerCase() && su.id !== roomId
-        );
-        if (duplicate) {
-          Alert.alert(
-            'Duplicate Room',
-            `Room "${formData.name.trim()}" already exists. Please use a different number.`
-          );
-          return;
-        }
+    const resolvedUnitId = unitId || property?.units[0]?.id;
+    if (resolvedUnitId) {
+      let dupQuery = supabase
+        .from('sub_units')
+        .select('id')
+        .eq('unit_id', resolvedUnitId)
+        .ilike('name', roomNumber);
+      if (roomId) dupQuery = dupQuery.neq('id', roomId);
+      const { data: existing } = await dupQuery.maybeSingle();
+      if (existing) {
+        Alert.alert('Duplicate Room', `Room "${roomNumber}" already exists. Please use a different number.`);
+        return;
       }
     }
 
@@ -182,7 +182,7 @@ export default function AddRoomScreen() {
 
     try {
       const roomData = {
-        name: formData.name.trim(),
+        name: roomNumber,
         type: 'bedroom' as const, // Default to bedroom, can be changed later
         rentPrice: formData.rentPrice ? parseFloat(formData.rentPrice) : undefined,
         area: formData.area ? parseInt(formData.area) : undefined,
@@ -260,8 +260,8 @@ export default function AddRoomScreen() {
                 placeholder="e.g., 1, 2, 3"
                 placeholderTextColor={secondaryTextColor}
                 value={formData.name}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
-                keyboardType="default"
+                onChangeText={(text) => setFormData(prev => ({ ...prev, name: text.replace(/[^0-9]/g, '') }))}
+                keyboardType="number-pad"
               />
               <ThemedText style={[styles.inputHint, { color: secondaryTextColor }]}>
                 Use numbers only. Room details can be added in the lease form.

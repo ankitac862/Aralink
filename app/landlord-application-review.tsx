@@ -290,9 +290,9 @@ export default function LandlordApplicationReviewScreen() {
       // documentUrl is usually saved as: "<bucket>/<path>".
       const cleanedRef = decodeURIComponent(documentUrl).replace(/^\/+/, '').trim();
       const parts = cleanedRef.split('/').filter(Boolean);
-      const knownBuckets = ['documents', 'lease-documents', 'application-documents'];
+      const knownBuckets = ['application-documents', 'lease-documents', 'documents'];
       const detectedBucket = parts[0] && knownBuckets.includes(parts[0]) ? parts[0] : null;
-      const primaryBucket = detectedBucket || 'documents';
+      const primaryBucket = detectedBucket || 'application-documents';
       const rawFilePath = detectedBucket ? parts.slice(1).join('/') : cleanedRef;
       const fileName = rawFilePath.includes('/') ? rawFilePath.split('/').pop() || rawFilePath : rawFilePath;
 
@@ -314,7 +314,7 @@ export default function LandlordApplicationReviewScreen() {
       );
 
       // Try fallback buckets: start with primary, then remaining known buckets.
-      const candidateBuckets = [primaryBucket, ...['documents', 'lease-documents', 'application-documents'].filter(b => b && b !== primaryBucket)];
+      const candidateBuckets = [primaryBucket, ...['application-documents', 'lease-documents', 'documents'].filter(b => b && b !== primaryBucket)];
       let lastError: any = null;
       let signedUrl: string | null = null;
 

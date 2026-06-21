@@ -24,6 +24,9 @@ export interface MaintenanceActivity {
   timestamp: string;
   message: string;
   actor: 'tenant' | 'landlord' | 'manager' | 'system';
+  type?: 'comment';
+  commentText?: string;
+  createdByName?: string;
 }
 
 export interface MaintenanceRequestInput {
@@ -529,6 +532,53 @@ export async function submitTenantFeedback(
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to submit feedback',
+    };
+  }
+}
+
+// =====================================================
+// Comments (stored as activity entries with type: 'comment')
+// =====================================================
+
+export async function addComment(
+  requestId: string,
+  text: string,
+  creatorName: string,
+  callerRole?: MaintenanceCreatorRole
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { data: current, error: fetchError } = await supabase
+      .from('maintenance_requests')
+      .select('activity')
+      .eq('id', requestId)
+      .single();
+
+    if (fetchError || !current) return { success: false, error: 'Request not found' };
+
+    const actor = callerRole === 'tenant' ? 'tenant' : callerRole === 'manager' ? 'manager' : 'landlord';
+    const preview = text.length > 60 ? text.slice(0, 60) + '…' : text;
+
+    const newActivity: MaintenanceActivity = {
+      id: `act-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      message: `Comment added: ${preview}`,
+      actor,
+      type: 'comment',
+      commentText: text,
+      createdByName: creatorName,
+    };
+
+    const { error } = await supabase
+      .from('maintenance_requests')
+      .update({ activity: [...(current.activity || []), newActivity] })
+      .eq('id', requestId);
+
+    if (error) return { success: false, error: error.message };
+    return { success: true, error: null };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to add comment',
     };
   }
 }

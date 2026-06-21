@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { IdentifierInput } from '@/components/IdentifierInput';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -35,11 +36,9 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
   });
 
   // Get auth store state and actions
-  const { 
-    signUp, 
-    signInWithGoogle, 
-    signInWithApple, 
-    signInWithFacebook,
+  const {
+    signUp,
+    signInWithGoogle,
     isLoading,
     error,
     clearError,
@@ -112,41 +111,13 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
+    console.log('[GoogleAuth] register: Continue with Google pressed', { selectedUserType });
     clearError();
     const result = await signInWithGoogle(selectedUserType);
-    
+    console.log('[GoogleAuth] register: signInWithGoogle returned', result);
+
     if (!result.success) {
       Alert.alert('Google Sign Up Failed', result.error || 'An error occurred');
-    }
-    // OAuth flow will handle navigation via deep link callback
-  };
-
-  const handleAppleSignUp = async () => {
-    if (!selectedUserType) {
-      Alert.alert('Selection Required', 'Please select your account type first');
-      return;
-    }
-
-    clearError();
-    const result = await signInWithApple(selectedUserType);
-    
-    if (!result.success) {
-      Alert.alert('Apple Sign Up Failed', result.error || 'An error occurred');
-    }
-    // OAuth flow will handle navigation via deep link callback
-  };
-
-  const handleFacebookSignUp = async () => {
-    if (!selectedUserType) {
-      Alert.alert('Selection Required', 'Please select your account type first');
-      return;
-    }
-
-    clearError();
-    const result = await signInWithFacebook(selectedUserType);
-    
-    if (!result.success) {
-      Alert.alert('Facebook Sign Up Failed', result.error || 'An error occurred');
     }
     // OAuth flow will handle navigation via deep link callback
   };
@@ -302,103 +273,102 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
               />
             </View>
 
-            {/* Full Name */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>
-                Full Name
-              </ThemedText>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                    borderColor,
-                    color: textColor,
-                  },
-                ]}
-                placeholder="Enter your full name"
-                placeholderTextColor={placeholderColor}
-                value={formData.name}
-                onChangeText={(value) => setFormData({ ...formData, name: value })}
-              />
-            </View>
+            {selectedUserType && (
+              <>
+                {/* Full Name */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: textColor }]}>
+                    Full Name
+                  </ThemedText>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      {
+                        backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                        borderColor,
+                        color: textColor,
+                      },
+                    ]}
+                    placeholder="Enter your full name"
+                    placeholderTextColor={placeholderColor}
+                    value={formData.name}
+                    onChangeText={(value) => setFormData({ ...formData, name: value })}
+                  />
+                </View>
 
-            {/* Email or Phone */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>
-                Email or Phone Number
-              </ThemedText>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                    borderColor,
-                    color: textColor,
-                  },
-                ]}
-                placeholder="Enter your email or phone number"
-                placeholderTextColor={placeholderColor}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={formData.identifier}
-                onChangeText={(value) => setFormData({ ...formData, identifier: value })}
-              />
-            </View>
+                {/* Email or Phone */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: textColor }]}>
+                    Email or Phone Number
+                  </ThemedText>
+                  <IdentifierInput
+                    isDark={isDark}
+                    borderColor={borderColor}
+                    textColor={textColor}
+                    placeholderColor={placeholderColor}
+                    inputBgColor={isDark ? '#1e293b' : '#F4F6F8'}
+                    placeholder="Enter your email or phone number"
+                    autoCapitalize="none"
+                    value={formData.identifier}
+                    onChangeText={(value) => setFormData({ ...formData, identifier: value })}
+                  />
+                </View>
 
-            {/* Password */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>
-                Password
-              </ThemedText>
-              <View style={styles.passwordWrapper}>
-                <TextInput
+                {/* Password */}
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: textColor }]}>
+                    Password
+                  </ThemedText>
+                  <View style={styles.passwordWrapper}>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        styles.passwordInput,
+                        {
+                          backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                          borderColor,
+                          color: textColor,
+                        },
+                      ]}
+                      placeholder="Create a strong password (min 6 chars)"
+                      placeholderTextColor={placeholderColor}
+                      secureTextEntry={!showPassword}
+                      value={formData.password}
+                      onChangeText={(value) => setFormData({ ...formData, password: value })}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeIcon}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <MaterialCommunityIcons
+                        name={showPassword ? 'eye-off' : 'eye'}
+                        size={20}
+                        color={subtextColor}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Sign Up Button */}
+                <TouchableOpacity
                   style={[
-                    styles.input,
-                    styles.passwordInput,
+                    styles.submitButton,
                     {
-                      backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                      borderColor,
-                      color: textColor,
+                      backgroundColor: primaryColor,
+                      opacity: isLoading ? 0.7 : 1,
                     },
                   ]}
-                  placeholder="Create a strong password (min 6 chars)"
-                  placeholderTextColor={placeholderColor}
-                  secureTextEntry={!showPassword}
-                  value={formData.password}
-                  onChangeText={(value) => setFormData({ ...formData, password: value })}
-                />
-                <TouchableOpacity
-                  style={styles.eyeIcon}
-                  onPress={() => setShowPassword(!showPassword)}
+                  disabled={isLoading}
+                  onPress={handleRegister}
                 >
-                  <MaterialCommunityIcons
-                    name={showPassword ? 'eye-off' : 'eye'}
-                    size={20}
-                    color={subtextColor}
-                  />
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.submitButtonText}>Sign Up</ThemedText>
+                  )}
                 </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Sign Up Button */}
-            <TouchableOpacity
-              style={[
-                styles.submitButton,
-                {
-                  backgroundColor: selectedUserType ? primaryColor : '#cccccc',
-                  opacity: isLoading ? 0.7 : 1,
-                },
-              ]}
-              disabled={!selectedUserType || isLoading}
-              onPress={handleRegister}
-            >
-              {isLoading ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <ThemedText style={styles.submitButtonText}>Sign Up</ThemedText>
-              )}
-            </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* Divider */}
@@ -436,55 +406,6 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
               )}
             </TouchableOpacity>
 
-            {!isAndroid && (
-              <TouchableOpacity
-                style={[
-                  styles.socialButton,
-                  {
-                    borderColor,
-                    backgroundColor: cardBgColor,
-                  },
-                  isLoading && styles.disabledButton,
-                ]}
-                disabled={isLoading}
-                onPress={handleAppleSignUp}
-              >
-                {isLoading ? (
-                  <ActivityIndicator size="small" color={primaryColor} />
-                ) : (
-                  <>
-                    <MaterialCommunityIcons name="apple" size={20} color={textColor} />
-                    <ThemedText style={[styles.socialButtonText, { color: textColor }]}>
-                      Continue with Apple
-                    </ThemedText>
-                  </>
-                )}
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity
-              style={[
-                styles.socialButton,
-                {
-                  borderColor,
-                  backgroundColor: cardBgColor,
-                },
-                isLoading && styles.disabledButton,
-              ]}
-              disabled={isLoading}
-              onPress={handleFacebookSignUp}
-            >
-              {isLoading ? (
-                <ActivityIndicator size="small" color={primaryColor} />
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="facebook" size={20} color="#1877F2" />
-                  <ThemedText style={[styles.socialButtonText, { color: textColor }]}>
-                    Continue with Facebook
-                  </ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
 
           {/* Footer */}
