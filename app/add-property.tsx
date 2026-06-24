@@ -352,20 +352,6 @@ export default function AddPropertyScreen() {
                   </View>
                 </View>
 
-                {/* Unit (Optional) */}
-                <View style={styles.inputGroup}>
-                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                    Unit / Apt / Suite (Optional)
-                  </ThemedText>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                    placeholder="e.g., Apt 4B, Suite 200"
-                    placeholderTextColor={secondaryTextColor}
-                    value={manualAddress.unit}
-                    onChangeText={(text) => handleManualAddressChange('unit', text)}
-                  />
-                </View>
-
                 {/* City */}
                 <View style={styles.inputGroup}>
                   <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
@@ -427,21 +413,6 @@ export default function AddPropertyScreen() {
               </>
             )}
 
-            {/* Address Line 2 (Optional) - Only show if not in manual mode (manual mode has unit field) */}
-            {!manualAddressMode && (
-              <View style={styles.inputGroup}>
-                <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                  Apartment, Suite, Unit, etc. (Optional)
-                </ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="e.g., Apt 4B, Suite 200"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.address2}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, address2: text }))}
-                />
-              </View>
-            )}
 
             {/* Display parsed address fields (read-only feedback) */}
             {(structuredAddress.city || manualAddress.city) && (

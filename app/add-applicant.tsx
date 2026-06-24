@@ -226,12 +226,17 @@ export default function AddApplicantScreen() {
       }
 
       // Show success message based on how applicant was notified
-      const emailFailed = inviteResult.emailQueued === false && !inviteResult.notificationQueued;
-      const successMessage = emailFailed
-        ? 'Applicant has been saved. The invite email could not be sent — please follow up with them directly or resend the invite later.'
-        : inviteResult.notificationQueued
-        ? 'In-app notification sent to applicant. They can now view and apply for this property.'
-        : 'Email invitation sent to applicant. They will receive instructions to apply for this property.';
+      // emailQueued defaults to true unless explicitly false
+      const emailSent = inviteResult.emailQueued !== false;
+      const notifSent = inviteResult.notificationQueued === true;
+      const successMessage =
+        emailSent && notifSent
+          ? 'Invitation sent! The applicant will receive an email and an in-app notification to apply for this property.'
+          : notifSent
+          ? 'Invitation sent! The applicant has received an in-app notification to apply for this property.'
+          : emailSent
+          ? 'Invitation sent! The applicant will receive an email with instructions to apply for this property.'
+          : 'Applicant has been saved. The invite could not be delivered — please follow up with them directly or resend the invite later.';
 
       Alert.alert('Success', successMessage, [
         {
