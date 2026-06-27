@@ -30,7 +30,7 @@ export default function AddPropertyScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { addProperty } = usePropertyStore();
+  const { addProperty, properties } = usePropertyStore();
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
@@ -207,6 +207,28 @@ export default function AddPropertyScreen() {
 
       // Build the full address (streetNumber + streetName)
       const fullStreetAddress = `${streetNum} ${streetName}`.trim();
+
+      // Duplicate check: same address1 + same propertyType is not allowed
+      const normalizedNew = fullStreetAddress.toLowerCase().replace(/\s+/g, ' ');
+      const duplicate = properties.find(
+        (p) =>
+          p.address1.toLowerCase().replace(/\s+/g, ' ') === normalizedNew &&
+          p.propertyType === formData.propertyType
+      );
+      if (duplicate) {
+        const typeLabel: Record<string, string> = {
+          single_unit: 'Single Unit',
+          multi_unit: 'Multi-Unit',
+          commercial: 'Commercial',
+          parking: 'Parking',
+        };
+        Alert.alert(
+          'Duplicate Property',
+          `A ${typeLabel[formData.propertyType] ?? formData.propertyType} property at "${fullStreetAddress}" already exists. You can add the same address with a different rental type (e.g. Parking).`
+        );
+        setIsSubmitting(false);
+        return;
+      }
       const unitValue = manualAddressMode 
         ? manualAddress.unit 
         : (formData.address2 || structuredAddress.unit);
@@ -234,14 +256,19 @@ export default function AddPropertyScreen() {
         utilities: formData.utilities,
       }, user?.id);
 
-      // For multi-unit properties, go straight to the property detail so the landlord
-      // can immediately start adding units — navigating back to the list leaves them
-      // with no obvious next step.
-      if (formData.propertyType === 'multi_unit' && savedPropertyId) {
-        router.replace(`/property-detail?id=${savedPropertyId}`);
-      } else {
-        router.back();
-      }
+      // Always navigate to the newly added property page with a success message.
+      // For multi-unit, this lets the landlord immediately add units.
+      Alert.alert(
+        'Property Added',
+        'Your property has been successfully added.',
+        [
+          {
+            text: 'View Property',
+            onPress: () => router.replace(`/property-detail?id=${savedPropertyId}` as any),
+          },
+        ],
+        { cancelable: false }
+      );
     } catch (error) {
       console.error('Error adding property:', error);
       Alert.alert('Error', 'Failed to add property. Please try again.');

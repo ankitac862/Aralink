@@ -119,11 +119,18 @@ export default function LandlordDashboardScreen() {
     const periodStart = periodMonths[0].start;
     const periodEnd = periodMonths[periodMonths.length - 1].end;
     const periodTxns = rawRentTxns.filter(t => t.date >= periodStart && t.date <= periodEnd);
-    const collected = periodTxns
-      .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
+    const rentTxns = periodTxns.filter(t => t.type === 'income' && t.category === 'rent');
+    const collected = rentTxns
+      .filter(t => t.status === 'paid')
       .reduce((s, t) => s + (t.amount || 0), 0);
-    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * rentPeriod : collected;
-    const overdue = expectedMonthlyRent > 0 ? Math.max(0, total - collected) : 0;
+    // Overdue from explicit overdue-status transactions (always accurate regardless of rent config)
+    const overdueFromTxns = rentTxns
+      .filter(t => t.status === 'overdue')
+      .reduce((s, t) => s + (t.amount || 0), 0);
+    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * rentPeriod : collected + overdueFromTxns;
+    const overdue = expectedMonthlyRent > 0
+      ? Math.max(overdueFromTxns, Math.max(0, total - collected))
+      : overdueFromTxns;
     const advance = expectedMonthlyRent > 0 ? Math.max(0, collected - total) : 0;
     setRentCollection({
       collected,
@@ -215,10 +222,16 @@ export default function LandlordDashboardScreen() {
 
       // Initial calculation for current month (period = 1, months[11])
       const currentTxns = (txns || []).filter(t => t.date >= months[11].start && t.date <= months[11].end);
-      const collected = currentTxns
-        .filter(t => t.type === 'income' && t.category === 'rent' && t.status === 'paid')
+      const currentRentTxns = currentTxns.filter(t => t.type === 'income' && t.category === 'rent');
+      const collected = currentRentTxns
+        .filter(t => t.status === 'paid')
         .reduce((sum, t) => sum + (t.amount || 0), 0);
-      const overdue = monthlyRent > 0 ? Math.max(0, monthlyRent - collected) : 0;
+      const overdueFromTxns = currentRentTxns
+        .filter(t => t.status === 'overdue')
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+      const overdue = monthlyRent > 0
+        ? Math.max(overdueFromTxns, Math.max(0, monthlyRent - collected))
+        : overdueFromTxns;
       const advance = monthlyRent > 0 ? Math.max(0, collected - monthlyRent) : 0;
 
       setStats({
@@ -242,7 +255,7 @@ export default function LandlordDashboardScreen() {
       // OPTIMIZATION 7: Load recent activity asynchronously (don't block main data)
       fetchLandlordNotifications(user.id)
         .then(notifs => {
-          setNotifications(notifs.slice(0, 8));
+          setNotifications(notifs.slice(0, 3));
         })
         .catch(err => console.error('Notifications load error:', err));
 
@@ -346,26 +359,32 @@ export default function LandlordDashboardScreen() {
 
     switch (notif.type) {
       case 'property_added':
-        router.push('/properties' as any);
+        router.push(data.propertyId ? `/property-detail?id=${data.propertyId}` as any : '/properties' as any);
         return;
       case 'payment':
       case 'expense':
-        router.push('/accounting' as any);
+        router.push(data.transactionId ? `/transaction-detail?id=${data.transactionId}` as any : '/accounting' as any);
         return;
       case 'maintenance_request':
       case 'maintenance_status_update':
-        router.push(
-          data.requestId ? `/landlord-maintenance-detail?id=${data.requestId}` as any : '/landlord-maintenance-overview' as any
-        );
+        router.push(data.requestId ? `/landlord-maintenance-detail?id=${data.requestId}` as any : '/landlord-maintenance-overview' as any);
         return;
       case 'application':
-        router.push(
-          data.applicationId ? `/landlord-application-review?id=${data.applicationId}` as any : '/landlord-applications' as any
-        );
+      case 'application_approved':
+      case 'application_rejected':
+        router.push(data.applicationId ? `/landlord-application-review?id=${data.applicationId}` as any : '/landlord-applications' as any);
         return;
       case 'lease':
+      case 'lease_received':
+      case 'lease_rejected':
       case 'arrival_date_change_request':
         router.push(data.leaseId ? `/lease-detail?id=${data.leaseId}` as any : '/leases' as any);
+        return;
+      case 'chat_message':
+        router.push(data.conversationId ? `/chat/${data.conversationId}` as any : '/(tabs)/messages' as any);
+        return;
+      case 'invite':
+        router.push('/tenants' as any);
         return;
       default:
         router.push('/notifications' as any);

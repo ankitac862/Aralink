@@ -287,19 +287,24 @@ export default function LeasesScreen() {
           <ThemedText style={[styles.emptyTitle, { color: textColor }]}>
             No Leases Yet
           </ThemedText>
-          <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
-            Create your first lease by tapping the + button
-          </ThemedText>
-          <TouchableOpacity
-            style={[styles.createButton, { backgroundColor: primaryColor }]}
-            onPress={() => router.push(params.propertyId 
-              ? `/lease-wizard?propertyId=${params.propertyId}` 
-              : '/properties'
-            )}
-          >
-            <MaterialCommunityIcons name="plus" size={20} color="#fff" />
-            <ThemedText style={styles.createButtonText}>Create Lease</ThemedText>
-          </TouchableOpacity>
+          {params.propertyId ? (
+            <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+              Use Generate Lease or Upload Lease from the property page to add a lease.
+            </ThemedText>
+          ) : (
+            <>
+              <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                Create your first lease by tapping the + button
+              </ThemedText>
+              <TouchableOpacity
+                style={[styles.createButton, { backgroundColor: primaryColor }]}
+                onPress={() => router.push('/properties' as any)}
+              >
+                <MaterialCommunityIcons name="plus" size={20} color="#fff" />
+                <ThemedText style={styles.createButtonText}>Create Lease</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ) : (
         <ScrollView 
@@ -436,15 +441,15 @@ export default function LeasesScreen() {
       </ScrollView>
       )}
 
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: primaryColor }]}
-        onPress={() => router.push(params.propertyId 
-          ? `/lease-wizard?propertyId=${params.propertyId}` 
-          : '/lease-wizard'
-        )}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
-      </TouchableOpacity>
+      {/* Floating Action Button — hidden when accessed from a property (use property page instead) */}
+      {!params.propertyId && (
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: primaryColor }]}
+          onPress={() => router.push('/lease-wizard' as any)}
+        >
+          <MaterialCommunityIcons name="plus" size={28} color="white" />
+        </TouchableOpacity>
+      )}
     </ThemedView>
   );
 }
