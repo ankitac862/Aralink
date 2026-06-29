@@ -55,6 +55,7 @@ export default function AddApplicantScreen() {
   const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
   const [showUnitDropdown, setShowUnitDropdown] = useState(false);
   const [showSubUnitDropdown, setShowSubUnitDropdown] = useState(false);
+  const [propertySearch, setPropertySearch] = useState('');
 
   // Load properties from Supabase on mount
   useEffect(() => {
@@ -225,12 +226,17 @@ export default function AddApplicantScreen() {
       }
 
       // Show success message based on how applicant was notified
-      const emailFailed = inviteResult.emailQueued === false && !inviteResult.notificationQueued;
-      const successMessage = emailFailed
-        ? 'Applicant has been saved. The invite email could not be sent — please follow up with them directly or resend the invite later.'
-        : inviteResult.notificationQueued
-        ? 'In-app notification sent to applicant. They can now view and apply for this property.'
-        : 'Email invitation sent to applicant. They will receive instructions to apply for this property.';
+      // emailQueued defaults to true unless explicitly false
+      const emailSent = inviteResult.emailQueued !== false;
+      const notifSent = inviteResult.notificationQueued === true;
+      const successMessage =
+        emailSent && notifSent
+          ? 'Invitation sent! The applicant will receive an email and an in-app notification to apply for this property.'
+          : notifSent
+          ? 'Invitation sent! The applicant has received an in-app notification to apply for this property.'
+          : emailSent
+          ? 'Invitation sent! The applicant will receive an email with instructions to apply for this property.'
+          : 'Applicant has been saved. The invite could not be delivered — please follow up with them directly or resend the invite later.';
 
       Alert.alert('Success', successMessage, [
         {
@@ -361,34 +367,55 @@ export default function AddApplicantScreen() {
 
               {showPropertyDropdown && (
                 <View style={[styles.dropdownList, { backgroundColor: cardBgColor, borderColor }]}>
-                  {propertyOptions.length === 0 ? (
-                    <View style={[styles.dropdownItem, { borderBottomColor: borderColor }]}>
-                      <ThemedText style={[styles.dropdownItemText, { color: secondaryTextColor }]}>
-                        No properties available
-                      </ThemedText>
-                      <ThemedText style={[styles.dropdownItemSubtext, { color: secondaryTextColor, fontSize: 12 }]}>
-                        Add a property first from the Properties tab
-                      </ThemedText>
-                    </View>
-                  ) : (
-                    propertyOptions.map((option) => (
-                      <TouchableOpacity
-                        key={option.id}
-                        style={[styles.dropdownItem, { borderBottomColor: borderColor }]}
-                        onPress={() => handlePropertyChange(option.id)}>
-                        <View style={styles.dropdownItemContent}>
-                          <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
-                            {option.label}
-                          </ThemedText>
-                          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
-                            <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
-                              {option.type === 'single_unit' ? 'Single' : 'Multi'}
-                            </ThemedText>
-                          </View>
-                        </View>
+                  {/* Search input */}
+                  <View style={[styles.dropdownSearch, { borderBottomColor: borderColor }]}>
+                    <MaterialCommunityIcons name="magnify" size={18} color={secondaryTextColor} />
+                    <TextInput
+                      style={[styles.dropdownSearchInput, { color: textColor }]}
+                      placeholder="Search properties..."
+                      placeholderTextColor={secondaryTextColor}
+                      value={propertySearch}
+                      onChangeText={setPropertySearch}
+                      autoCorrect={false}
+                    />
+                    {propertySearch.length > 0 && (
+                      <TouchableOpacity onPress={() => setPropertySearch('')}>
+                        <MaterialCommunityIcons name="close-circle" size={16} color={secondaryTextColor} />
                       </TouchableOpacity>
-                    ))
-                  )}
+                    )}
+                  </View>
+                  <ScrollView style={{ maxHeight: 200 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator>
+                    {propertyOptions.length === 0 ? (
+                      <View style={[styles.dropdownItem, { borderBottomColor: borderColor }]}>
+                        <ThemedText style={[styles.dropdownItemText, { color: secondaryTextColor }]}>
+                          No properties available
+                        </ThemedText>
+                        <ThemedText style={[styles.dropdownItemSubtext, { color: secondaryTextColor, fontSize: 12 }]}>
+                          Add a property first from the Properties tab
+                        </ThemedText>
+                      </View>
+                    ) : (
+                      propertyOptions
+                        .filter(o => o.label.toLowerCase().includes(propertySearch.toLowerCase()))
+                        .map((option) => (
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[styles.dropdownItem, { borderBottomColor: borderColor }]}
+                            onPress={() => { handlePropertyChange(option.id); setPropertySearch(''); }}>
+                            <View style={styles.dropdownItemContent}>
+                              <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
+                                {option.label}
+                              </ThemedText>
+                              <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
+                                <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
+                                  {option.type === 'single_unit' ? 'Single' : 'Multi'}
+                                </ThemedText>
+                              </View>
+                            </View>
+                          </TouchableOpacity>
+                        ))
+                    )}
+                  </ScrollView>
                 </View>
               )}
             </View>
@@ -603,7 +630,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     marginTop: 8,
-    maxHeight: 200,
+  },
+  dropdownSearch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  dropdownSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 0,
   },
   dropdownItem: {
     padding: 12,

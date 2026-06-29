@@ -55,7 +55,7 @@ export default function AccountingScreen() {
   const { properties } = usePropertyStore();
 
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
-  const [chartPeriod, setChartPeriod] = useState<6 | 12>(12);
+  const [chartPeriod, setChartPeriod] = useState<1 | 3 | 6 | 12>(6);
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory>('all');
 
   const currentCategories = transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -150,16 +150,27 @@ export default function AccountingScreen() {
   }, [] as TransactionSection[]);
 
 
-  // Income vs Expense chart data for selected period (6 or 12 months)
+  // Income vs Expense chart data for selected period (1, 3, 6 or 12 months)
   const chartData = useMemo(() => {
     const months: { label: string; start: string; end: string }[] = [];
-    const d = new Date();
-    d.setMonth(d.getMonth() - (chartPeriod - 1));
-    for (let i = 0; i < chartPeriod; i++) {
-      const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
-      months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
-      d.setMonth(d.getMonth() + 1);
+    const now = new Date();
+    if (chartPeriod === 12) {
+      // Full calendar year: Jan–Dec of current year
+      const year = now.getFullYear();
+      for (let m = 0; m < 12; m++) {
+        const start = new Date(year, m, 1).toISOString().split('T')[0];
+        const end = new Date(year, m + 1, 0).toISOString().split('T')[0];
+        months.push({ label: new Date(year, m).toLocaleDateString('en-US', { month: 'short' }), start, end });
+      }
+    } else {
+      const d = new Date();
+      d.setMonth(d.getMonth() - (chartPeriod - 1));
+      for (let i = 0; i < chartPeriod; i++) {
+        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
+        d.setMonth(d.getMonth() + 1);
+      }
     }
     return months.map(({ label, start, end }) => {
       const bucket = transactions.filter(t => t.date >= start && t.date <= end);
@@ -409,11 +420,11 @@ export default function AccountingScreen() {
                 Income vs Expense
               </ThemedText>
               <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor }]}>
-                Last {chartPeriod} months
+                {chartPeriod === 1 ? 'This month' : chartPeriod === 12 ? `Jan – Dec ${new Date().getFullYear()}` : `Last ${chartPeriod} months`}
               </ThemedText>
             </View>
             <View style={[styles.periodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
-              {([6, 12] as const).map(p => (
+              {([1, 3, 6, 12] as const).map(p => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.periodBtn, chartPeriod === p && { backgroundColor: primaryColor }]}
@@ -1054,16 +1065,16 @@ const styles = StyleSheet.create({
   periodToggle: {
     flexDirection: 'row',
     borderRadius: 8,
-    padding: 3,
-    gap: 3,
+    padding: 2,
+    gap: 2,
   },
   periodBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   periodBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   // Y-axis

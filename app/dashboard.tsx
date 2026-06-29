@@ -144,20 +144,6 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Stats Card */}
-        {isLandlordOrManager && (
-          <View style={[styles.statsCard, { backgroundColor: cardBgColor }]}>
-            {loading ? (
-              <ActivityIndicator size="small" color={primaryColor} />
-            ) : (
-              <ThemedText style={[styles.statsText, { color: textColor }]}>
-                {metrics.activeLeases} Active Lease{metrics.activeLeases !== 1 ? 's' : ''} 
-                <ThemedText style={{ color: borderColor }}>  •  </ThemedText>
-                {metrics.occupancyPercentage}% Occupancy ({metrics.rentedUnits}/{metrics.totalRentableUnits})
-              </ThemedText>
-            )}
-          </View>
-        )}
 
         {/* Scrollable Cards Carousel - Rent Collection & Analytics */}
         {isLandlordOrManager && (
