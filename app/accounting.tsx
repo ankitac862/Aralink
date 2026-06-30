@@ -1,9 +1,11 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  AppStateStatus,
   Modal,
   Platform,
   RefreshControl,
@@ -105,6 +107,19 @@ export default function AccountingScreen() {
       loadTransactions();
     }, [user])
   );
+
+  // Reload when app returns from background (phone sleep / switching apps)
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextState;
+      if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+        if (user) loadTransactions();
+      }
+    });
+    return () => subscription.remove();
+  }, [user]);
 
   const loadTransactions = async (isRefresh = false) => {
     if (!user) return;

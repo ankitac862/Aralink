@@ -2,6 +2,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import {
   Alert,
+  AppState,
+  AppStateStatus,
   FlatList,
   ListRenderItem,
   ScrollView,
@@ -11,7 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -91,6 +93,23 @@ export default function TenantDashboardScreen() {
       }
     }, [user])
   );
+
+  // Reload data when app returns from background (phone sleep / switching apps)
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextState;
+      if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+        if (user?.id) {
+          loadNotifications();
+          loadTenantData();
+          loadPendingLeases();
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, [user?.id]);
 
   const loadPendingLeases = async () => {
     if (!user?.id) return;

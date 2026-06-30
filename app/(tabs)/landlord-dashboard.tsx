@@ -3,6 +3,8 @@ import { Href, useRouter } from 'expo-router';
 import { useState, useRef, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
+  AppState,
+  AppStateStatus,
   ActivityIndicator,
   Alert,
   Dimensions,
@@ -126,6 +128,24 @@ export default function LandlordDashboardScreen() {
       }
     }, [user?.id])
   );
+
+  // Reload data when app comes back to foreground (e.g. after phone sleep or switching apps)
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      const prev = appStateRef.current;
+      appStateRef.current = nextState;
+      // fired when returning from background or inactive (phone locked)
+      if ((prev === 'background' || prev === 'inactive') && nextState === 'active') {
+        if (user?.id) {
+          loadDashboardDataInBackground();
+        }
+      }
+    });
+
+    return () => subscription.remove();
+  }, [user?.id]);
 
   // Recalculate rent collection client-side when the period toggle changes
   useEffect(() => {
