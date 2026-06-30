@@ -14,16 +14,18 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { inviteTenantToProperty, uploadImage, STORAGE_BUCKETS, getApplicationById } from '@/lib/supabase';
+import { inviteTenantToProperty, uploadImage, STORAGE_BUCKETS, getApplicationById, supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore, Property, Unit, SubUnit } from '@/store/propertyStore';
 import { useTenantStore } from '@/store/tenantStore';
+import { fmtDateInput } from '@/lib/dateUtils';
 
 export default function AddTenantScreen() {
   const colorScheme = useColorScheme();
@@ -60,12 +62,16 @@ export default function AddTenantScreen() {
     endDate: '',
     rentAmount: '',
     photo: '',
+    idProof1: '',
+    idProof2: '',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
   const [showUnitDropdown, setShowUnitDropdown] = useState(false);
   const [showSubUnitDropdown, setShowSubUnitDropdown] = useState(false);
+  const [showStartDatePicker, setShowStartDatePicker] = useState(false);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
 
   // Load properties from Supabase on mount
   useEffect(() => {
@@ -151,24 +157,47 @@ export default function AddTenantScreen() {
     }
   };
 
-  // Populate form when editing
+  // Populate form when editing (including sub_unit_id from tenant_property_links)
   useEffect(() => {
-    if (existingTenant) {
-      setFormData({
-        firstName: existingTenant.firstName,
-        lastName: existingTenant.lastName,
-        email: existingTenant.email,
-        phone: existingTenant.phone,
-        propertyId: existingTenant.propertyId,
-        unitId: existingTenant.unitId || '',
-        subUnitId: '', // TODO: Add subUnitId to tenant if needed
-        startDate: existingTenant.startDate || '',
-        endDate: existingTenant.endDate || '',
-        rentAmount: existingTenant.rentAmount?.toString() || '',
-        photo: existingTenant.photo || '',
+    if (!existingTenant) return;
+
+    const base = {
+      firstName: existingTenant.firstName,
+      lastName: existingTenant.lastName,
+      email: existingTenant.email,
+      phone: existingTenant.phone,
+      propertyId: existingTenant.propertyId,
+      unitId: existingTenant.unitId || '',
+      subUnitId: '',
+      startDate: existingTenant.startDate || '',
+      endDate: existingTenant.endDate || '',
+      rentAmount: existingTenant.rentAmount?.toString() || '',
+      photo: existingTenant.photo || '',
+      idProof1: existingTenant.idProof1 || '',
+      idProof2: existingTenant.idProof2 || '',
+    };
+    setFormData(base);
+
+    // Fetch unit_id + sub_unit_id from tenant_property_links
+    // (unit_id may be null on the tenants row for by-room properties)
+    supabase
+      .from('tenant_property_links')
+      .select('unit_id, sub_unit_id')
+      .eq('tenant_id', existingTenant.id)
+      .eq('property_id', existingTenant.propertyId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data) return;
+        setFormData(prev => ({
+          ...prev,
+          unitId: data.unit_id || prev.unitId || '',
+          subUnitId: data.sub_unit_id || '',
+        }));
       });
-    }
-  }, [existingTenant]);
+  }, [existingTenant?.id]);
 
   // Get selected property
   const selectedProperty = useMemo(() => 
@@ -238,9 +267,7 @@ export default function AddTenantScreen() {
     return null;
   }, [selectedProperty, selectedUnit, selectedSubUnit]);
 
-  // Format date as MM/DD/YYYY
-  const formatLeaseDate = (d: Date) =>
-    `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+  const formatLeaseDate = (d: Date) => fmtDateInput(d);
 
   // Default lease: start today, end 1 year from today
   const defaultLeaseDates = () => {
@@ -333,6 +360,23 @@ export default function AddTenantScreen() {
     }
   };
 
+  const pickIdProof = async (slot: 1 | 2) => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your photo library.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const key = slot === 1 ? 'idProof1' : 'idProof2';
+      setFormData(prev => ({ ...prev, [key]: result.assets[0].uri }));
+    }
+  };
+
   const handleSubmit = async () => {
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
       Alert.alert('Error', 'Please enter first and last name');
@@ -366,16 +410,24 @@ export default function AddTenantScreen() {
       let photoUrl = formData.photo;
       if (formData.photo && !formData.photo.startsWith('http') && user?.id) {
         const folder = `tenants/${user.id}`;
-        const result = await uploadImage(
-          formData.photo, 
-          STORAGE_BUCKETS.TENANT_PHOTOS, 
-          folder
-        );
+        const result = await uploadImage(formData.photo, STORAGE_BUCKETS.TENANT_PHOTOS, folder);
         if (result.success && result.url) {
           photoUrl = result.url;
         } else {
           console.warn('Image upload failed:', result.error);
         }
+      }
+
+      // Upload ID proofs to Supabase Storage if they are local files
+      let idProof1Url = formData.idProof1;
+      if (formData.idProof1 && !formData.idProof1.startsWith('http') && user?.id) {
+        const result = await uploadImage(formData.idProof1, STORAGE_BUCKETS.TENANT_PHOTOS, `tenants/${user.id}/id-proofs`);
+        if (result.success && result.url) idProof1Url = result.url;
+      }
+      let idProof2Url = formData.idProof2;
+      if (formData.idProof2 && !formData.idProof2.startsWith('http') && user?.id) {
+        const result = await uploadImage(formData.idProof2, STORAGE_BUCKETS.TENANT_PHOTOS, `tenants/${user.id}/id-proofs`);
+        if (result.success && result.url) idProof2Url = result.url;
       }
 
       // Build unit name for display
@@ -400,6 +452,8 @@ export default function AddTenantScreen() {
           endDate: formData.endDate || undefined,
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
           photo: photoUrl || undefined,
+          idProof1: idProof1Url || undefined,
+          idProof2: idProof2Url || undefined,
         });
       } else {
         if (!user?.id) {
@@ -522,6 +576,8 @@ export default function AddTenantScreen() {
           endDate: formData.endDate || undefined,
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
           photo: photoUrl || undefined,
+          idProof1: idProof1Url || undefined,
+          idProof2: idProof2Url || undefined,
         }, user?.id);
 
         // Force refresh property store to show new tenant immediately
@@ -604,6 +660,41 @@ export default function AddTenantScreen() {
             <ThemedText style={[styles.photoLabel, { color: secondaryTextColor }]}>
               Upload Photo (Optional)
             </ThemedText>
+          </View>
+
+          {/* ID Proofs */}
+          <View style={[styles.formSection, { marginTop: 0 }]}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>ID Proofs (Optional)</ThemedText>
+            <View style={styles.row}>
+              {/* ID Proof 1 */}
+              <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
+                <TouchableOpacity
+                  onPress={() => pickIdProof(1)}
+                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#374151' : '#e5e7eb', borderColor }]}
+                >
+                  {formData.idProof1 ? (
+                    <Image source={{ uri: formData.idProof1 }} style={styles.idProofImage} />
+                  ) : (
+                    <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                  )}
+                </TouchableOpacity>
+                <ThemedText style={[styles.photoLabel, { color: secondaryTextColor, marginTop: 4 }]}>ID Proof 1</ThemedText>
+              </View>
+              {/* ID Proof 2 */}
+              <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
+                <TouchableOpacity
+                  onPress={() => pickIdProof(2)}
+                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#374151' : '#e5e7eb', borderColor }]}
+                >
+                  {formData.idProof2 ? (
+                    <Image source={{ uri: formData.idProof2 }} style={styles.idProofImage} />
+                  ) : (
+                    <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                  )}
+                </TouchableOpacity>
+                <ThemedText style={[styles.photoLabel, { color: secondaryTextColor, marginTop: 4 }]}>ID Proof 2</ThemedText>
+              </View>
+            </View>
           </View>
 
           {/* Form Fields */}
@@ -852,29 +943,68 @@ export default function AddTenantScreen() {
             {/* Separator */}
             <View style={[styles.separator, { backgroundColor: borderColor }]} />
 
-            {/* Start Date and End Date */}
+            {/* Start Date and End Date — calendar pickers */}
             <View style={styles.row}>
               <View style={[styles.inputGroup, { flex: 1 }]}>
                 <ThemedText style={[styles.label, { color: textColor }]}>Lease Start</ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.startDate}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, startDate: text }))}
-                />
+                <TouchableOpacity
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, justifyContent: 'center' }]}
+                  onPress={() => { setShowEndDatePicker(false); setShowStartDatePicker(true); }}
+                >
+                  <ThemedText style={{ color: formData.startDate ? textColor : secondaryTextColor }}>
+                    {formData.startDate || 'MM/DD/YYYY'}
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
               <View style={[styles.inputGroup, { flex: 1 }]}>
                 <ThemedText style={[styles.label, { color: textColor }]}>Lease End</ThemedText>
-                <TextInput
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="MM/DD/YYYY"
-                  placeholderTextColor={secondaryTextColor}
-                  value={formData.endDate}
-                  onChangeText={(text) => setFormData(prev => ({ ...prev, endDate: text }))}
-                />
+                <TouchableOpacity
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, justifyContent: 'center' }]}
+                  onPress={() => { setShowStartDatePicker(false); setShowEndDatePicker(true); }}
+                >
+                  <ThemedText style={{ color: formData.endDate ? textColor : secondaryTextColor }}>
+                    {formData.endDate || 'MM/DD/YYYY'}
+                  </ThemedText>
+                </TouchableOpacity>
               </View>
             </View>
+
+            {showStartDatePicker && (
+              <DateTimePicker
+                value={formData.startDate ? new Date(formData.startDate) : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowStartDatePicker(false);
+                  if (date) setFormData(prev => ({ ...prev, startDate: formatLeaseDate(date) }));
+                }}
+              />
+            )}
+            {showStartDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
+                onPress={() => setShowStartDatePicker(false)}>
+                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+            {showEndDatePicker && (
+              <DateTimePicker
+                value={formData.endDate ? new Date(formData.endDate) : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowEndDatePicker(false);
+                  if (date) setFormData(prev => ({ ...prev, endDate: formatLeaseDate(date) }));
+                }}
+              />
+            )}
+            {showEndDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
+                onPress={() => setShowEndDatePicker(false)}>
+                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
 
             {/* Rent Amount */}
             <View style={styles.inputGroup}>
@@ -987,6 +1117,26 @@ const styles = StyleSheet.create({
   photoLabel: {
     fontSize: 14,
     textAlign: 'center',
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  idProofContainer: {
+    width: 120,
+    height: 90,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  idProofImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   formSection: {
     gap: 16,

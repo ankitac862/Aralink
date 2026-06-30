@@ -23,6 +23,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { useAuth } from '@/hooks/use-auth';
+import { fmtDateTime } from '@/lib/dateUtils';
 import { usePropertyStore } from '@/store/propertyStore';
 import PropertyAddressSelector, { SelectedPropertyData } from '@/components/PropertyAddressSelector';
 import { FormInput } from '@/components/maintenance/FormInput';
@@ -37,6 +38,8 @@ const categoryOptions = [
   { label: 'Electrical', value: 'electrical', icon: 'flash' },
   { label: 'HVAC', value: 'hvac', icon: 'air-conditioner' },
   { label: 'Appliance', value: 'appliance', icon: 'fridge' },
+  { label: 'WiFi / Internet', value: 'wifi', icon: 'wifi' },
+  { label: 'Utilities', value: 'utilities', icon: 'lightning-bolt' },
   { label: 'General Repair', value: 'general', icon: 'wrench' },
   { label: 'Others', value: 'others', icon: 'dots-horizontal' },
 ];
@@ -265,7 +268,7 @@ export default function LandlordMaintenanceCreateScreen() {
               onPress={() => setShowDatePicker(true)}>
               <MaterialCommunityIcons name="calendar-clock" size={20} color="#2563eb" />
               <Text style={styles.availabilityText}>
-                {availabilityDate.toLocaleString()}
+                {fmtDateTime(availabilityDate.toISOString())}
               </Text>
             </TouchableOpacity>
             {showDatePicker && (

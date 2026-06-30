@@ -18,6 +18,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { activateScheduledTenancyForUser, fetchTenantNotifications, fetchLeasesByTenant, DbLease } from '@/lib/supabase';
+import { fmtDateTime } from '@/lib/dateUtils';
 import { getActivityIconInfo } from '@/utils/activityIcon';
 
 interface Announcement {
@@ -325,7 +326,7 @@ export default function TenantDashboardScreen() {
       icon: getActivityIconInfo(notif.type).icon,
       title: notif.title,
       description: notif.message,
-      date: new Date(notif.created_at).toLocaleDateString() + ' ' + new Date(notif.created_at).toLocaleTimeString(),
+      date: fmtDateTime(notif.created_at),
       type: notif.type,
       data: notif.data, // Store the full notification data
       is_read: notif.is_read,

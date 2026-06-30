@@ -18,6 +18,8 @@ export interface Tenant {
   unitId?: string;
   unitName?: string;
   photo?: string;
+  idProof1?: string;
+  idProof2?: string;
   startDate?: string;
   endDate?: string;
   rentAmount?: number;
@@ -61,6 +63,8 @@ const dbToLocalTenant = (dbTenant: DbTenant): Tenant => ({
   unitId: dbTenant.unit_id,
   unitName: dbTenant.unit_name,
   photo: dbTenant.photo,
+  idProof1: dbTenant.id_proof_1,
+  idProof2: dbTenant.id_proof_2,
   startDate: dbTenant.start_date,
   endDate: dbTenant.end_date,
   rentAmount: dbTenant.rent_amount,
@@ -80,6 +84,8 @@ const localToDbTenant = (tenant: Partial<Tenant>, userId: string): Partial<DbTen
   unit_id: tenant.unitId,
   unit_name: tenant.unitName,
   photo: tenant.photo,
+  id_proof_1: tenant.idProof1,
+  id_proof_2: tenant.idProof2,
   start_date: tenant.startDate,
   end_date: tenant.endDate,
   rent_amount: tenant.rentAmount,

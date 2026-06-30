@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getApplicationById, approveApplication, rejectApplication, approveMoveInDate, supabase, DbLease } from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 export default function LandlordApplicationReviewScreen() {
   const colorScheme = useColorScheme();
@@ -403,7 +404,7 @@ export default function LandlordApplicationReviewScreen() {
                 Applied for: {application.property_address}
               </ThemedText>
               <ThemedText style={[styles.applicantDate, { color: textSecondaryColor }]}>
-                Submitted: {new Date(application.submitted_at || application.created_at).toLocaleDateString()}
+                Submitted: {fmtDate(application.submitted_at || application.created_at)}
               </ThemedText>
               <ThemedText style={[styles.applicantEmail, { color: textSecondaryColor }]}>
                 {application.applicant_email}

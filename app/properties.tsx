@@ -20,6 +20,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore, Property } from '@/store/propertyStore';
+import { useTenantStore } from '@/store/tenantStore';
 
 export default function PropertiesScreen() {
   const colorScheme = useColorScheme();
@@ -120,6 +121,7 @@ export default function PropertiesScreen() {
     const statusColor = isActive ? successColor : dangerColor;
     const { totalUnits, occupiedUnits, roomCount } = getOccupancyStats(property);
     const [togglingStatus, setTogglingStatus] = useState(false);
+    const { getTenantsByProperty } = useTenantStore();
 
     const handleToggleStatus = () => {
       Alert.alert(
@@ -143,10 +145,31 @@ export default function PropertiesScreen() {
       );
     };
 
+    const handleTenantDetail = () => {
+      const tenants = getTenantsByProperty(property.id);
+      if (tenants.length === 0) {
+        Alert.alert('No Tenant', 'No tenant is available for this property.');
+        return;
+      }
+      if (tenants.length === 1) {
+        router.push(`/tenant-detail?id=${tenants[0].id}` as any);
+        return;
+      }
+      router.push('/tenants' as any);
+    };
+
     const showRentAmount =
       property.propertyType !== 'multi_unit' &&
       property.rentCompleteProperty &&
       property.rentAmount;
+
+    const hasRooms =
+      property.propertyType === 'single_unit' &&
+      (property.units[0]?.subUnits?.length ?? 0) > 0;
+
+    const hasUnits =
+      property.propertyType === 'multi_unit' ||
+      property.propertyType === 'commercial';
 
     return (
       <TouchableOpacity
@@ -223,6 +246,32 @@ export default function PropertiesScreen() {
                property.propertyType === 'multi_unit' ? 'Multi-Unit' :
                property.propertyType === 'commercial' ? 'Commercial' : 'Parking'}
             </ThemedText>
+          </View>
+
+          {/* Quick-link buttons */}
+          <View style={[styles.quickActions, { borderTopColor: borderColor }]}>
+            <TouchableOpacity style={[styles.quickActionBtn, { backgroundColor: `${primaryColor}15` }]} onPress={handleTenantDetail}>
+              <MaterialCommunityIcons name="account-details" size={14} color={primaryColor} />
+              <ThemedText style={[styles.quickActionText, { color: primaryColor }]}>Tenant Detail</ThemedText>
+            </TouchableOpacity>
+
+            {hasUnits && (
+              <TouchableOpacity
+                style={[styles.quickActionBtn, { backgroundColor: `${primaryColor}15` }]}
+                onPress={() => router.push(`/property-detail?id=${property.id}` as any)}>
+                <MaterialCommunityIcons name="office-building-outline" size={14} color={primaryColor} />
+                <ThemedText style={[styles.quickActionText, { color: primaryColor }]}>Units</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            {hasRooms && (
+              <TouchableOpacity
+                style={[styles.quickActionBtn, { backgroundColor: `${primaryColor}15` }]}
+                onPress={() => router.push(`/property-detail?id=${property.id}` as any)}>
+                <MaterialCommunityIcons name="door-open" size={14} color={primaryColor} />
+                <ThemedText style={[styles.quickActionText, { color: primaryColor }]}>Rooms</ThemedText>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </TouchableOpacity>
@@ -757,6 +806,26 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 15,
     fontWeight: '700',
+  },
+  quickActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+  },
+  quickActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  quickActionText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   tabBar: {
     flexDirection: 'row',

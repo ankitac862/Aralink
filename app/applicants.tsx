@@ -10,6 +10,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { fetchLandlordApplications } from '@/lib/supabase';
+import { fmtDate } from '@/lib/dateUtils';
 
 interface ApplicantItem {
   id: string;
@@ -88,7 +89,7 @@ export default function ApplicantsScreen() {
         {item.status.replace('_', ' ').toUpperCase()}
       </ThemedText>
       <ThemedText style={[styles.text, { fontSize: 12, color: secondaryTextColor }]}>
-        Applied: {new Date(item.submitted_at).toLocaleDateString()}
+        Applied: {fmtDate(item.submitted_at)}
       </ThemedText>
     </TouchableOpacity>
   );

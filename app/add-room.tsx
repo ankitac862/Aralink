@@ -22,6 +22,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
 import { supabase } from '@/lib/supabase';
+import { fmtDate } from '@/lib/dateUtils';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -45,7 +46,7 @@ export default function AddRoomScreen() {
     roomId?: string;
   }>();
   
-  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
+  const { addSubUnit, addRoomToSingleUnit, updateSubUnit, deleteSubUnit, getPropertyById, loadFromSupabase } = usePropertyStore();
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
@@ -72,10 +73,7 @@ export default function AddRoomScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const formatDate = (iso: string) => {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString();
-  };
+  const formatDate = (iso: string) => fmtDate(iso, '');
 
   useEffect(() => {
     // If roomId is provided, we're editing an existing room
@@ -216,6 +214,29 @@ export default function AddRoomScreen() {
     }
   };
 
+  const handleDeleteRoom = () => {
+    if (!propertyId || !unitId || !roomId) return;
+    Alert.alert(
+      'Delete Room',
+      'Are you sure you want to delete this room? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteSubUnit(propertyId, unitId, roomId);
+              router.back();
+            } catch {
+              Alert.alert('Error', 'Failed to delete room. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
@@ -230,13 +251,20 @@ export default function AddRoomScreen() {
         <ThemedText style={[styles.headerTitle, { color: textColor }]}>
           {isEditing ? 'Edit Room' : 'Add New Room'}
         </ThemedText>
-        <TouchableOpacity
-          style={[styles.saveHeaderButton, { backgroundColor: primaryColor }]}
-          onPress={handleSave}
-          disabled={isSubmitting}
-        >
-          <ThemedText style={styles.saveHeaderButtonText}>Save</ThemedText>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isEditing && (
+            <TouchableOpacity onPress={handleDeleteRoom} style={{ padding: 4 }}>
+              <MaterialCommunityIcons name="trash-can-outline" size={22} color="#ef4444" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.saveHeaderButton, { backgroundColor: primaryColor }]}
+            onPress={handleSave}
+            disabled={isSubmitting}
+          >
+            <ThemedText style={styles.saveHeaderButtonText}>Save</ThemedText>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <KeyboardAvoidingView

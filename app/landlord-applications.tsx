@@ -19,6 +19,7 @@ import {
   approveMoveInDate,
 } from '@/lib/supabase';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 interface Application {
   id: string;
@@ -249,11 +250,7 @@ export default function LandlordApplicationsScreen() {
     }
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
+  const formatDate = (dateString?: string) => fmtDate(dateString);
 
   const renderApplication = ({ item }: { item: Application }) => {
     const al = applicationLeases[item.id];

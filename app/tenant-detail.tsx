@@ -6,13 +6,15 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -21,6 +23,7 @@ import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { DbTransaction, fetchTenantTransactions, supabase } from '@/lib/supabase';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
+import { fmtShortDate, fmtDate } from '@/lib/dateUtils';
 
 interface CoTenant {
   id: string;
@@ -36,54 +39,26 @@ const PAYMENT_CATEGORIES = [
   { key: 'other', label: 'Other', color: '#a855f7', active: false },
 ];
 
-const CircularProgress = ({ percentage, color, size = 80 }: { percentage: number; color: string; size?: number }) => {
-  const radius = (size - 8) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDasharray = circumference;
-  const strokeDashoffset = circumference - (percentage / 100) * circumference;
-
-  return (
-    <View style={{ width: size, height: size }}>
-      <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke="#e2e8f0"
-          strokeWidth="4"
-          fill="transparent"
-        />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={color}
-          strokeWidth="4"
-          fill="transparent"
-          strokeDasharray={strokeDasharray}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-        />
-      </Svg>
-      <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ThemedText style={{ fontSize: 18, fontWeight: '700' }}>{percentage}%</ThemedText>
-      </View>
-    </View>
-  );
-};
-
 export default function TenantDetailScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getTenantById, deleteTenant } = useTenantStore();
-  const { getPropertyById } = usePropertyStore();
-  
+  const { getPropertyById, getUnitById } = usePropertyStore();
+
   const [selectedCategory, setSelectedCategory] = useState('rent');
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
   const [coTenants, setCoTenants] = useState<CoTenant[]>([]);
+  const [linkData, setLinkData] = useState<{ unit_id?: string | null; sub_unit_id?: string | null } | null>(null);
+  const [paymentPeriod, setPaymentPeriod] = useState<1 | 3 | 6 | 'cr'>(1);
+  const [paymentCustomRange, setPaymentCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [showCRModal, setShowCRModal] = useState(false);
+  const [crDraftStart, setCrDraftStart] = useState('');
+  const [crDraftEnd, setCrDraftEnd] = useState('');
+  const [showCRStartPicker, setShowCRStartPicker] = useState(false);
+  const [showCREndPicker, setShowCREndPicker] = useState(false);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -159,9 +134,38 @@ export default function TenantDetailScreen() {
 
     loadCoTenants();
   }, [id, tenantData?.propertyId]);
-  
-  // Derive Payment Overview totals/percentages from the actual transaction ledger,
-  // so the graphs reflect real paid/recorded amounts instead of static defaults.
+
+  // Load the active tenant_property_link to get authoritative unit_id + sub_unit_id
+  useEffect(() => {
+    if (!id || !tenantData?.propertyId) return;
+    supabase
+      .from('tenant_property_links')
+      .select('unit_id, sub_unit_id')
+      .eq('tenant_id', id)
+      .eq('property_id', tenantData.propertyId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setLinkData(data); });
+  }, [id, tenantData?.propertyId]);
+
+  const periodFilteredTransactions = useMemo(() => {
+    const today = new Date();
+    let startStr: string;
+    let endStr: string;
+    if (paymentPeriod === 'cr') {
+      if (!paymentCustomRange) return transactions;
+      startStr = paymentCustomRange.start;
+      endStr = paymentCustomRange.end;
+    } else {
+      const s = new Date(today.getFullYear(), today.getMonth() - (paymentPeriod - 1), 1);
+      startStr = s.toISOString().split('T')[0];
+      endStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+    }
+    return transactions.filter(t => t.date >= startStr && t.date <= endStr);
+  }, [transactions, paymentPeriod, paymentCustomRange]);
+
   const computedPayments = useMemo(() => {
     const summary: Record<string, { paid: number; total: number; overdue: number; percentage: number }> = {
       rent: { paid: 0, total: 0, overdue: 0, percentage: 0 },
@@ -170,8 +174,7 @@ export default function TenantDetailScreen() {
       other: { paid: 0, total: 0, overdue: 0, percentage: 0 },
     };
 
-    transactions.forEach((t) => {
-      if (t.type !== 'income') return;
+    periodFilteredTransactions.forEach((t) => {
       const key = (['rent', 'maintenance', 'utility'] as const).includes(t.category as any)
         ? (t.category as 'rent' | 'maintenance' | 'utility')
         : 'other';
@@ -189,7 +192,20 @@ export default function TenantDetailScreen() {
     });
 
     return summary;
-  }, [transactions]);
+  }, [periodFilteredTransactions]);
+
+  // Resolve unit (apartment) and room (sub-unit) from authoritative link data
+  const resolvedUnitId = linkData?.unit_id || tenantData?.unitId;
+  const unitObj = resolvedUnitId ? getUnitById(resolvedUnitId) : null;
+  const unitDisplayName = unitObj?.name ? `Unit ${unitObj.name}` : null;
+
+  const resolvedSubUnitId = linkData?.sub_unit_id;
+  const subUnitObj = resolvedSubUnitId && unitObj
+    ? unitObj.subUnits?.find(s => s.id === resolvedSubUnitId)
+    : null;
+  const roomName = subUnitObj?.name || tenantData?.unitName || null;
+
+  const propertyType = property?.propertyType;
 
   // Format tenant data for display
   const tenant = tenantData ? {
@@ -197,14 +213,15 @@ export default function TenantDetailScreen() {
     name: `${tenantData.firstName} ${tenantData.lastName}`,
     email: tenantData.email,
     phone: tenantData.phone,
-    propertyName: property?.name || 'Unknown Property',
-    unitName: tenantData.unitName || 'N/A',
+    propertyName: property?.name || property?.address1 || 'Unknown Property',
+    unitDisplayName,
+    roomName,
     address: property ? `${property.address1}${property.address2 ? ', ' + property.address2 : ''}, ${property.city}, ${property.state}` : 'N/A',
-    createdAt: new Date(tenantData.createdAt).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    }),
+    startDate: tenantData.startDate || null,
+    endDate: tenantData.endDate || null,
+    rentAmount: tenantData.rentAmount,
+    idProof1: tenantData.idProof1,
+    idProof2: tenantData.idProof2,
     profilePicture: tenantData.photo,
     payments: computedPayments,
   } : null;
@@ -215,6 +232,8 @@ export default function TenantDetailScreen() {
   const borderColor = isDark ? '#2E3A48' : '#E9ECEF';
   const textColor = isDark ? '#F8F9FA' : '#101921';
   const secondaryTextColor = isDark ? '#B0B8C1' : '#687588';
+  const primaryColor = '#137fec';
+
 
   const handleDelete = () => {
     if (!tenant || !tenantData) return;
@@ -260,8 +279,6 @@ export default function TenantDetailScreen() {
     );
   }
 
-  const currentPayment = tenant.payments[selectedCategory as keyof typeof tenant.payments];
-
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
@@ -285,51 +302,132 @@ export default function TenantDetailScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Picture */}
-        <View style={styles.profileSection}>
-          {tenant.profilePicture ? (
-            <Image source={{ uri: tenant.profilePicture }} style={styles.profileImage} />
-          ) : (
-            <View style={[styles.profilePlaceholder, { backgroundColor: isDark ? '#2E3A48' : '#E9ECEF' }]}>
-              <MaterialCommunityIcons name="account" size={48} color={secondaryTextColor} />
+        {/* Hero Card */}
+        <View style={[styles.heroCard, { backgroundColor: cardBgColor, borderColor }]}>
+          <View style={styles.heroTop}>
+            {tenant.profilePicture ? (
+              <Image source={{ uri: tenant.profilePicture }} style={styles.heroAvatar} />
+            ) : (
+              <View style={[styles.heroAvatarPlaceholder, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}>
+                <ThemedText style={[styles.heroAvatarInitial, { color: primaryColor }]}>
+                  {tenant.name.charAt(0).toUpperCase()}
+                </ThemedText>
+              </View>
+            )}
+            <View style={styles.heroMeta}>
+              <ThemedText style={[styles.heroName, { color: textColor }]}>{tenant.name}</ThemedText>
+              <ThemedText style={[styles.heroLocation, { color: secondaryTextColor }]} numberOfLines={1}>
+                {tenant.propertyName}
+                {tenant.unitDisplayName ? `  ·  ${tenant.unitDisplayName}` : ''}
+                {tenant.roomName ? `  ·  ${tenant.roomName}` : ''}
+              </ThemedText>
             </View>
-          )}
+          </View>
+
+          {/* Key stats strip */}
+          <View style={[styles.heroStats, { borderTopColor: borderColor }]}>
+            <View style={styles.heroStat}>
+              <ThemedText style={[styles.heroStatValue, { color: primaryColor }]}>
+                {tenant.rentAmount != null ? `$${tenant.rentAmount.toLocaleString()}` : 'N/A'}
+              </ThemedText>
+              <ThemedText style={[styles.heroStatLabel, { color: secondaryTextColor }]}>Monthly Rent</ThemedText>
+            </View>
+            <View style={[styles.heroStatDivider, { backgroundColor: borderColor }]} />
+            <View style={styles.heroStat}>
+              <ThemedText style={[styles.heroStatValue, { color: textColor }]}>
+                {tenant.startDate ? fmtShortDate(tenant.startDate) : 'N/A'}
+              </ThemedText>
+              <ThemedText style={[styles.heroStatLabel, { color: secondaryTextColor }]}>Lease Start</ThemedText>
+            </View>
+            <View style={[styles.heroStatDivider, { backgroundColor: borderColor }]} />
+            <View style={styles.heroStat}>
+              <ThemedText style={[styles.heroStatValue, { color: textColor }]}>
+                {tenant.endDate ? fmtShortDate(tenant.endDate) : 'N/A'}
+              </ThemedText>
+              <ThemedText style={[styles.heroStatLabel, { color: secondaryTextColor }]}>Lease End</ThemedText>
+            </View>
+          </View>
         </View>
 
         {/* Tenant Info Card */}
         <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.cardTitle, { color: textColor }]}>Tenant Info</ThemedText>
+          <ThemedText style={[styles.cardTitle, { color: textColor }]}>Contact & Location</ThemedText>
           <View style={styles.infoList}>
             <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Name</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.name}</ThemedText>
+              <View style={styles.infoRowLeft}>
+                <MaterialCommunityIcons name="phone-outline" size={16} color={secondaryTextColor} />
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Phone</ThemedText>
+              </View>
+              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.phone || 'N/A'}</ThemedText>
             </View>
             <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Name</ThemedText>
+              <View style={styles.infoRowLeft}>
+                <MaterialCommunityIcons name="email-outline" size={16} color={secondaryTextColor} />
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Email</ThemedText>
+              </View>
+              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.email || 'N/A'}</ThemedText>
+            </View>
+            <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
+              <View style={styles.infoRowLeft}>
+                <MaterialCommunityIcons name="home-city-outline" size={16} color={secondaryTextColor} />
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property</ThemedText>
+              </View>
               <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.propertyName}</ThemedText>
             </View>
-            <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Unit Name</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.unitName}</ThemedText>
-            </View>
-            <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Address</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.address}</ThemedText>
-            </View>
-            <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Phone</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.phone}</ThemedText>
-            </View>
-            <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Email</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.email}</ThemedText>
-            </View>
+            {(propertyType === 'multi_unit' || tenant.unitDisplayName) && (
+              <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
+                <View style={styles.infoRowLeft}>
+                  <MaterialCommunityIcons name="door" size={16} color={secondaryTextColor} />
+                  <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Unit</ThemedText>
+                </View>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.unitDisplayName || 'N/A'}</ThemedText>
+              </View>
+            )}
+            {tenant.roomName && (
+              <View style={[styles.infoRow, { borderBottomColor: borderColor }]}>
+                <View style={styles.infoRowLeft}>
+                  <MaterialCommunityIcons name="bed-outline" size={16} color={secondaryTextColor} />
+                  <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Room</ThemedText>
+                </View>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.roomName}</ThemedText>
+              </View>
+            )}
             <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>CreatedAt</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.createdAt}</ThemedText>
+              <View style={styles.infoRowLeft}>
+                <MaterialCommunityIcons name="map-marker-outline" size={16} color={secondaryTextColor} />
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Address</ThemedText>
+              </View>
+              <ThemedText style={[styles.infoValue, { color: textColor }]}>{tenant.address}</ThemedText>
             </View>
           </View>
         </View>
+
+        {/* ID Proofs */}
+        {(tenant.idProof1 || tenant.idProof2) && (
+          <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
+            <ThemedText style={[styles.cardTitle, { color: textColor }]}>ID Proofs</ThemedText>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+              {tenant.idProof1 && (
+                <View style={{ flex: 1 }}>
+                  <Image
+                    source={{ uri: tenant.idProof1 }}
+                    style={{ width: '100%', height: 120, borderRadius: 8, resizeMode: 'cover' }}
+                  />
+                  <ThemedText style={[styles.infoLabel, { color: secondaryTextColor, textAlign: 'center', marginTop: 4 }]}>ID Proof 1</ThemedText>
+                </View>
+              )}
+              {tenant.idProof2 && (
+                <View style={{ flex: 1 }}>
+                  <Image
+                    source={{ uri: tenant.idProof2 }}
+                    style={{ width: '100%', height: 120, borderRadius: 8, resizeMode: 'cover' }}
+                  />
+                  <ThemedText style={[styles.infoLabel, { color: secondaryTextColor, textAlign: 'center', marginTop: 4 }]}>ID Proof 2</ThemedText>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
 
         {coTenants.length > 0 && (
           <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}> 
@@ -371,29 +469,65 @@ export default function TenantDetailScreen() {
 
         {/* Payment Overview */}
         <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <ThemedText style={[styles.cardTitle, { color: textColor }]}>Payment Overview</ThemedText>
-          <View style={styles.paymentGrid}>
+          <View style={styles.paymentOverviewHeader}>
+            <ThemedText style={[styles.cardTitle, { color: textColor }]}>Payment Overview</ThemedText>
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#253040' : '#e5e7eb' }]}>
+              {([1, 3, 6] as const).map(p => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.periodBtn, paymentPeriod === p && { backgroundColor: primaryColor }]}
+                  onPress={() => setPaymentPeriod(p)}
+                >
+                  <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === p ? '#fff' : secondaryTextColor }]}>
+                    {p}M
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.periodBtn, paymentPeriod === 'cr' && { backgroundColor: primaryColor }]}
+                onPress={() => {
+                  setPaymentPeriod('cr');
+                  setCrDraftStart(paymentCustomRange?.start ?? '');
+                  setCrDraftEnd(paymentCustomRange?.end ?? '');
+                  setShowCRModal(true);
+                }}
+              >
+                <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                  CR
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <ThemedText style={[styles.periodSubtitle, { color: secondaryTextColor }]}>
+            {paymentPeriod === 'cr'
+              ? (paymentCustomRange
+                  ? `${fmtShortDate(paymentCustomRange.start)} – ${fmtShortDate(paymentCustomRange.end)}`
+                  : 'Select a date range')
+              : paymentPeriod === 1 ? 'This month' : `Last ${paymentPeriod} months`}
+          </ThemedText>
+
+          <View style={styles.paymentCells}>
             {PAYMENT_CATEGORIES.map((category) => {
               const payment = tenant.payments[category.key as keyof typeof tenant.payments];
               return (
-                <View key={category.key} style={[styles.paymentCard, { backgroundColor: bgColor }]}>
-                  <ThemedText style={[styles.paymentCardTitle, { color: textColor }]}>
-                    {category.label}
+                <View key={category.key} style={[styles.paymentCell, { backgroundColor: bgColor, borderColor }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                    <ThemedText style={[styles.paymentCellLabel, { color: secondaryTextColor }]}>
+                      {category.label}
+                    </ThemedText>
+                  </View>
+                  <ThemedText style={[styles.paymentCellValue, { color: category.color }]}>
+                    ${payment.paid.toLocaleString()}
                   </ThemedText>
-                  <CircularProgress percentage={payment.percentage} color={category.color} />
-                  <View style={styles.paymentCardFooter}>
-                    <ThemedText style={[styles.paymentCardLabel, { color: secondaryTextColor }]}>
-                      Paid
-                    </ThemedText>
-                    <ThemedText style={[styles.paymentCardAmount, { color: textColor }]}>
-                      ${payment.paid.toLocaleString()} / ${payment.total.toLocaleString()}
-                    </ThemedText>
-                    {payment.overdue > 0 && (
-                      <ThemedText style={styles.paymentCardOverdue}>
+                  {payment.overdue > 0 && (
+                    <View style={[styles.overdueBadge, { marginTop: 4 }]}>
+                      <ThemedText style={styles.overdueBadgeText}>
                         ${payment.overdue.toLocaleString()} overdue
                       </ThemedText>
-                    )}
-                  </View>
+                    </View>
+                  )}
                 </View>
               );
             })}
@@ -566,6 +700,103 @@ export default function TenantDetailScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Custom Range modal */}
+      <Modal
+        visible={showCRModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCRModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowCRModal(false)} />
+          <View style={{ backgroundColor: cardBgColor, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+            <ThemedText style={{ fontSize: 17, fontWeight: '700', color: textColor, marginBottom: 16 }}>
+              Custom Date Range
+            </ThemedText>
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftStart ? textColor : secondaryTextColor }}>
+                {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCRStartPicker && (
+              <DateTimePicker
+                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
+                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCRStartPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
+                onPress={() => setShowCRStartPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftEnd ? textColor : secondaryTextColor }}>
+                {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCREndPicker && (
+              <DateTimePicker
+                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
+                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCREndPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
+                onPress={() => setShowCREndPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, borderWidth: 1, borderColor, alignItems: 'center' }}
+                onPress={() => setShowCRModal(false)}
+              >
+                <ThemedText style={{ color: textColor }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: primaryColor, alignItems: 'center' }}
+                onPress={() => {
+                  if (!crDraftStart || !crDraftEnd) {
+                    Alert.alert('Select both start and end dates');
+                    return;
+                  }
+                  if (crDraftStart > crDraftEnd) {
+                    Alert.alert('End date must be after start date');
+                    return;
+                  }
+                  setPaymentCustomRange({ start: crDraftStart, end: crDraftEnd });
+                  setShowCRModal(false);
+                }}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -600,25 +831,89 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
-  profileSection: {
+  heroCard: {
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  heroTop: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 24,
+    gap: 14,
+    padding: 18,
   },
-  profileImage: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    borderWidth: 4,
-    borderColor: '#fff',
+  heroAvatar: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
   },
-  profilePlaceholder: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    borderWidth: 4,
-    borderColor: '#fff',
+  heroAvatarPlaceholder: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  heroAvatarInitial: {
+    fontSize: 30,
+    fontWeight: '700',
+  },
+  heroMeta: {
+    flex: 1,
+    gap: 4,
+  },
+  heroName: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  heroLocation: {
+    fontSize: 13,
+  },
+  heroBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  heroBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#16a34a',
+  },
+  heroBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  heroStats: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+  },
+  heroStat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 2,
+  },
+  heroStatValue: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  heroStatLabel: {
+    fontSize: 11,
+  },
+  heroStatDivider: {
+    width: 1,
+    marginVertical: 10,
+  },
+  infoRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   card: {
     borderRadius: 12,
@@ -695,38 +990,69 @@ const styles = StyleSheet.create({
   coTenantMeta: {
     fontSize: 13,
   },
-  paymentGrid: {
+  paymentOverviewHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  paymentCard: {
-    flex: 1,
-    minWidth: '45%',
-    borderRadius: 12,
-    padding: 16,
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
+    marginBottom: 4,
   },
-  paymentCardTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+  periodToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 2,
+    gap: 2,
   },
-  paymentCardFooter: {
-    alignItems: 'center',
-    gap: 4,
+  periodBtn: {
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
-  paymentCardLabel: {
-    fontSize: 12,
-  },
-  paymentCardAmount: {
-    fontSize: 14,
+  periodBtnText: {
+    fontSize: 11,
     fontWeight: '700',
   },
-  paymentCardOverdue: {
+  periodSubtitle: {
     fontSize: 12,
-    fontWeight: '600',
+    marginBottom: 12,
+  },
+  paymentCells: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  paymentCell: {
+    width: '47.5%',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  categoryDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  paymentCellLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  paymentCellValue: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  paymentCellTotal: {
+    fontSize: 12,
+  },
+  overdueBadge: {
+    marginTop: 2,
+    backgroundColor: '#fef2f2',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  overdueBadgeText: {
+    fontSize: 11,
     color: '#ef4444',
+    fontWeight: '600',
   },
   ledgerHeader: {
     flexDirection: 'row',

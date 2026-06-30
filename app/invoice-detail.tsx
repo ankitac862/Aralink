@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import { Platform, StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { fmtDateInput } from '@/lib/dateUtils';
 
 export default function InvoiceDetailScreen() {
   const colorScheme = useColorScheme();
@@ -18,6 +20,9 @@ export default function InvoiceDetailScreen() {
     description: '',
     date: '',
   });
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const formatDate = (d: Date) => fmtDateInput(d);
 
   const handleSave = () => {
     router.back();
@@ -81,12 +86,30 @@ export default function InvoiceDetailScreen() {
 
           <ThemedView style={styles.formGroup}>
             <ThemedText style={styles.label}>Invoice Date</ThemedText>
-            <TextInput
-              style={[styles.input, { color: Colors[colorScheme ?? 'light'].text }]}
-              placeholder="MM/DD/YYYY"
-              value={formData.date}
-              onChangeText={(value) => setFormData({ ...formData, date: value })}
-            />
+            <TouchableOpacity
+              style={[styles.input, styles.dateButton, { borderColor: '#ccc' }]}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <ThemedText style={{ color: formData.date ? Colors[colorScheme ?? 'light'].text : '#9ca3af' }}>
+                {formData.date || 'MM/DD/YYYY'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={formData.date ? new Date(formData.date) : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowDatePicker(false);
+                  if (date) setFormData({ ...formData, date: formatDate(date) });
+                }}
+              />
+            )}
+            {showDatePicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowDatePicker(false)}>
+                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
           </ThemedView>
 
           <TouchableOpacity
@@ -107,6 +130,7 @@ const styles = StyleSheet.create({
   formGroup: { gap: 8 },
   label: { fontWeight: 'bold', fontSize: 16 },
   input: { padding: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 8 },
+  dateButton: { justifyContent: 'center' },
   multilineInput: { height: 80, textAlignVertical: 'top' },
   categoryContainer: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   categoryBtn: { flex: 1, minWidth: '45%', padding: 8, borderWidth: 1, borderColor: '#ccc', borderRadius: 6, alignItems: 'center' },
