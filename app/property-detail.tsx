@@ -26,6 +26,7 @@ import { createLease, DbLease, deleteImage, fetchLeasesByProperty, STORAGE_BUCKE
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -1171,7 +1172,7 @@ export default function PropertyDetailScreen() {
                     <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
                       <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Available From</ThemedText>
                       <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
-                        {new Date(selectedRoom.availabilityDate).toLocaleDateString()}
+                        {fmtDate(selectedRoom.availabilityDate)}
                       </ThemedText>
                     </View>
                   )}

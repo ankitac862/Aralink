@@ -24,6 +24,7 @@ import { canApprove, canChangeStatus, canAssignVendor, canAddResolutionNotes } f
 import type { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
 import type { Vendor } from '@/constants/vendors';
 import { fetchVendors } from '@/services/vendorService';
+import { fmtDateTime } from '@/lib/dateUtils';
 
 const STATUS_ACTIONS = [
   { label: 'Under Review', value: 'under_review' },
@@ -581,7 +582,7 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
                         </View>
                         <Text style={styles.commentAuthor}>{comment.createdBy}</Text>
                         <Text style={styles.commentTime}>
-                          {new Date(comment.createdAt).toLocaleString()}
+                          {fmtDateTime(comment.createdAt)}
                         </Text>
                       </View>
                       <Text style={styles.commentText}>{comment.commentText}</Text>
@@ -615,7 +616,7 @@ export default function LandlordMaintenanceRequestDetailsScreen() {
                   <View style={{ flex: 1, marginLeft: 8 }}>
                     <Text style={styles.activityMessage}>{item.message}</Text>
                     <Text style={styles.activityMeta}>
-                      {new Date(item.timestamp).toLocaleString()} · {item.actor}
+                      {fmtDateTime(item.timestamp)} · {item.actor}
                     </Text>
                   </View>
                 </View>

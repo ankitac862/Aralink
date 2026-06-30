@@ -26,6 +26,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { fetchLeasesByTenant, DbLease } from '@/lib/supabase';
 import { canViewLease } from '@/services/lease-generation-service';
+import { fmtDate } from '@/lib/dateUtils';
 
 export default function TenantViewLeaseScreen() {
   const colorScheme = useColorScheme();
@@ -114,15 +115,7 @@ export default function TenantViewLeaseScreen() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-CA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
+  const formatDate = (dateString: string) => fmtDate(dateString);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-CA', {

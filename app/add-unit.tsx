@@ -23,6 +23,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 export default function AddUnitScreen() {
   const colorScheme = useColorScheme();
@@ -98,11 +99,7 @@ export default function AddUnitScreen() {
     }
   }, [isEditing, unitId, propertyId, getPropertyById]);
 
-  const formatDate = (iso: string) => {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleDateString();
-  };
+  const formatDate = (iso: string) => fmtDate(iso, '');
 
   const handleDateChange = (_: any, date?: Date) => {
     if (Platform.OS === 'android') setShowDatePicker(null);

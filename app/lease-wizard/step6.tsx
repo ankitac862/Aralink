@@ -31,6 +31,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
 import { useAuthStore } from '@/store/authStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 export default function LeaseWizardStep6() {
   const colorScheme = useColorScheme();
@@ -76,15 +77,7 @@ export default function LeaseWizardStep6() {
 
   const totalRent = (formData.baseRent || 0) + (formData.parkingRent || 0) + (formData.otherServicesRent || 0);
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'Not set';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-CA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
+  const formatDate = (dateString: string) => fmtDate(dateString, 'Not set');
 
   const handleBack = () => {
     prevStep();

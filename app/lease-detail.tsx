@@ -40,6 +40,7 @@ import {
   resetLeaseForEditing,
 } from '@/lib/supabase';
 import * as DocumentPicker from 'expo-document-picker';
+import { fmtDate, fmtDateTime } from '@/lib/dateUtils';
 import {
   sendLeaseToTenant,
   getLeaseDocumentVersions,
@@ -534,27 +535,9 @@ export default function LeaseDetailScreen() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-CA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
+  const formatDate = (dateString: string) => fmtDate(dateString);
 
-  const formatDateTime = (dateString: string) => {
-    if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleString('en-CA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  const formatDateTime = (dateString: string) => fmtDateTime(dateString);
 
   if (isLoading) {
     return (

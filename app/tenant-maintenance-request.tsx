@@ -22,6 +22,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { useAuth } from '@/hooks/use-auth';
 import { supabase } from '@/lib/supabase';
+import { fmtDateTime } from '@/lib/dateUtils';
 import { FormInput } from '@/components/maintenance/FormInput';
 import { CategoryDropdown } from '@/components/maintenance/CategoryDropdown';
 import { UploadButton, UploadedFile } from '@/components/maintenance/UploadButton';
@@ -33,6 +34,8 @@ const categoryOptions = [
   { label: 'Electrical', value: 'electrical', icon: 'flash' },
   { label: 'HVAC', value: 'hvac', icon: 'air-conditioner' },
   { label: 'Appliance', value: 'appliance', icon: 'fridge' },
+  { label: 'WiFi / Internet', value: 'wifi', icon: 'wifi' },
+  { label: 'Utilities', value: 'utilities', icon: 'lightning-bolt' },
   { label: 'General Repair', value: 'general', icon: 'wrench' },
   { label: 'Others', value: 'others', icon: 'dots-horizontal' },
 ];
@@ -263,7 +266,7 @@ export default function TenantMaintenanceRequestScreen() {
     closeModal();
   };
 
-  const formattedAvailability = useMemo(() => availabilityDate.toLocaleString(), [availabilityDate]);
+  const formattedAvailability = useMemo(() => fmtDateTime(availabilityDate.toISOString()), [availabilityDate]);
 
   const handleUpload = async (file: UploadedFile) => {
     setAttachments(prev => [...prev, file]);

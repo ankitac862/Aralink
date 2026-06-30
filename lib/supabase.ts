@@ -159,7 +159,7 @@ export interface DbMaintenanceRequest {
   property_id: string;
   unit_id?: string;
   sub_unit_id?: string;
-  category: 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general';
+  category: 'plumbing' | 'electrical' | 'hvac' | 'appliance' | 'general' | 'wifi' | 'utilities' | 'others';
   title: string;
   description: string;
   urgency: 'low' | 'medium' | 'high' | 'emergency';
@@ -854,6 +854,8 @@ export interface DbTenant {
   unit_id?: string;
   unit_name?: string;
   photo?: string;
+  id_proof_1?: string;
+  id_proof_2?: string;
   start_date?: string;
   end_date?: string;
   rent_amount?: number;
@@ -1606,7 +1608,7 @@ export async function inviteApplicantToProperty(params: {
         apikey: supabaseAnonKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify({ ...params, redirectBaseUrl: 'https://www.aaralink.ca' }),
     });
 
     const rawText = await response.text();
@@ -1726,6 +1728,7 @@ export interface DbTransaction {
   date: string;
   description?: string;
   service_type?: string;
+  vendor?: string;
   status: 'paid' | 'pending' | 'overdue';
   created_at: string;
   updated_at: string;
@@ -1805,6 +1808,8 @@ export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 
     if (transaction.lease_id) dataToInsert.lease_id = transaction.lease_id;
     if (transaction.description) dataToInsert.description = transaction.description;
     if (transaction.service_type) dataToInsert.service_type = transaction.service_type;
+    // vendor requires: ALTER TABLE transactions ADD COLUMN vendor text;
+    // if (transaction.vendor) dataToInsert.vendor = transaction.vendor;
 
     const { data, error } = await supabase
       .from('transactions')

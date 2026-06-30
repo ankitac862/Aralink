@@ -27,6 +27,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 const TENANCY_TYPES = [
   { value: 'month_to_month', label: 'Month-to-Month', description: 'No fixed end date' },
@@ -67,12 +68,7 @@ export default function LeaseWizardStep4() {
 
   const formatDate = (dateString: string) => {
     if (!dateString) return 'Select date';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-CA', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
+    return fmtDate(dateString, 'Select date');
   };
 
   const handleStartDateChange = (event: any, selectedDate?: Date) => {

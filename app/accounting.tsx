@@ -3,15 +3,20 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
+import { fmtShortDate } from '@/lib/dateUtils';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
@@ -55,7 +60,23 @@ export default function AccountingScreen() {
   const { properties } = usePropertyStore();
 
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
-  const [chartPeriod, setChartPeriod] = useState<1 | 3 | 6 | 12>(6);
+  const [chartPeriod, setChartPeriod] = useState<1 | 3 | 6 | 'cr'>(6);
+  const [customRange, setCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [showCRModal, setShowCRModal] = useState(false);
+  const [crDraftStart, setCrDraftStart] = useState('');
+  const [crDraftEnd, setCrDraftEnd] = useState('');
+  const [showCRStartPicker, setShowCRStartPicker] = useState(false);
+  const [showCREndPicker, setShowCREndPicker] = useState(false);
+
+  // Revenue by Property chart period
+  const [propPeriod, setPropPeriod] = useState<1 | 3 | 6 | 'cr'>(6);
+  const [propCustomRange, setPropCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [showPropCRModal, setShowPropCRModal] = useState(false);
+  const [propCrDraftStart, setPropCrDraftStart] = useState('');
+  const [propCrDraftEnd, setPropCrDraftEnd] = useState('');
+  const [showPropCRStartPicker, setShowPropCRStartPicker] = useState(false);
+  const [showPropCREndPicker, setShowPropCREndPicker] = useState(false);
+
   const [selectedCategory, setSelectedCategory] = useState<TransactionCategory>('all');
 
   const currentCategories = transactionType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -150,17 +171,19 @@ export default function AccountingScreen() {
   }, [] as TransactionSection[]);
 
 
-  // Income vs Expense chart data for selected period (1, 3, 6 or 12 months)
+
+  // Income vs Expense chart data for selected period (1M, 3M, 6M or custom range)
   const chartData = useMemo(() => {
     const months: { label: string; start: string; end: string }[] = [];
-    const now = new Date();
-    if (chartPeriod === 12) {
-      // Full calendar year: Jan–Dec of current year
-      const year = now.getFullYear();
-      for (let m = 0; m < 12; m++) {
-        const start = new Date(year, m, 1).toISOString().split('T')[0];
-        const end = new Date(year, m + 1, 0).toISOString().split('T')[0];
-        months.push({ label: new Date(year, m).toLocaleDateString('en-US', { month: 'short' }), start, end });
+    if (chartPeriod === 'cr') {
+      if (!customRange) return [];
+      const d = new Date(customRange.start + 'T00:00:00');
+      const endD = new Date(customRange.end + 'T00:00:00');
+      while (d <= endD) {
+        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
+        d.setMonth(d.getMonth() + 1);
       }
     } else {
       const d = new Date();
@@ -178,24 +201,40 @@ export default function AccountingScreen() {
       const expense = bucket.filter(t => t.type === 'expense' && t.status !== 'pending').reduce((s, t) => s + t.amount, 0);
       return { month: label, income, expense };
     });
-  }, [transactions, chartPeriod]);
+  }, [transactions, chartPeriod, customRange]);
 
-  // Per-property income breakdown
+  // Per-property income breakdown (filtered by propPeriod)
   const propertyRevenue = useMemo(() => {
+    const today = new Date();
+    let startStr: string;
+    let endStr: string;
+    if (propPeriod === 'cr') {
+      if (!propCustomRange) { startStr = ''; endStr = ''; }
+      else { startStr = propCustomRange.start; endStr = propCustomRange.end; }
+    } else {
+      const s = new Date(today.getFullYear(), today.getMonth() - (propPeriod - 1), 1);
+      startStr = s.toISOString().split('T')[0];
+      endStr = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+    }
+
     const map: Record<string, { name: string; income: number; expense: number }> = {};
     transactions
-      .filter(t => t.status !== 'pending' && t.property_id)
+      .filter(t => {
+        if (t.status === 'pending' || !t.property_id) return false;
+        if (startStr && endStr) return t.date >= startStr && t.date <= endStr;
+        return true;
+      })
       .forEach(t => {
         const pid = t.property_id!;
         if (!map[pid]) {
           const prop = properties.find(p => p.id === pid);
-          map[pid] = { name: prop?.address1 || 'Unknown Property', income: 0, expense: 0 };
+          map[pid] = { name: prop?.name || prop?.address1 || 'Unknown Property', income: 0, expense: 0 };
         }
         if (t.type === 'income') map[pid].income += t.amount;
         else map[pid].expense += t.amount;
       });
     return Object.values(map).sort((a, b) => b.income - a.income);
-  }, [transactions, properties]);
+  }, [transactions, properties, propPeriod, propCustomRange]);
 
   // Map category to icon
   const getCategoryIcon = (category: string): string => {
@@ -420,11 +459,14 @@ export default function AccountingScreen() {
                 Income vs Expense
               </ThemedText>
               <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor }]}>
-                {chartPeriod === 1 ? 'This month' : chartPeriod === 12 ? `Jan – Dec ${new Date().getFullYear()}` : `Last ${chartPeriod} months`}
+                {chartPeriod === 'cr'
+                  ? (customRange ? `${fmtShortDate(customRange.start)} – ${fmtShortDate(customRange.end)}` : 'Select range')
+                  : chartPeriod === 1 ? 'This month' : `Last ${chartPeriod} months`}
               </ThemedText>
             </View>
+            {/* Period toggle: 1M / 3M / 6M / CR */}
             <View style={[styles.periodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
-              {([1, 3, 6, 12] as const).map(p => (
+              {([1, 3, 6] as const).map(p => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.periodBtn, chartPeriod === p && { backgroundColor: primaryColor }]}
@@ -435,6 +477,19 @@ export default function AccountingScreen() {
                   </ThemedText>
                 </TouchableOpacity>
               ))}
+              <TouchableOpacity
+                style={[styles.periodBtn, chartPeriod === 'cr' && { backgroundColor: primaryColor }]}
+                onPress={() => {
+                  setChartPeriod('cr');
+                  setCrDraftStart(customRange?.start ?? '');
+                  setCrDraftEnd(customRange?.end ?? '');
+                  setShowCRModal(true);
+                }}
+              >
+                <ThemedText style={[styles.periodBtnText, { color: chartPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                  CR
+                </ThemedText>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -459,13 +514,13 @@ export default function AccountingScreen() {
                 </View>
                 {/* Bars (scrollable for 12 months) */}
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-                  <View style={[styles.barChartWrapper, { width: chartPeriod * 42 }]}>
+                  <View style={[styles.barChartWrapper, { width: Math.max(chartData.length, 1) * 42 }]}>
                     {[1, 0.5, 0].map((frac: number) => (
                       <View
                         key={frac}
                         style={[
                           styles.barChartGuideLine,
-                          { bottom: frac * BAR_H + 24, width: chartPeriod * 42, borderColor: isDark ? '#ffffff12' : '#00000010' },
+                          { bottom: frac * BAR_H + 24, width: Math.max(chartData.length, 1) * 42, borderColor: isDark ? '#ffffff12' : '#00000010' },
                         ]}
                       />
                     ))}
@@ -500,13 +555,47 @@ export default function AccountingScreen() {
         </View>
 
         {/* Revenue by Property */}
-        {propertyRevenue.length > 0 && (
-          <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
+        <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <ThemedText style={[styles.incomeExpenseTitle, { color: textColor }]}>Revenue by Property</ThemedText>
-            <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor, marginBottom: 12 }]}>
-              Income vs expense per property
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#253040' : '#e5e7eb' }]}>
+              {([1, 3, 6] as const).map(p => (
+                <TouchableOpacity
+                  key={p}
+                  style={[styles.periodBtn, propPeriod === p && { backgroundColor: primaryColor }]}
+                  onPress={() => setPropPeriod(p)}
+                >
+                  <ThemedText style={[styles.periodBtnText, { color: propPeriod === p ? '#fff' : secondaryTextColor }]}>
+                    {p}M
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.periodBtn, propPeriod === 'cr' && { backgroundColor: primaryColor }]}
+                onPress={() => {
+                  setPropPeriod('cr');
+                  setPropCrDraftStart(propCustomRange?.start ?? '');
+                  setPropCrDraftEnd(propCustomRange?.end ?? '');
+                  setShowPropCRModal(true);
+                }}
+              >
+                <ThemedText style={[styles.periodBtnText, { color: propPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                  CR
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor, marginBottom: 12 }]}>
+            {propPeriod === 'cr'
+              ? (propCustomRange ? `${fmtShortDate(propCustomRange.start)} – ${fmtShortDate(propCustomRange.end)}` : 'Select a date range')
+              : propPeriod === 1 ? 'This month' : `Last ${propPeriod} months`}
+          </ThemedText>
+          {propertyRevenue.length === 0 ? (
+            <ThemedText style={[styles.incomeExpenseSubtitle, { color: secondaryTextColor, textAlign: 'center', paddingVertical: 12 }]}>
+              No transactions in this period
             </ThemedText>
-            {propertyRevenue.map((p: { name: string; income: number; expense: number }, i: number) => {
+          ) : (
+            propertyRevenue.map((p: { name: string; income: number; expense: number }, i: number) => {
               const maxP = Math.max(...propertyRevenue.map((r: { income: number }) => r.income), 1);
               return (
                 <View key={i} style={styles.propRow}>
@@ -518,9 +607,9 @@ export default function AccountingScreen() {
                   <ThemedText style={[styles.propAmount, { color: '#34C759' }]}>${p.income.toLocaleString()}</ThemedText>
                 </View>
               );
-            })}
-          </View>
-        )}
+            })
+          )}
+        </View>
 
 
         <ScrollView
@@ -608,6 +697,192 @@ export default function AccountingScreen() {
         onPress={() => router.push('/add-transaction')}>
         <MaterialCommunityIcons name="plus" size={28} color="white" />
       </TouchableOpacity>
+
+      {/* Custom Range modal */}
+      <Modal
+        visible={showCRModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCRModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowCRModal(false)} />
+          <View style={{ backgroundColor: cardBgColor, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+            <ThemedText style={{ fontSize: 17, fontWeight: '700', color: textColor, marginBottom: 16 }}>
+              Custom Date Range
+            </ThemedText>
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftStart ? textColor : secondaryTextColor }}>
+                {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCRStartPicker && (
+              <DateTimePicker
+                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
+                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCRStartPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCRStartPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftEnd ? textColor : secondaryTextColor }}>
+                {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCREndPicker && (
+              <DateTimePicker
+                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
+                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCREndPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCREndPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, borderWidth: 1, borderColor, alignItems: 'center' }}
+                onPress={() => setShowCRModal(false)}
+              >
+                <ThemedText style={{ color: textColor }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: primaryColor, alignItems: 'center' }}
+                onPress={() => {
+                  if (!crDraftStart || !crDraftEnd) {
+                    Alert.alert('Select both start and end dates');
+                    return;
+                  }
+                  if (crDraftStart > crDraftEnd) {
+                    Alert.alert('End date must be after start date');
+                    return;
+                  }
+                  setCustomRange({ start: crDraftStart, end: crDraftEnd });
+                  setShowCRModal(false);
+                }}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Property Revenue Custom Range modal */}
+      <Modal
+        visible={showPropCRModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPropCRModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowPropCRModal(false)} />
+          <View style={{ backgroundColor: cardBgColor, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+            <ThemedText style={{ fontSize: 17, fontWeight: '700', color: textColor, marginBottom: 16 }}>
+              Custom Date Range
+            </ThemedText>
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowPropCRStartPicker(true); setShowPropCREndPicker(false); }}
+            >
+              <ThemedText style={{ color: propCrDraftStart ? textColor : secondaryTextColor }}>
+                {propCrDraftStart ? fmtShortDate(propCrDraftStart) : 'Start Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showPropCRStartPicker && (
+              <DateTimePicker
+                value={propCrDraftStart ? new Date(propCrDraftStart + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowPropCRStartPicker(false);
+                  if (date) setPropCrDraftStart(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showPropCRStartPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowPropCRStartPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              onPress={() => { setShowPropCREndPicker(true); setShowPropCRStartPicker(false); }}
+            >
+              <ThemedText style={{ color: propCrDraftEnd ? textColor : secondaryTextColor }}>
+                {propCrDraftEnd ? fmtShortDate(propCrDraftEnd) : 'End Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showPropCREndPicker && (
+              <DateTimePicker
+                value={propCrDraftEnd ? new Date(propCrDraftEnd + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowPropCREndPicker(false);
+                  if (date) setPropCrDraftEnd(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showPropCREndPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowPropCREndPicker(false)}>
+                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, borderWidth: 1, borderColor, alignItems: 'center' }}
+                onPress={() => setShowPropCRModal(false)}
+              >
+                <ThemedText style={{ color: textColor }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: primaryColor, alignItems: 'center' }}
+                onPress={() => {
+                  if (!propCrDraftStart || !propCrDraftEnd) {
+                    Alert.alert('Select both start and end dates');
+                    return;
+                  }
+                  if (propCrDraftStart > propCrDraftEnd) {
+                    Alert.alert('End date must be after start date');
+                    return;
+                  }
+                  setPropCustomRange({ start: propCrDraftStart, end: propCrDraftEnd });
+                  setShowPropCRModal(false);
+                }}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }

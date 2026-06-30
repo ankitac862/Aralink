@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useLeaseStore } from '@/store/leaseStore';
+import { fmtDateInput } from '@/lib/dateUtils';
 
 export default function FinalizeLeaseTermsScreen() {
   const colorScheme = useColorScheme();
@@ -61,12 +62,7 @@ export default function FinalizeLeaseTermsScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const formatDate = (date: Date): string => {
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${month}/${day}/${year}`;
-  };
+  const formatDate = (date: Date): string => fmtDateInput(date);
 
   const handleStartDateChange = (event: any, date?: Date) => {
     if (Platform.OS === 'android') {

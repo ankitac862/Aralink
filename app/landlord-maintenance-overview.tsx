@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { useAuth } from '@/hooks/use-auth';
+import { fmtDate } from '@/lib/dateUtils';
 
 const VIEWED_KEY = 'maintenance_viewed_ids';
 
@@ -178,7 +179,7 @@ export default function LandlordMaintenanceOverviewScreen() {
               <View style={styles.metaRow}>
                 <MaterialCommunityIcons name="calendar" size={16} color="#94a3b8" />
                 <Text style={styles.metaText}>
-                  Submitted {new Date(item.createdAt).toLocaleDateString()} at{' '}
+                  Submitted {fmtDate(item.createdAt)} at{' '}
                   {new Date(item.createdAt).toLocaleTimeString()}
                 </Text>
               </View>

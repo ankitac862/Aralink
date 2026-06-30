@@ -11,6 +11,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { supabase } from '@/lib/supabase';
 
 export const unstable_settings = {
   anchor: 'splash', // Start with splash while auth initializes
@@ -37,6 +38,36 @@ export default function RootLayout() {
       };
     }
   }, []);
+
+  // Handle Supabase auth email callbacks on web.
+  // Supabase consumes the URL hash before React effects run, so we can't
+  // read window.location.hash — these auth events are the only reliable signal.
+  //
+  // PASSWORD_RECOVERY: existing user clicked a recovery/applicant-invite email link
+  // SIGNED_IN + invited_at + fresh confirmed_at: new user clicked their first invite link
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        router.replace('/invite-auth' as any);
+        return;
+      }
+      if (event === 'SIGNED_IN' && session?.user) {
+        const user = session.user as any;
+        const invitedAt = user.invited_at as string | null | undefined;
+        const confirmedAt = user.confirmed_at as string | null | undefined;
+        // confirmed_at is set to NOW the moment the invite link is first clicked.
+        // For returning logins confirmed_at is days/weeks old — skip those.
+        if (invitedAt && confirmedAt) {
+          const msSinceConfirm = Date.now() - new Date(confirmedAt).getTime();
+          if (msSinceConfirm < 30_000) {
+            router.replace('/invite-auth' as any);
+          }
+        }
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [router]);
 
   /**
    * Supabase emails may land on Site URL (origin only). Tokens in hash/query must reach

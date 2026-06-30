@@ -4,22 +4,27 @@ import { useState, useRef, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   FlatList,
   Image,
   ListRenderItem,
+  Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React from 'react';
 
 import RentChart from '@/components/RentChart';
 import { ThemedText } from '@/components/themed-text';
+import { fmtShortDate, fmtDateTime } from '@/lib/dateUtils';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
@@ -81,11 +86,11 @@ export default function LandlordDashboardScreen() {
     month: new Date().toLocaleDateString('en-US', { month: 'long' }),
     year: new Date().getFullYear(),
   });
-  const [rentPeriod, setRentPeriod] = useState<1 | 3 | 6 | 12>(1);
+  const [rentPeriod, setRentPeriod] = useState<1 | 3 | 6 | 'cr'>(1);
   const [rawRentTxns, setRawRentTxns] = useState<{ type: string; category: string; amount: number; date: string; status: string }[]>([]);
   const [rentMonths, setRentMonths] = useState<{ label: string; start: string; end: string }[]>([]);
   const [expectedMonthlyRent, setExpectedMonthlyRent] = useState(0);
-  
+
   // Chart carousel
   const chartScrollRef = useRef<ScrollView>(null);
   const [chartPage, setChartPage] = useState(0);
@@ -93,7 +98,16 @@ export default function LandlordDashboardScreen() {
 
   // Income vs Expense data
   const [incomeExpenseData, setIncomeExpenseData] = useState<{ month: string; income: number; expense: number }[]>([]);
-  const [incomeExpensePeriod, setIncomeExpensePeriod] = useState<1 | 3 | 6 | 12>(6);
+  const [incomeExpensePeriod, setIncomeExpensePeriod] = useState<1 | 3 | 6 | 'cr'>(6);
+
+  // Custom range state (shared modal, separate stored ranges per chart)
+  const [rentCustomRange, setRentCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [ieCustomRange, setIeCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [crModalTarget, setCrModalTarget] = useState<'rent' | 'ie' | null>(null);
+  const [crDraftStart, setCrDraftStart] = useState('');
+  const [crDraftEnd, setCrDraftEnd] = useState('');
+  const [showCRStartPicker, setShowCRStartPicker] = useState(false);
+  const [showCREndPicker, setShowCREndPicker] = useState(false);
 
   const isDark = colorScheme === 'dark';
   const primaryColor = '#4A90E2';
@@ -116,44 +130,48 @@ export default function LandlordDashboardScreen() {
   // Recalculate rent collection client-side when the period toggle changes
   useEffect(() => {
     if (rentMonths.length < 12) return;
-    const periodMonths = rentMonths.slice(12 - rentPeriod);
-    const periodStart = periodMonths[0].start;
-    const periodEnd = periodMonths[periodMonths.length - 1].end;
-    const periodTxns = rawRentTxns.filter(t => t.date >= periodStart && t.date <= periodEnd);
+
+    let periodTxns: typeof rawRentTxns;
+    let monthCount: number;
+    let firstLabel: string;
+
+    if (rentPeriod === 'cr') {
+      if (!rentCustomRange) return;
+      periodTxns = rawRentTxns.filter(t => t.date >= rentCustomRange.start && t.date <= rentCustomRange.end);
+      const s = new Date(rentCustomRange.start + 'T00:00:00');
+      const e = new Date(rentCustomRange.end + 'T00:00:00');
+      monthCount = Math.max(1, (e.getFullYear() - s.getFullYear()) * 12 + e.getMonth() - s.getMonth() + 1);
+      firstLabel = s.toLocaleDateString('en-US', { month: 'long' });
+    } else {
+      const periodMonths = rentMonths.slice(12 - rentPeriod);
+      periodTxns = rawRentTxns.filter(t => t.date >= periodMonths[0].start && t.date <= periodMonths[periodMonths.length - 1].end);
+      monthCount = rentPeriod;
+      firstLabel = periodMonths[0].label;
+    }
+
     const rentTxns = periodTxns.filter(t => t.type === 'income' && t.category === 'rent');
-    const collected = rentTxns
-      .filter(t => t.status === 'paid')
-      .reduce((s, t) => s + (t.amount || 0), 0);
-    // Overdue from explicit overdue-status transactions (always accurate regardless of rent config)
-    const overdueFromTxns = rentTxns
-      .filter(t => t.status === 'overdue')
-      .reduce((s, t) => s + (t.amount || 0), 0);
-    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * rentPeriod : collected + overdueFromTxns;
-    const overdue = expectedMonthlyRent > 0
-      ? Math.max(overdueFromTxns, Math.max(0, total - collected))
-      : overdueFromTxns;
+    const collected = rentTxns.filter(t => t.status === 'paid').reduce((s, t) => s + (t.amount || 0), 0);
+    const overdueFromTxns = rentTxns.filter(t => t.status === 'overdue').reduce((s, t) => s + (t.amount || 0), 0);
+    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * monthCount : collected + overdueFromTxns;
+    const overdue = expectedMonthlyRent > 0 ? Math.max(overdueFromTxns, Math.max(0, total - collected)) : overdueFromTxns;
     const advance = expectedMonthlyRent > 0 ? Math.max(0, collected - total) : 0;
-    setRentCollection({
-      collected,
-      overdue,
-      advance,
-      total,
-      month: periodMonths[0].label,
-      year: new Date().getFullYear(),
-    });
-  }, [rentPeriod, rawRentTxns, rentMonths, expectedMonthlyRent]);
+    setRentCollection({ collected, overdue, advance, total, month: firstLabel, year: new Date().getFullYear() });
+  }, [rentPeriod, rentCustomRange, rawRentTxns, rentMonths, expectedMonthlyRent]);
 
   // Recalculate income vs expense client-side when period changes
   useEffect(() => {
     if (rawRentTxns.length === 0 && rentMonths.length === 0) return;
-    const now = new Date();
     const months: { label: string; start: string; end: string }[] = [];
-    if (incomeExpensePeriod === 12) {
-      const year = now.getFullYear();
-      for (let m = 0; m < 12; m++) {
-        const start = new Date(year, m, 1).toISOString().split('T')[0];
-        const end = new Date(year, m + 1, 0).toISOString().split('T')[0];
-        months.push({ label: new Date(year, m).toLocaleDateString('en-US', { month: 'short' }), start, end });
+
+    if (incomeExpensePeriod === 'cr') {
+      if (!ieCustomRange) return;
+      const d = new Date(ieCustomRange.start + 'T00:00:00');
+      const endD = new Date(ieCustomRange.end + 'T00:00:00');
+      while (d <= endD) {
+        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
+        d.setMonth(d.getMonth() + 1);
       }
     } else {
       const d = new Date();
@@ -165,6 +183,7 @@ export default function LandlordDashboardScreen() {
         d.setMonth(d.getMonth() + 1);
       }
     }
+
     const result = months.map(({ label, start, end }) => {
       const bucket = rawRentTxns.filter(t => t.date >= start && t.date <= end);
       const income = bucket.filter(t => t.type === 'income' && t.status !== 'pending').reduce((s, t) => s + (t.amount || 0), 0);
@@ -172,7 +191,7 @@ export default function LandlordDashboardScreen() {
       return { month: label, income, expense };
     });
     setIncomeExpenseData(result);
-  }, [incomeExpensePeriod, rawRentTxns, rentMonths]);
+  }, [incomeExpensePeriod, ieCustomRange, rawRentTxns, rentMonths]);
 
   // Load data in background without blocking UI
   const loadDashboardDataInBackground = async () => {
@@ -410,6 +429,7 @@ export default function LandlordDashboardScreen() {
     }
   };
 
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {isLoading ? (
@@ -474,14 +494,14 @@ export default function LandlordDashboardScreen() {
                 <View>
                   <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Rent Collection</ThemedText>
                   <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
-                    {rentPeriod === 1
-                      ? `${rentCollection.month} ${rentCollection.year}`
-                      : `Last ${rentPeriod} months`}
+                    {rentPeriod === 'cr'
+                      ? (rentCustomRange ? `${fmtShortDate(rentCustomRange.start)} – ${fmtShortDate(rentCustomRange.end)}` : 'Select range')
+                      : rentPeriod === 1 ? `${rentCollection.month} ${rentCollection.year}` : `Last ${rentPeriod} months`}
                   </ThemedText>
                 </View>
-                {/* Period toggle: 1M / 3M / 6M / 12M */}
+                {/* Period toggle: 1M / 3M / 6M / CR */}
                 <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
-                  {([1, 3, 6, 12] as const).map(p => (
+                  {([1, 3, 6] as const).map(p => (
                     <TouchableOpacity
                       key={p}
                       style={[styles.rentPeriodBtn, rentPeriod === p && { backgroundColor: '#34C759' }]}
@@ -492,6 +512,19 @@ export default function LandlordDashboardScreen() {
                       </ThemedText>
                     </TouchableOpacity>
                   ))}
+                  <TouchableOpacity
+                    style={[styles.rentPeriodBtn, rentPeriod === 'cr' && { backgroundColor: '#34C759' }]}
+                    onPress={() => {
+                      setRentPeriod('cr');
+                      setCrDraftStart(rentCustomRange?.start ?? '');
+                      setCrDraftEnd(rentCustomRange?.end ?? '');
+                      setCrModalTarget('rent');
+                    }}
+                  >
+                    <ThemedText style={[styles.rentPeriodBtnText, { color: rentPeriod === 'cr' ? '#fff' : textSecondaryColor }]}>
+                      CR
+                    </ThemedText>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -526,11 +559,14 @@ export default function LandlordDashboardScreen() {
                 <View>
                   <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Income vs Expense</ThemedText>
                   <ThemedText style={[styles.sectionSubtitle, { color: textSecondaryColor }]}>
-                    {incomeExpensePeriod === 1 ? 'This month' : incomeExpensePeriod === 12 ? `Jan – Dec ${new Date().getFullYear()}` : `Last ${incomeExpensePeriod} months`}
+                    {incomeExpensePeriod === 'cr'
+                      ? (ieCustomRange ? `${fmtShortDate(ieCustomRange.start)} – ${fmtShortDate(ieCustomRange.end)}` : 'Select range')
+                      : incomeExpensePeriod === 1 ? 'This month' : `Last ${incomeExpensePeriod} months`}
                   </ThemedText>
                 </View>
+                {/* Period toggle: 1M / 3M / 6M / CR */}
                 <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
-                  {([1, 3, 6, 12] as const).map(p => (
+                  {([1, 3, 6] as const).map(p => (
                     <TouchableOpacity
                       key={p}
                       style={[styles.rentPeriodBtn, incomeExpensePeriod === p && { backgroundColor: primaryColor }]}
@@ -541,6 +577,19 @@ export default function LandlordDashboardScreen() {
                       </ThemedText>
                     </TouchableOpacity>
                   ))}
+                  <TouchableOpacity
+                    style={[styles.rentPeriodBtn, incomeExpensePeriod === 'cr' && { backgroundColor: primaryColor }]}
+                    onPress={() => {
+                      setIncomeExpensePeriod('cr');
+                      setCrDraftStart(ieCustomRange?.start ?? '');
+                      setCrDraftEnd(ieCustomRange?.end ?? '');
+                      setCrModalTarget('ie');
+                    }}
+                  >
+                    <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === 'cr' ? '#fff' : textSecondaryColor }]}>
+                      CR
+                    </ThemedText>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -679,7 +728,7 @@ export default function LandlordDashboardScreen() {
                     {notif.message}
                   </ThemedText>
                   <ThemedText style={[styles.notificationTime, { color: textSecondaryColor }]}>
-                    {new Date(notif.created_at).toLocaleString()}
+                    {fmtDateTime(notif.created_at)}
                   </ThemedText>
                 </View>
                 {!notif.is_read && (
@@ -720,6 +769,101 @@ export default function LandlordDashboardScreen() {
           <MaterialCommunityIcons name={showAddMenu ? 'close' : 'plus'} size={28} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {/* Custom Range date picker modal */}
+      <Modal
+        visible={crModalTarget !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setCrModalTarget(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setCrModalTarget(null)} />
+          <View style={{ backgroundColor: cardBgColor, padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+            <ThemedText style={{ fontSize: 17, fontWeight: '700', color: textPrimaryColor, marginBottom: 16 }}>
+              Custom Date Range
+            </ThemedText>
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2831' : '#f9fafb' }}
+              onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftStart ? textPrimaryColor : textSecondaryColor }}>
+                {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCRStartPicker && (
+              <DateTimePicker
+                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
+                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCRStartPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCRStartPicker(false)}>
+                <ThemedText style={{ color: '#137fec', fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2831' : '#f9fafb' }}
+              onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
+            >
+              <ThemedText style={{ color: crDraftEnd ? textPrimaryColor : textSecondaryColor }}>
+                {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
+              </ThemedText>
+            </TouchableOpacity>
+            {showCREndPicker && (
+              <DateTimePicker
+                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(_e, date) => {
+                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
+                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                }}
+              />
+            )}
+            {showCREndPicker && Platform.OS === 'ios' && (
+              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCREndPicker(false)}>
+                <ThemedText style={{ color: '#137fec', fontWeight: '600' }}>Done</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, borderWidth: 1, borderColor, alignItems: 'center' }}
+                onPress={() => setCrModalTarget(null)}
+              >
+                <ThemedText style={{ color: textPrimaryColor }}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, padding: 14, borderRadius: 10, backgroundColor: primaryColor, alignItems: 'center' }}
+                onPress={() => {
+                  if (!crDraftStart || !crDraftEnd) {
+                    Alert.alert('Select both start and end dates');
+                    return;
+                  }
+                  if (crDraftStart > crDraftEnd) {
+                    Alert.alert('End date must be after start date');
+                    return;
+                  }
+                  const range = { start: crDraftStart, end: crDraftEnd };
+                  if (crModalTarget === 'rent') setRentCustomRange(range);
+                  else setIeCustomRange(range);
+                  setCrModalTarget(null);
+                }}
+              >
+                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }

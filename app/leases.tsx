@@ -34,6 +34,7 @@ import {
   leaseNeedsApplicantTenantConversion,
 } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
+import { fmtDate } from '@/lib/dateUtils';
 
 export default function LeasesScreen() {
   const colorScheme = useColorScheme();
@@ -247,14 +248,7 @@ export default function LeasesScreen() {
     }
   };
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return 'Not set';
-    return new Date(dateString).toLocaleDateString('en-CA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
+  const formatDate = (dateString?: string) => fmtDate(dateString, 'Not set');
 
   const getPropertyAddress = (lease: DbLease) => {
     const prop = getPropertyById(lease.property_id);

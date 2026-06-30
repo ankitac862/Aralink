@@ -22,6 +22,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
 import { supabase } from '@/lib/supabase';
+import { fmtDate } from '@/lib/dateUtils';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -72,10 +73,7 @@ export default function AddRoomScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  const formatDate = (iso: string) => {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString();
-  };
+  const formatDate = (iso: string) => fmtDate(iso, '');
 
   useEffect(() => {
     // If roomId is provided, we're editing an existing room

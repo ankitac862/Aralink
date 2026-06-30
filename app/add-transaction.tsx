@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -25,8 +25,23 @@ import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { createTransaction, findActiveLease } from '@/lib/supabase';
 import { linkExpenseToRequest } from '@/services/maintenanceService';
+import { fetchVendors } from '@/services/vendorService';
+import type { Vendor } from '@/constants/vendors';
 
 type TransactionType = 'income' | 'expense';
+
+const MAINTENANCE_SERVICE_TYPES = [
+  { label: 'Plumbing', value: 'plumbing', icon: 'water-pump' },
+  { label: 'Electrical', value: 'electrical', icon: 'flash' },
+  { label: 'HVAC', value: 'hvac', icon: 'air-conditioner' },
+  { label: 'Appliance Repair', value: 'appliance', icon: 'fridge' },
+  { label: 'WiFi / Internet', value: 'wifi', icon: 'wifi' },
+  { label: 'Utilities', value: 'utilities', icon: 'lightning-bolt' },
+  { label: 'General Repair', value: 'general', icon: 'wrench' },
+  { label: 'Cleaning', value: 'cleaning', icon: 'broom' },
+  { label: 'Pest Control', value: 'pest', icon: 'bug' },
+  { label: 'Others', value: 'others', icon: 'dots-horizontal' },
+] as const;
 
 interface FormData {
   type: TransactionType;
@@ -39,6 +54,7 @@ interface FormData {
   leaseId: string;
   category: string;
   serviceType: string;
+  vendor: string;
   description: string;
 }
 
@@ -123,6 +139,7 @@ export default function AddTransactionScreen() {
     leaseId: '',
     category: params.category || 'rent',
     serviceType: '',
+    vendor: '',
     description: params.description || '',
   });
 
@@ -130,6 +147,21 @@ export default function AddTransactionScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showUnitModal, setShowUnitModal] = useState(false);
   const [showSubunitModal, setShowSubunitModal] = useState(false);
+  const [showServiceTypeModal, setShowServiceTypeModal] = useState(false);
+  const [allVendors, setAllVendors] = useState<Vendor[]>([]);
+  const [vendorQuery, setVendorQuery] = useState('');
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
+
+  const vendorSuggestions = useMemo(() => {
+    if (!vendorQuery.trim()) return [];
+    return allVendors
+      .filter(v => v.name.toLowerCase().includes(vendorQuery.toLowerCase()))
+      .slice(0, 6);
+  }, [allVendors, vendorQuery]);
+
+  useEffect(() => {
+    fetchVendors().then(setAllVendors).catch(() => {});
+  }, []);
 
   // Handle property selection
   const handlePropertySelect = (data: SelectedPropertyData) => {
@@ -212,6 +244,7 @@ export default function AddTransactionScreen() {
         lease_id: formData.leaseId || undefined,
         description: formData.description || undefined,
         service_type: formData.serviceType || undefined,
+        vendor: formData.vendor || undefined,
         status: 'paid',
       });
 
@@ -448,18 +481,61 @@ export default function AddTransactionScreen() {
           </View>
 
           {/* Service Type (for expense) */}
-          {formData.type === 'expense' && formData.category === 'maintenance' && (
+          {formData.type === 'expense' && (
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
                 SERVICE TYPE
               </ThemedText>
+              <TouchableOpacity
+                style={[styles.textInput, styles.dropdownBtn, { backgroundColor: cardBgColor, borderColor }]}
+                onPress={() => setShowServiceTypeModal(true)}
+              >
+                <ThemedText style={{ color: formData.serviceType ? textColor : placeholderColor, fontSize: 15, fontWeight: '500', flex: 1 }}>
+                  {formData.serviceType
+                    ? MAINTENANCE_SERVICE_TYPES.find(s => s.value === formData.serviceType)?.label ?? formData.serviceType
+                    : 'Select service type…'}
+                </ThemedText>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Vendor */}
+          {formData.type === 'expense' && (
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                VENDOR / SERVICE PROVIDER
+              </ThemedText>
               <TextInput
                 style={[styles.textInput, { backgroundColor: cardBgColor, borderColor, color: textColor }]}
-                placeholder="e.g. Plumbing, Electrical, Cleaning"
+                placeholder="Type to search or enter vendor name…"
                 placeholderTextColor={placeholderColor}
-                value={formData.serviceType}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, serviceType: text }))}
+                value={vendorQuery || formData.vendor}
+                onChangeText={(text) => {
+                  setVendorQuery(text);
+                  setFormData(prev => ({ ...prev, vendor: text }));
+                  setShowVendorDropdown(text.trim().length > 0);
+                }}
+                onBlur={() => setTimeout(() => setShowVendorDropdown(false), 150)}
               />
+              {showVendorDropdown && vendorSuggestions.length > 0 && (
+                <View style={[styles.vendorDropdown, { backgroundColor: cardBgColor, borderColor }]}>
+                  {vendorSuggestions.map((v) => (
+                    <TouchableOpacity
+                      key={v.id}
+                      style={[styles.vendorSuggestion, { borderBottomColor: borderColor }]}
+                      onPress={() => {
+                        setFormData(prev => ({ ...prev, vendor: v.name }));
+                        setVendorQuery('');
+                        setShowVendorDropdown(false);
+                      }}
+                    >
+                      <ThemedText style={[styles.vendorSuggestionName, { color: textColor }]}>{v.name}</ThemedText>
+                      <ThemedText style={[styles.vendorSuggestionMeta, { color: secondaryTextColor }]}>{v.category} · {v.city}</ThemedText>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
           )}
 
@@ -558,12 +634,53 @@ export default function AddTransactionScreen() {
         </View>
       </Modal>
 
+      {/* Service Type Modal */}
+      <Modal
+        visible={showServiceTypeModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowServiceTypeModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: borderColor }]}>
+              <ThemedText style={[styles.modalTitle, { color: textColor }]}>Select Service Type</ThemedText>
+              <TouchableOpacity onPress={() => setShowServiceTypeModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textColor} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
+              {MAINTENANCE_SERVICE_TYPES.map((s) => (
+                <TouchableOpacity
+                  key={s.value}
+                  style={[styles.modalItem, { borderBottomColor: borderColor }]}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, serviceType: s.value }));
+                    setShowServiceTypeModal(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                    <MaterialCommunityIcons name={s.icon as any} size={20} color={formData.serviceType === s.value ? primaryColor : secondaryTextColor} />
+                    <ThemedText style={[styles.modalItemText, { color: formData.serviceType === s.value ? primaryColor : textColor }]}>
+                      {s.label}
+                    </ThemedText>
+                  </View>
+                  {formData.serviceType === s.value && (
+                    <MaterialCommunityIcons name="check" size={20} color={primaryColor} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Bottom Buttons */}
-      <View 
+      <View
         style={[
-          styles.bottomButtons, 
-          { 
-            backgroundColor: cardBgColor, 
+          styles.bottomButtons,
+          {
+            backgroundColor: cardBgColor,
             borderTopColor: borderColor,
             paddingBottom: insets.bottom + 16,
           }
@@ -713,7 +830,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalList: {
-    flex: 1,
+    maxHeight: 420,
   },
   modalListContent: {
     paddingBottom: 20,
@@ -811,6 +928,30 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  dropdownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  vendorDropdown: {
+    borderWidth: 1,
+    borderRadius: 12,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  vendorSuggestion: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  vendorSuggestionName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  vendorSuggestionMeta: {
+    fontSize: 12,
+    marginTop: 2,
   },
 });
 

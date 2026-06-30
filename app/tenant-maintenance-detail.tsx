@@ -16,6 +16,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { FilePreview } from '@/components/maintenance/FilePreview';
+import { fmtDateTime } from '@/lib/dateUtils';
 
 export default function TenantMaintenanceRequestDetailsScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -95,7 +96,7 @@ export default function TenantMaintenanceRequestDetailsScreen() {
           <DetailRow
             icon="calendar-clock"
             label="Availability"
-            value={new Date(request.availability).toLocaleString()}
+            value={fmtDateTime(request.availability)}
           />
           <DetailRow
             icon="account-check"
@@ -115,7 +116,7 @@ export default function TenantMaintenanceRequestDetailsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.activityMessage}>{item.message}</Text>
                 <Text style={styles.activityMeta}>
-                  {new Date(item.timestamp).toLocaleString()}
+                  {fmtDateTime(item.timestamp)}
                 </Text>
               </View>
             </View>

@@ -8,6 +8,7 @@ import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { StatusChip } from '@/components/maintenance/StatusChip';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
+import { fmtDateTime } from '@/lib/dateUtils';
 
 const statusFilters = [
   { label: 'All', value: 'all' },
@@ -99,7 +100,7 @@ export default function TenantMaintenanceStatusScreen() {
             <View style={styles.metaRow}>
               <MaterialCommunityIcons name="clock-outline" size={16} color="#94a3b8" />
               <Text style={styles.metaText}>
-                Updated {new Date(item.updatedAt).toLocaleDateString()} {new Date(item.updatedAt).toLocaleTimeString()}
+                Updated {fmtDateTime(item.updatedAt)}
               </Text>
             </View>
           </TouchableOpacity>
