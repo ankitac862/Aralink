@@ -5,7 +5,7 @@
  * Allows viewing, downloading, and managing lease documents.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -15,7 +15,7 @@ import {
   Linking,
   Alert,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -133,9 +133,11 @@ export default function LeasesScreen() {
     );
   };
 
-  useEffect(() => {
-    loadLeases();
-  }, [user?.id, params.propertyId]);
+  useFocusEffect(
+    useCallback(() => {
+      loadLeases();
+    }, [user?.id, params.propertyId])
+  );
 
   const loadLeases = async () => {
     if (!user?.id) return;

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, View, Modal, Alert, ActivityIndicator, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
@@ -37,9 +37,11 @@ export default function LandlordApplicationReviewScreen() {
   const modalBg = isDark ? '#192734' : '#ffffff';
 
   // Load application details
-  useEffect(() => {
-    loadApplication();
-  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      loadApplication();
+    }, [id])
+  );
 
   const loadApplication = async () => {
     if (!id) return;

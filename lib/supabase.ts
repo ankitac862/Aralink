@@ -4746,12 +4746,13 @@ export async function approveApplication(applicationId: string, shouldAddTenant:
           .join(', ')
       : 'Unknown Property';
 
-    // Send notification to tenant (applicant)
+    // Send in-app + push notification to applicant
+    const applicantUserId = application.user_id || application.applicant_id;
     try {
       await supabase
         .from('notifications')
         .insert({
-          user_id: application.applicant_id,
+          user_id: applicantUserId,
           type: 'application_approved',
           title: 'Application Approved! 🎉',
           message: `Your application for ${propertyAddress} has been approved!`,
@@ -4764,9 +4765,18 @@ export async function approveApplication(applicationId: string, shouldAddTenant:
           created_at: new Date().toISOString(),
         });
 
-      console.log('✅ Approval notification sent to applicant:', application.applicant_id);
+      console.log('✅ Approval notification sent to applicant:', applicantUserId);
     } catch (notifError) {
       console.error('Error sending approval notification:', notifError);
+    }
+
+    if (applicantUserId) {
+      await triggerPushNotification({
+        userId: applicantUserId,
+        title: 'Application Approved! 🎉',
+        body: `Your application for ${propertyAddress} has been approved.`,
+        data: { screen: 'tenant-leases', applicationId: application.id },
+      });
     }
 
     return { 
