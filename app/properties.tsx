@@ -108,11 +108,23 @@ export default function PropertiesScreen() {
   // Get occupancy stats
   const getOccupancyStats = (property: Property) => {
     const totalUnits = property.units.length;
-    const occupiedUnits = property.units.filter(u => u.isOccupied).length;
-    // For single-unit properties the meaningful number is rooms, not the wrapper unit
-    const roomCount = property.propertyType === 'single_unit'
-      ? (property.units[0]?.subUnits?.length ?? 0)
-      : null;
+
+    // Single unit with rooms: count occupied rooms by checking sub-unit tenant assignments
+    if (property.propertyType === 'single_unit') {
+      const subUnits = property.units[0]?.subUnits ?? [];
+      if (subUnits.length > 0) {
+        const occupiedRooms = subUnits.filter(su => !!su.tenantId || !!su.tenantName).length;
+        return { totalUnits, occupiedUnits: occupiedRooms, roomCount: subUnits.length };
+      }
+    }
+
+    // Multi-unit: count occupied units; also check sub-units inside each unit
+    const occupiedUnits = property.units.filter(u => {
+      if (u.isOccupied) return true;
+      return u.subUnits?.some(su => !!su.tenantId || !!su.tenantName) ?? false;
+    }).length;
+
+    const roomCount = null;
     return { totalUnits, occupiedUnits, roomCount };
   };
 

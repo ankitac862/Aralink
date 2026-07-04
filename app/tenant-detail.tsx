@@ -18,9 +18,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
+import { useAuthStore } from '@/store/authStore';
 import { DbTransaction, fetchTenantTransactions, supabase } from '@/lib/supabase';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
 import { fmtShortDate, fmtDate } from '@/lib/dateUtils';
@@ -46,6 +48,7 @@ export default function TenantDetailScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { getTenantById, deleteTenant } = useTenantStore();
   const { getPropertyById, getUnitById } = usePropertyStore();
+  const { user } = useAuthStore();
 
   const [selectedCategory, setSelectedCategory] = useState('rent');
   const [transactions, setTransactions] = useState<DbTransaction[]>([]);
@@ -59,6 +62,8 @@ export default function TenantDetailScreen() {
   const [crDraftEnd, setCrDraftEnd] = useState('');
   const [showCRStartPicker, setShowCRStartPicker] = useState(false);
   const [showCREndPicker, setShowCREndPicker] = useState(false);
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [deleteDialogLoading, setDeleteDialogLoading] = useState(false);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -237,22 +242,20 @@ export default function TenantDetailScreen() {
 
   const handleDelete = () => {
     if (!tenant || !tenantData) return;
-    
-    Alert.alert(
-      'Delete Tenant',
-      'Are you sure you want to delete this tenant? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteTenant(tenantData.id);
-            router.back();
-          },
-        },
-      ]
-    );
+    setDeleteDialogVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!tenantData || !user?.id) return;
+    setDeleteDialogLoading(true);
+    const result = await deleteTenant(tenantData.id, user.id);
+    setDeleteDialogLoading(false);
+    setDeleteDialogVisible(false);
+    if (result.deleted) {
+      router.back();
+    } else {
+      Alert.alert('Delete Failed', result.error || 'Something went wrong. Please try again.');
+    }
   };
 
   const handleEdit = () => {
@@ -797,6 +800,16 @@ export default function TenantDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      <DeleteConfirmDialog
+        visible={deleteDialogVisible}
+        entityType="tenant"
+        entityName={tenantData ? `${tenantData.firstName} ${tenantData.lastName}` : undefined}
+        hasTenant={false}
+        isLoading={deleteDialogLoading}
+        onCancel={() => setDeleteDialogVisible(false)}
+        onConfirm={handleConfirmDelete}
+      />
     </ThemedView>
   );
 }

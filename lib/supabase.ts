@@ -680,23 +680,48 @@ export async function updatePropertyInDb(propertyId: string, updates: Partial<Db
 }
 
 // Delete a property
-export async function deletePropertyFromDb(propertyId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('properties')
-      .delete()
-      .eq('id', propertyId);
+// ─── Archive-Delete Service ──────────────────────────────────────────────────
 
-    if (error) {
-      console.error('Error deleting property:', error);
-      return false;
-    }
+export interface TenantCheckResult {
+  hasTenant: boolean;
+  tenantName: string | null;
+  tenantCount: number;
+}
 
-    return true;
-  } catch (error) {
-    console.error('Error deleting property:', error);
-    return false;
+export interface ArchiveDeleteResult {
+  deleted: boolean;
+  error?: string;
+}
+
+export async function checkEntityHasTenant(
+  entityType: 'property' | 'unit' | 'subunit' | 'tenant',
+  entityId: string
+): Promise<TenantCheckResult> {
+  const { data, error } = await supabase.rpc('check_entity_has_tenant', {
+    p_entity_type: entityType,
+    p_entity_id: entityId,
+  });
+  if (error) {
+    console.error('checkEntityHasTenant error:', error);
+    return { hasTenant: false, tenantName: null, tenantCount: 0 };
   }
+  return {
+    hasTenant: data?.has_tenant ?? false,
+    tenantName: data?.tenant_name ?? null,
+    tenantCount: data?.tenant_count ?? 0,
+  };
+}
+
+export async function deletePropertyFromDb(propertyId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_property', {
+    p_property_id: propertyId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_property error:', error);
+    return { deleted: false, error: error.message };
+  }
+  return { deleted: true };
 }
 
 // Create a unit
@@ -750,24 +775,18 @@ export async function updateUnitInDb(unitId: string, updates: Partial<DbUnit>): 
 }
 
 // Delete a unit
-export async function deleteUnitFromDb(unitId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('units')
-      .delete()
-      .eq('id', unitId);
-
-    if (error) {
-      console.error('Error deleting unit:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting unit:', error);
-    return false;
+export async function deleteUnitFromDb(unitId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_unit', {
+    p_unit_id: unitId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_unit error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
+
 
 // Create a sub-unit (room)
 export async function createSubUnit(subUnit: Omit<DbSubUnit, 'id' | 'created_at' | 'updated_at'>): Promise<DbSubUnit | null> {
@@ -819,24 +838,17 @@ export async function updateSubUnitInDb(subUnitId: string, updates: Partial<DbSu
   }
 }
 
-// Delete a sub-unit
-export async function deleteSubUnitFromDb(subUnitId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('sub_units')
-      .delete()
-      .eq('id', subUnitId);
-
-    if (error) {
-      console.error('Error deleting sub unit:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting sub unit:', error);
-    return false;
+// Delete a sub-unit (archive then hard-delete via RPC)
+export async function deleteSubUnitFromDb(subUnitId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_subunit', {
+    p_subunit_id: subUnitId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_subunit error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
 
 // =====================================================
@@ -853,6 +865,8 @@ export interface DbTenant {
   property_id: string;
   unit_id?: string;
   unit_name?: string;
+  sub_unit_id?: string | null;
+  sub_unit_name?: string | null;
   photo?: string;
   id_proof_1?: string;
   id_proof_2?: string;
@@ -898,7 +912,7 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
       // Get ACTIVE tenant IDs for these properties via tenant_property_links
       const { data: links, error: linksError } = await supabase
         .from('tenant_property_links')
-        .select('tenant_id, status, property_id')
+        .select('tenant_id, status, property_id, unit_id, sub_unit_id')
         .in('property_id', propertyIdsAsStrings)
         .eq('status', 'active');
 
@@ -906,7 +920,17 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
         console.error('❌ Error fetching tenant_property_links:', linksError);
       } else if (links && links.length > 0) {
         console.log(`📋 Found ${links.length} tenant links:`, links);
-        
+
+        // Build a map of tenant_id → link data (property, unit, sub_unit)
+        const tenantLinkMap: Record<string, { property_id: string; unit_id: string | null; sub_unit_id: string | null }> = {};
+        links.forEach(link => {
+          tenantLinkMap[link.tenant_id] = {
+            property_id: link.property_id,
+            unit_id: link.unit_id ?? null,
+            sub_unit_id: link.sub_unit_id ?? null,
+          };
+        });
+
         const tenantIds = [...new Set(links.map(link => link.tenant_id))];
         console.log(`📋 Unique tenant IDs to fetch:`, tenantIds);
 
@@ -921,9 +945,36 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
           console.error('❌ Error fetching tenants by IDs:', tenantsError);
           console.error('❌ Tenant error details:', JSON.stringify(tenantsError, null, 2));
         } else {
-          tenantsFromLinks = tenantsData || [];
+          // Collect sub_unit_ids that need name resolution
+          const subUnitIds = [...new Set(
+            Object.values(tenantLinkMap)
+              .map(l => l.sub_unit_id)
+              .filter((id): id is string => !!id)
+          )];
+
+          let subUnitNameMap: Record<string, string> = {};
+          if (subUnitIds.length > 0) {
+            const { data: subUnits } = await supabase
+              .from('sub_units')
+              .select('id, name')
+              .in('id', subUnitIds);
+            subUnits?.forEach(su => { subUnitNameMap[su.id] = su.name; });
+          }
+
+          // Enrich each tenant with authoritative link data
+          tenantsFromLinks = (tenantsData || []).map(tenant => {
+            const link = tenantLinkMap[tenant.id];
+            if (!link) return tenant;
+            return {
+              ...tenant,
+              property_id: link.property_id || tenant.property_id,
+              unit_id: link.unit_id || tenant.unit_id,
+              sub_unit_id: link.sub_unit_id,
+              sub_unit_name: link.sub_unit_id ? (subUnitNameMap[link.sub_unit_id] ?? null) : null,
+            };
+          });
+
           console.log(`✅ Fetched ${tenantsFromLinks.length} tenants via links`);
-          console.log('📋 Tenant data:', JSON.stringify(tenantsFromLinks, null, 2));
         }
       } else {
         console.log('⚠️ No tenant links found for these properties');
@@ -1019,7 +1070,37 @@ export async function fetchTenantById(tenantId: string): Promise<DbTenant | null
       return null;
     }
 
-    return data;
+    if (!data) return null;
+
+    // Enrich with sub_unit info from tenant_property_links
+    const { data: link } = await supabase
+      .from('tenant_property_links')
+      .select('property_id, unit_id, sub_unit_id')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!link) return data;
+
+    let sub_unit_name: string | null = null;
+    if (link.sub_unit_id) {
+      const { data: su } = await supabase
+        .from('sub_units')
+        .select('name')
+        .eq('id', link.sub_unit_id)
+        .maybeSingle();
+      sub_unit_name = su?.name ?? null;
+    }
+
+    return {
+      ...data,
+      property_id: link.property_id || data.property_id,
+      unit_id: link.unit_id || data.unit_id,
+      sub_unit_id: link.sub_unit_id ?? null,
+      sub_unit_name,
+    };
   } catch (error) {
     console.error('Error fetching tenant:', error);
     return null;
@@ -1076,24 +1157,17 @@ export async function updateTenantInDb(tenantId: string, updates: Partial<DbTena
   }
 }
 
-// Delete a tenant
-export async function deleteTenantFromDb(tenantId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('tenants')
-      .delete()
-      .eq('id', tenantId);
-
-    if (error) {
-      console.error('Error deleting tenant:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting tenant:', error);
-    return false;
+// Delete a tenant (archive then hard-delete via RPC)
+export async function deleteTenantFromDb(tenantId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_tenant', {
+    p_tenant_id: tenantId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_tenant error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
 
 // =====================================================

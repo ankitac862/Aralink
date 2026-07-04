@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import {
+  ArchiveDeleteResult,
   createProperty as createPropertyInDb,
   createSubUnit as createSubUnitInDb,
   createUnit as createUnitInDb,
@@ -117,22 +118,22 @@ export interface PropertyStore {
   // Actions
   addProperty: (property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>, userId?: string) => Promise<string>;
   updateProperty: (id: string, updates: Partial<Property>) => Promise<void>;
-  deleteProperty: (id: string) => Promise<void>;
+  deleteProperty: (id: string, userId: string) => Promise<ArchiveDeleteResult>;
   getPropertyById: (id: string) => Property | undefined;
   getUnitById: (id: string) => Unit | undefined;
   
   // Unit management
   addUnit: (propertyId: string, unit: Omit<Unit, 'id' | 'subUnits' | 'isOccupied'>) => Promise<void>;
   updateUnit: (propertyId: string, unitId: string, updates: Partial<Unit>) => Promise<void>;
-  deleteUnit: (propertyId: string, unitId: string) => Promise<void>;
-  
+  deleteUnit: (propertyId: string, unitId: string, userId: string) => Promise<ArchiveDeleteResult>;
+
   // Sub-unit management
-  addSubUnit: (propertyId: string, unitId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
+  addSubUnit: (propertyId: string, unitId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<string>;
   updateSubUnit: (propertyId: string, unitId: string, subUnitId: string, updates: Partial<SubUnit>) => Promise<void>;
-  deleteSubUnit: (propertyId: string, unitId: string, subUnitId: string) => Promise<void>;
-  
+  deleteSubUnit: (propertyId: string, unitId: string, subUnitId: string, userId: string) => Promise<ArchiveDeleteResult>;
+
   // For single unit properties - add room directly to the first unit
-  addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
+  addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<string>;
   
   // Supabase sync
   loadFromSupabase: (userId: string, forceReload?: boolean) => Promise<void>;
@@ -405,19 +406,15 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     }
   },
   
-  deleteProperty: async (id) => {
-    // Update local state first
-    set((state) => ({
-      properties: state.properties.filter((p) => p.id !== id),
-      selectedPropertyIds: state.selectedPropertyIds.filter((pid) => pid !== id),
-    }));
-    
-    // Try to delete from Supabase
-    try {
-      await deletePropertyFromDb(id);
-    } catch (error) {
-      console.error('Error deleting property from Supabase:', error);
+  deleteProperty: async (id, userId) => {
+    const result = await deletePropertyFromDb(id, userId);
+    if (result.deleted) {
+      set((state) => ({
+        properties: state.properties.filter((p) => p.id !== id),
+        selectedPropertyIds: state.selectedPropertyIds.filter((pid) => pid !== id),
+      }));
     }
+    return result;
   },
   
   getPropertyById: (id) => {
@@ -524,22 +521,18 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     }
   },
   
-  deleteUnit: async (propertyId, unitId) => {
-    // Update local state
-    set((state) => ({
-      properties: state.properties.map((p) =>
-        p.id === propertyId
-          ? { ...p, units: p.units.filter((u) => u.id !== unitId) }
-          : p
-      ),
-    }));
-    
-    // Try to delete from Supabase
-    try {
-      await deleteUnitFromDb(unitId);
-    } catch (error) {
-      console.error('Error deleting unit from Supabase:', error);
+  deleteUnit: async (propertyId, unitId, userId) => {
+    const result = await deleteUnitFromDb(unitId, userId);
+    if (result.deleted) {
+      set((state) => ({
+        properties: state.properties.map((p) =>
+          p.id === propertyId
+            ? { ...p, units: p.units.filter((u) => u.id !== unitId) }
+            : p
+        ),
+      }));
     }
+    return result;
   },
   
   // Sub-unit management
@@ -564,8 +557,6 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         photos: subUnitData.photos,
         amenities: subUnitData.amenities,
         shared_spaces: subUnitData.sharedSpaces,
-        tenant_id: subUnitData.tenantId,
-        tenant_name: subUnitData.tenantName,
       });
       
       if (!savedSubUnit) {
@@ -644,37 +635,31 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         photos: updates.photos,
         amenities: updates.amenities,
         shared_spaces: updates.sharedSpaces,
-        tenant_id: updates.tenantId,
-        tenant_name: updates.tenantName,
       } as any);
     } catch (error) {
       console.error('Error updating sub-unit in Supabase:', error);
     }
   },
   
-  deleteSubUnit: async (propertyId, unitId, subUnitId) => {
-    // Update local state
-    set((state) => ({
-      properties: state.properties.map((p) =>
-        p.id === propertyId
-          ? {
-              ...p,
-              units: p.units.map((u) =>
-                u.id === unitId
-                  ? { ...u, subUnits: u.subUnits.filter((su) => su.id !== subUnitId) }
-                  : u
-              ),
-            }
-          : p
-      ),
-    }));
-    
-    // Try to delete from Supabase
-    try {
-      await deleteSubUnitFromDb(subUnitId);
-    } catch (error) {
-      console.error('Error deleting sub-unit from Supabase:', error);
+  deleteSubUnit: async (propertyId, unitId, subUnitId, userId) => {
+    const result = await deleteSubUnitFromDb(subUnitId, userId);
+    if (result.deleted) {
+      set((state) => ({
+        properties: state.properties.map((p) =>
+          p.id === propertyId
+            ? {
+                ...p,
+                units: p.units.map((u) =>
+                  u.id === unitId
+                    ? { ...u, subUnits: u.subUnits.filter((su) => su.id !== subUnitId) }
+                    : u
+                ),
+              }
+            : p
+        ),
+      }));
     }
+    return result;
   },
   
   // Filter management
@@ -698,8 +683,7 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   addRoomToSingleUnit: async (propertyId, subUnitData) => {
     const property = get().properties.find(p => p.id === propertyId);
     if (!property) {
-      console.error('Property not found:', propertyId);
-      return;
+      throw new Error(`Property not found: ${propertyId}`);
     }
 
     let unitId: string;
@@ -742,7 +726,7 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         console.log('Main Unit created with UUID:', unitId);
       } catch (error) {
         console.error('Error creating Main Unit in Supabase:', error);
-        return;
+        throw error;
       }
     } else {
       // Use existing unit
@@ -762,8 +746,6 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         photos: subUnitData.photos,
         amenities: subUnitData.amenities,
         shared_spaces: subUnitData.sharedSpaces,
-        tenant_id: subUnitData.tenantId,
-        tenant_name: subUnitData.tenantName,
       });
 
       if (savedSubUnit) {
@@ -799,7 +781,9 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         }));
 
         console.log('Subunit created successfully with UUID:', savedSubUnit.id);
+        return savedSubUnit.id;
       }
+      throw new Error('Failed to create subunit in Supabase');
     } catch (error) {
       console.error('Error saving subunit to Supabase:', error);
       throw error;
