@@ -35,7 +35,7 @@ export default function TabLayout() {
 
   const isLandlordOrManager = userRole === 'landlord' || userRole === 'manager' ? true : false;
   const isWeb = Platform.OS === 'web';
-  const borderColor = colorScheme === 'dark' ? '#394a57' : '#E5E7EB';
+  const borderColor = colorScheme === 'dark' ? '#26282C' : '#E5E5E7';
 
   // Define navigation items based on user role
   const navItems = [

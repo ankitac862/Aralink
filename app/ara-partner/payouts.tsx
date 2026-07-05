@@ -16,7 +16,6 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAraPartnerStore, PayoutRecord } from '@/store/araPartnerStore';
 
-const PRIMARY = '#2A64F5';
 type Filter = 'paid' | 'approved' | 'cancelled';
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'paid', label: 'Paid' },
@@ -32,11 +31,12 @@ export default function Payouts() {
   const { payouts, loadPayouts, isLoading } = useAraPartnerStore();
   const [filter, setFilter] = useState<Filter>('paid');
 
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBg = isDark ? '#1a202c' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subText = isDark ? '#94a3b8' : '#6B7280';
-  const borderColor = isDark ? '#334155' : '#E5E7EB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const PRIMARY = isDark ? '#FFFFFF' : '#111315';
 
   useFocusEffect(useCallback(() => { loadPayouts(); }, []));
 
@@ -145,7 +145,7 @@ export default function Payouts() {
 function payoutStatusColor(status: string) {
   if (status === 'paid') return '#10B981';
   if (status === 'cancelled') return '#EF4444';
-  if (status === 'approved') return '#2A64F5';
+  if (status === 'approved') return '#8E959B';
   return '#F59E0B';
 }
 

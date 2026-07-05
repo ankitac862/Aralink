@@ -30,13 +30,13 @@ export default function ApplicantsScreen() {
   const [isLoading, setIsLoading] = useState(true);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#0d141b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const loadApplications = async () => {
     if (!user?.id) return;
     
@@ -141,7 +141,7 @@ export default function ApplicantsScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor }]}
         onPress={() => router.push('/add-applicant')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
     </ThemedView>
   );
@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,

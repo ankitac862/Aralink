@@ -101,15 +101,15 @@ export default function AddTransactionScreen() {
   }>();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1a2632' : '#ffffff';
-  const inputBgColor = isDark ? '#1e293b' : '#f6f7f8';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#e0e6ed' : '#0d141b';
-  const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
-  const placeholderColor = isDark ? '#64748b' : '#9ca3af';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const inputBgColor = isDark ? '#141517' : '#F7F7F8';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const placeholderColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   // Ensure we always have an array for properties
   const safeProperties = Array.isArray(properties) ? properties : [];
 
@@ -292,7 +292,7 @@ export default function AddTransactionScreen() {
           showsVerticalScrollIndicator={false}
         >
           {/* Income/Expense Toggle */}
-          <View style={[styles.toggleWrapper, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+          <View style={[styles.toggleWrapper, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
             <TouchableOpacity
               style={[
                 styles.toggleOption,
@@ -470,7 +470,7 @@ export default function AddTransactionScreen() {
                   <ThemedText 
                     style={[
                       styles.categoryOptionText,
-                      { color: formData.category === cat.value ? '#ffffff' : textColor },
+                      { color: formData.category === cat.value ? onPrimaryColor : textColor },
                     ]}
                   >
                     {cat.label}
@@ -687,7 +687,7 @@ export default function AddTransactionScreen() {
         ]}
       >
         <TouchableOpacity
-          style={[styles.cancelButton, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}
+          style={[styles.cancelButton, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}
           onPress={() => router.back()}
         >
           <ThemedText style={[styles.cancelButtonText, { color: textColor }]}>
@@ -699,7 +699,7 @@ export default function AddTransactionScreen() {
           onPress={handleSubmit}
           disabled={isSubmitting}
         >
-          <ThemedText style={styles.saveButtonText}>
+          <ThemedText style={[styles.saveButtonText, { color: onPrimaryColor }]}>
             {isSubmitting ? 'Saving...' : 'Save'}
           </ThemedText>
         </TouchableOpacity>
@@ -918,7 +918,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,

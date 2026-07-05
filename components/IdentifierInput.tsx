@@ -107,7 +107,7 @@ export function IdentifierInput({
       >
         <Pressable style={styles.modalOverlay} onPress={() => setPickerVisible(false)}>
           <Pressable
-            style={[styles.modalSheet, { backgroundColor: isDark ? '#1a202c' : '#ffffff' }]}
+            style={[styles.modalSheet, { backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF' }]}
             onPress={(e) => e.stopPropagation()}
           >
             <Text style={[styles.modalTitle, { color: textColor }]}>Select country code</Text>

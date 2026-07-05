@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Image, StyleSheet, View, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { Image, StyleSheet, View, TouchableOpacity, FlatList, ActivityIndicator, RefreshControl, AppState, AppStateStatus } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -24,13 +24,13 @@ export default function MessagesScreen() {
   const [subscription, setSubscription] = useState<any>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
-  const primaryColor = '#4A90E2';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   // Reload conversations when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
@@ -38,6 +38,18 @@ export default function MessagesScreen() {
       loadConversations();
     }, [])
   );
+
+  // Reload when app returns from background
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+        loadConversations();
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     loadConversations();

@@ -27,12 +27,13 @@ export default function InviteScreen() {
   const [actionStatus, setActionStatus] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#0f172a' : '#f8fafc';
-  const cardColor = isDark ? '#111827' : '#ffffff';
-  const borderColor = isDark ? '#1f2937' : '#e5e7eb';
-  const textColor = isDark ? '#f9fafb' : '#0f172a';
-  const secondaryText = isDark ? '#94a3b8' : '#64748b';
-  const primaryColor = '#137fec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryText = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const inviteEmail = tenant_email || email || '';
 
   const addressLine = useMemo(() => {
@@ -121,7 +122,7 @@ export default function InviteScreen() {
               Use the invited email to create your password first, then continue with the property invite.
             </ThemedText>
             <TouchableOpacity style={[styles.button, { backgroundColor: primaryColor }]} onPress={handleSetPassword}>
-              <ThemedText style={styles.buttonText}>Set Password</ThemedText>
+              <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Set Password</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.button, styles.decline, { borderColor }]} onPress={handleSignIn}>
               <ThemedText style={[styles.buttonText, { color: textColor }]}>Already have an account? Sign in</ThemedText>
@@ -163,7 +164,7 @@ export default function InviteScreen() {
                         }
                       })}
                     >
-                      <ThemedText style={styles.buttonText}>Start Application</ThemedText>
+                      <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Start Application</ThemedText>
                     </TouchableOpacity>
                   </>
                 )}
@@ -175,7 +176,7 @@ export default function InviteScreen() {
                 {!actionStatus && inviteDetails.inviteStatus === 'pending' && (
                   <View style={styles.actions}>
                     <TouchableOpacity style={[styles.button, styles.accept, { backgroundColor: primaryColor }]} onPress={handleAccept}>
-                      <ThemedText style={styles.buttonText}>Accept</ThemedText>
+                      <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Accept</ThemedText>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.button, styles.decline, { borderColor }]} onPress={handleDecline}>
                       <ThemedText style={[styles.buttonText, { color: textColor }]}>Decline</ThemedText>

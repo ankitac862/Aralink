@@ -16,13 +16,14 @@ export default function TenantLeaseReviewSignScreen() {
   const { tenantApplication, currentLeaseDraft, signLease } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
-  const inputBgColor = isDark ? '#1a202c' : '#ffffff';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
 
   const [agreed, setAgreed] = useState(false);
   const [signature, setSignature] = useState('');
@@ -172,7 +173,7 @@ export default function TenantLeaseReviewSignScreen() {
         <TouchableOpacity
           style={[styles.submitButton, { backgroundColor: primaryColor }]}
           onPress={handleSubmit}>
-          <ThemedText style={styles.submitButtonText}>Submit Signed Lease</ThemedText>
+          <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Submit Signed Lease</ThemedText>
         </TouchableOpacity>
       </ScrollView>
     </ThemedView>

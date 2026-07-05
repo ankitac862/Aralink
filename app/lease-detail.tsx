@@ -291,12 +291,13 @@ export default function LeaseDetailScreen() {
   };
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const successColor = '#10b981';
   const warningColor = '#f59e0b';
 
@@ -561,7 +562,7 @@ export default function LeaseDetailScreen() {
           style={[styles.backButton, { backgroundColor: primaryColor }]}
           onPress={() => router.back()}
         >
-          <ThemedText style={styles.backButtonText}>Go Back</ThemedText>
+          <ThemedText style={[styles.backButtonText, { color: onPrimaryColor }]}>Go Back</ThemedText>
         </TouchableOpacity>
       </ThemedView>
     );
@@ -696,8 +697,8 @@ export default function LeaseDetailScreen() {
               style={[styles.documentButton, { backgroundColor: primaryColor }]}
               onPress={handleViewDocument}
             >
-              <MaterialCommunityIcons name="eye" size={20} color="#fff" />
-              <ThemedText style={styles.documentButtonText}>View / Download PDF</ThemedText>
+              <MaterialCommunityIcons name="eye" size={20} color={onPrimaryColor} />
+              <ThemedText style={[styles.documentButtonText, { color: onPrimaryColor }]}>View / Download PDF</ThemedText>
             </TouchableOpacity>
           </View>
         )}
@@ -814,11 +815,11 @@ export default function LeaseDetailScreen() {
                 disabled={isProcessing}
               >
                 {isProcessing ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={onPrimaryColor} />
                 ) : (
                   <>
-                    <MaterialCommunityIcons name="pencil-outline" size={20} color="#fff" />
-                    <ThemedText style={styles.sendButtonText}>Edit & Resend</ThemedText>
+                    <MaterialCommunityIcons name="pencil-outline" size={20} color={onPrimaryColor} />
+                    <ThemedText style={[styles.sendButtonText, { color: onPrimaryColor }]}>Edit & Resend</ThemedText>
                   </>
                 )}
               </TouchableOpacity>

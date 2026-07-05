@@ -1,7 +1,9 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
+  AppStateStatus,
   Image,
   Modal,
   Pressable,
@@ -13,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
@@ -44,23 +47,45 @@ export default function PropertiesScreen() {
     updateProperty,
   } = usePropertyStore();
 
-  // Load properties from API on mount
+  // Load on mount
   useEffect(() => {
     if (user?.id) {
       loadFromSupabase(user.id);
     }
   }, [user?.id]);
 
+  // Reload when screen comes into focus (e.g. after adding a property)
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        loadFromSupabase(user.id, true);
+      }
+    }, [user?.id])
+  );
+
+  // Reload when app comes back to foreground
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+        if (user?.id) loadFromSupabase(user.id, true);
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, [user?.id]);
+
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f6f6f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#4b5563' : '#e0e0e0';
-  const textColor = isDark ? '#f3f4f6' : '#4a4a4a';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#9ca3af';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
   const successColor = '#50E3C2';
   const dangerColor = '#D0021B';
-  const primaryColor = '#137fec';
-  const modalBgColor = isDark ? '#1a242d' : '#ffffff';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const modalBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
 
   // Tab counts
   const tabCounts = useMemo(() => ({
@@ -178,7 +203,7 @@ export default function PropertiesScreen() {
         {property.photos && property.photos.length > 0 ? (
           <Image source={{ uri: property.photos[0] }} style={styles.propertyImage} />
         ) : (
-          <View style={[styles.propertyImage, styles.propertyImagePlaceholder, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+          <View style={[styles.propertyImage, styles.propertyImagePlaceholder, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
             <MaterialCommunityIcons name="home-outline" size={48} color={secondaryTextColor} />
           </View>
         )}
@@ -240,7 +265,7 @@ export default function PropertiesScreen() {
             )}
           </View>
 
-          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
+          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
             <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
               {property.propertyType === 'single_unit' ? 'Single Unit' :
                property.propertyType === 'multi_unit' ? 'Multi-Unit' :
@@ -309,7 +334,7 @@ export default function PropertiesScreen() {
           <View style={[styles.modalContent, { backgroundColor: modalBgColor }]}>
             {/* Handle bar */}
             <View style={styles.modalHandleContainer}>
-              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#4b5563' : '#d1d5db' }]} />
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]} />
             </View>
             
             {/* Header */}
@@ -318,7 +343,7 @@ export default function PropertiesScreen() {
                 Filter by Property
               </ThemedText>
               <TouchableOpacity
-                style={[styles.closeButton, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}
+                style={[styles.closeButton, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}
                 onPress={() => setShowFilterModal(false)}
               >
                 <MaterialCommunityIcons name="close" size={18} color={textColor} />
@@ -346,7 +371,7 @@ export default function PropertiesScreen() {
                     ]}
                   >
                     {tempSelectedIds.includes(property.id) && (
-                      <MaterialCommunityIcons name="check" size={14} color="white" />
+                      <MaterialCommunityIcons name="check" size={14} color={onPrimaryColor} />
                     )}
                   </View>
                 </TouchableOpacity>
@@ -365,7 +390,7 @@ export default function PropertiesScreen() {
                 style={[styles.footerButton, styles.applyButton, { backgroundColor: primaryColor }]}
                 onPress={handleApply}
               >
-                <ThemedText style={styles.applyButtonText}>Apply Filters</ThemedText>
+                <ThemedText style={[styles.applyButtonText, { color: onPrimaryColor }]}>Apply Filters</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -393,7 +418,7 @@ export default function PropertiesScreen() {
           style={[
             styles.searchBar,
             {
-              backgroundColor: isDark ? '#1f2937' : '#ffffff',
+              backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF',
               borderColor,
             },
           ]}>
@@ -415,7 +440,7 @@ export default function PropertiesScreen() {
           style={[
             styles.filterButton,
             {
-              backgroundColor: isDark ? '#1f2937' : '#ffffff',
+              backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF',
               borderColor: selectedPropertyIds.length > 0 ? primaryColor : borderColor,
             },
           ]}
@@ -428,7 +453,7 @@ export default function PropertiesScreen() {
           />
           {selectedPropertyIds.length > 0 && (
             <View style={[styles.filterBadge, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.filterBadgeText}>{selectedPropertyIds.length}</ThemedText>
+              <ThemedText style={[styles.filterBadgeText, { color: onPrimaryColor }]}>{selectedPropertyIds.length}</ThemedText>
             </View>
           )}
         </TouchableOpacity>
@@ -448,7 +473,7 @@ export default function PropertiesScreen() {
               <ThemedText style={[styles.tabText, { color: isSelected ? primaryColor : secondaryTextColor }]}>
                 {label}
               </ThemedText>
-              <View style={[styles.tabCount, { backgroundColor: isSelected ? `${primaryColor}20` : isDark ? '#374151' : '#f3f4f6' }]}>
+              <View style={[styles.tabCount, { backgroundColor: isSelected ? `${primaryColor}20` : isDark ? '#26282C' : '#E8E8EA' }]}>
                 <ThemedText style={[styles.tabCountText, { color: isSelected ? primaryColor : secondaryTextColor }]}>
                   {tabCounts[tab]}
                 </ThemedText>
@@ -502,7 +527,7 @@ export default function PropertiesScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor }]}
         onPress={() => router.push('/add-property')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
 
       {/* Filter Modal */}
@@ -600,12 +625,12 @@ const styles = StyleSheet.create({
   listContainer: {
     flex: 1,
     paddingHorizontal: 16,
-    gap: 12,
+    paddingTop: 12,
   },
   propertyCard: {
     borderRadius: 12,
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 12,
     borderWidth: 1,
     elevation: 2,
     shadowColor: '#000',
@@ -694,7 +719,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,

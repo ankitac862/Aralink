@@ -46,13 +46,13 @@ export default function LeaseWizardStep2() {
   const [usePropertySelector, setUsePropertySelector] = useState(!formData.unitAddress.city);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const inputBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   // Handle property selection from PropertyAddressSelector
   const handlePropertySelect = (data: SelectedPropertyData) => {
     // Update property context in store
@@ -278,7 +278,7 @@ export default function LeaseWizardStep2() {
 
                 {/* Show address preview if filled */}
                 {formData.unitAddress.city && (
-                  <View style={[styles.addressPreview, { backgroundColor: isDark ? '#1a242d' : '#f0f9ff', borderColor: primaryColor }]}>
+                  <View style={[styles.addressPreview, { backgroundColor: isDark ? '#222428' : '#EDEDEF', borderColor: primaryColor }]}>
                     <MaterialCommunityIcons name="check-circle" size={16} color={primaryColor} />
                     <ThemedText style={[styles.addressPreviewText, { color: textColor }]} numberOfLines={2}>
                       {formData.unitAddress.unit ? `Unit ${formData.unitAddress.unit}, ` : ''}
@@ -359,8 +359,8 @@ export default function LeaseWizardStep2() {
             style={[styles.primaryButton, { backgroundColor: primaryColor }]}
             onPress={handleNext}
           >
-            <ThemedText style={styles.primaryButtonText}>Continue</ThemedText>
-            <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
+            <ThemedText style={[styles.primaryButtonText, { color: onPrimaryColor }]}>Continue</ThemedText>
+            <MaterialCommunityIcons name="arrow-right" size={20} color={onPrimaryColor} />
           </TouchableOpacity>
         </View>
       </View>

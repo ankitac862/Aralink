@@ -17,6 +17,7 @@ import type { Vendor } from '@/constants/vendors';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { useAuth } from '@/hooks/use-auth';
 import type { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
+import { useAppTheme } from '@/hooks/use-app-theme';
 
 const CATEGORY_ICONS: Record<string, string> = {
   Plumbing: 'water-pump',
@@ -37,6 +38,9 @@ export default function VendorSelectScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { assignVendor, setMarketplaceVendor } = useMaintenanceStore();
+  const t = useAppTheme();
+  const sponsoredBg = t.isDark ? '#3A2E10' : '#FEF3C7';
+  const sponsoredFg = t.isDark ? '#FCD34D' : '#92400E';
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,38 +100,38 @@ export default function VendorSelectScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: t.bg }]}>
+      <View style={[styles.header, { backgroundColor: t.card, borderBottomColor: t.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color="#0f172a" />
+          <MaterialCommunityIcons name="arrow-left" size={22} color={t.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Select Vendor</Text>
+        <Text style={[styles.headerTitle, { color: t.text }]}>Select Vendor</Text>
         <View style={{ width: 36 }} />
       </View>
 
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={styles.loadingText}>Loading vendors…</Text>
+          <ActivityIndicator size="large" color={t.text} />
+          <Text style={[styles.loadingText, { color: t.textSecondary }]}>Loading vendors…</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}>
           {/* City chips */}
           <View style={styles.section}>
-            <Text style={styles.stepLabel}>STEP 1 — SELECT CITY</Text>
-            <Text style={styles.stepHint}>Required</Text>
+            <Text style={[styles.stepLabel, { color: t.textSecondary }]}>STEP 1 — SELECT CITY</Text>
+            <Text style={[styles.stepHint, { color: t.textSecondary }]}>Required</Text>
             <View style={styles.chipRow}>
               {availableCities.map((city) => {
                 const active = selectedCity === city;
                 return (
                   <TouchableOpacity
                     key={city}
-                    style={[styles.chip, active && styles.chipActive]}
+                    style={[styles.chip, { backgroundColor: active ? t.accent : t.card, borderColor: active ? t.accent : t.border }]}
                     onPress={() => {
                       setSelectedCity(active ? null : city);
                       setSelectedCategory(null);
                     }}>
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{city}</Text>
+                    <Text style={[styles.chipText, { color: active ? t.onAccent : t.text }]}>{city}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -137,22 +141,22 @@ export default function VendorSelectScreen() {
           {/* Category chips */}
           {selectedCity && (
             <View style={styles.section}>
-              <Text style={styles.stepLabel}>STEP 2 — FILTER BY CATEGORY</Text>
-              <Text style={styles.stepHint}>Optional</Text>
+              <Text style={[styles.stepLabel, { color: t.textSecondary }]}>STEP 2 — FILTER BY CATEGORY</Text>
+              <Text style={[styles.stepHint, { color: t.textSecondary }]}>Optional</Text>
               <View style={styles.chipRow}>
                 {availableCategories.map((cat) => {
                   const active = selectedCategory === cat;
                   return (
                     <TouchableOpacity
                       key={cat}
-                      style={[styles.chip, active && styles.chipActive]}
+                      style={[styles.chip, { backgroundColor: active ? t.accent : t.card, borderColor: active ? t.accent : t.border }]}
                       onPress={() => setSelectedCategory(active ? null : cat)}>
                       <MaterialCommunityIcons
                         name={(CATEGORY_ICONS[cat] || 'wrench') as any}
                         size={13}
-                        color={active ? '#fff' : '#2563eb'}
+                        color={active ? t.onAccent : t.text}
                       />
-                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{cat}</Text>
+                      <Text style={[styles.chipText, { color: active ? t.onAccent : t.text }]}>{cat}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -163,60 +167,60 @@ export default function VendorSelectScreen() {
           {/* Vendor results */}
           {selectedCity && (
             <View style={styles.section}>
-              <Text style={styles.resultsLabel}>
+              <Text style={[styles.resultsLabel, { color: t.textSecondary }]}>
                 {filteredVendors.length} vendor{filteredVendors.length !== 1 ? 's' : ''}
                 {selectedCategory ? ` · ${selectedCategory}` : ''} in {selectedCity}
               </Text>
               {filteredVendors.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <MaterialCommunityIcons name="store-off-outline" size={40} color="#94a3b8" />
-                  <Text style={styles.emptyText}>No vendors found for this filter.</Text>
+                  <MaterialCommunityIcons name="store-off-outline" size={40} color={t.textSecondary} />
+                  <Text style={[styles.emptyText, { color: t.textSecondary }]}>No vendors found for this filter.</Text>
                 </View>
               ) : (
                 filteredVendors.map((vendor) => (
-                  <View key={vendor.id} style={[styles.vendorCard, vendor.isSponsored && styles.vendorCardSponsored]}>
+                  <View key={vendor.id} style={[styles.vendorCard, { backgroundColor: t.card, borderColor: vendor.isSponsored ? (t.isDark ? '#7C5E10' : '#FBBF24') : t.border }]}>
                     {vendor.isSponsored && (
-                      <View style={styles.sponsoredBadge}>
-                        <MaterialCommunityIcons name="star" size={11} color="#92400e" />
-                        <Text style={styles.sponsoredText}>Sponsored</Text>
+                      <View style={[styles.sponsoredBadge, { backgroundColor: sponsoredBg }]}>
+                        <MaterialCommunityIcons name="star" size={11} color={sponsoredFg} />
+                        <Text style={[styles.sponsoredText, { color: sponsoredFg }]}>Sponsored</Text>
                       </View>
                     )}
                     <View style={styles.vendorHeader}>
-                      <View style={[styles.iconCircle, vendor.isSponsored && styles.iconCircleSponsored]}>
+                      <View style={[styles.iconCircle, { backgroundColor: vendor.isSponsored ? sponsoredBg : t.chip }]}>
                         <MaterialCommunityIcons
                           name={(CATEGORY_ICONS[vendor.category] || 'wrench') as any}
                           size={20}
-                          color={vendor.isSponsored ? '#b45309' : '#2563eb'}
+                          color={vendor.isSponsored ? sponsoredFg : t.text}
                         />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.vendorName}>{vendor.name}</Text>
+                        <Text style={[styles.vendorName, { color: t.text }]}>{vendor.name}</Text>
                         <View style={styles.vendorMeta}>
-                          <Text style={styles.vendorCategory}>{vendor.category}</Text>
-                          <Text style={styles.vendorCity}>{vendor.city}</Text>
+                          <Text style={[styles.vendorCategory, { color: t.textSecondary }]}>{vendor.category}</Text>
+                          <Text style={[styles.vendorCity, { color: t.textSecondary }]}>{vendor.city}</Text>
                         </View>
                       </View>
                     </View>
-                    <View style={styles.vendorDetails}>
+                    <View style={[styles.vendorDetails, { borderTopColor: t.border }]}>
                       <View style={styles.detailRow}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={13} color="#64748b" />
-                        <Text style={styles.detailText}>{vendor.address}</Text>
+                        <MaterialCommunityIcons name="map-marker-outline" size={13} color={t.textSecondary} />
+                        <Text style={[styles.detailText, { color: t.textSecondary }]}>{vendor.address}</Text>
                       </View>
                       <View style={styles.detailRow}>
-                        <MaterialCommunityIcons name="phone-outline" size={13} color="#64748b" />
-                        <Text style={styles.detailText}>{vendor.phone}</Text>
+                        <MaterialCommunityIcons name="phone-outline" size={13} color={t.textSecondary} />
+                        <Text style={[styles.detailText, { color: t.textSecondary }]}>{vendor.phone}</Text>
                       </View>
                       <View style={styles.detailRow}>
-                        <MaterialCommunityIcons name="email-outline" size={13} color="#64748b" />
-                        <Text style={styles.detailText}>{vendor.email}</Text>
+                        <MaterialCommunityIcons name="email-outline" size={13} color={t.textSecondary} />
+                        <Text style={[styles.detailText, { color: t.textSecondary }]}>{vendor.email}</Text>
                       </View>
                     </View>
                     <TouchableOpacity
-                      style={[styles.selectBtn, vendor.isSponsored && styles.selectBtnSponsored, assigning && { opacity: 0.6 }]}
+                      style={[styles.selectBtn, { backgroundColor: t.accent }, vendor.isSponsored && styles.selectBtnSponsored, assigning && { opacity: 0.6 }]}
                       onPress={() => handleSelectVendor(vendor)}
                       disabled={assigning}>
-                      <MaterialCommunityIcons name="check" size={16} color="#fff" />
-                      <Text style={styles.selectBtnText}>{assigning ? 'Assigning…' : 'Select Vendor'}</Text>
+                      <MaterialCommunityIcons name="check" size={16} color={vendor.isSponsored ? '#fff' : t.onAccent} />
+                      <Text style={[styles.selectBtnText, { color: vendor.isSponsored ? '#fff' : t.onAccent }]}>{assigning ? 'Assigning…' : 'Select Vendor'}</Text>
                     </TouchableOpacity>
                   </View>
                 ))
@@ -226,8 +230,8 @@ export default function VendorSelectScreen() {
 
           {!selectedCity && (
             <View style={styles.emptyState}>
-              <MaterialCommunityIcons name="city-variant-outline" size={48} color="#94a3b8" />
-              <Text style={styles.emptyText}>Select a city to see available vendors.</Text>
+              <MaterialCommunityIcons name="city-variant-outline" size={48} color={t.textSecondary} />
+              <Text style={[styles.emptyText, { color: t.textSecondary }]}>Select a city to see available vendors.</Text>
             </View>
           )}
         </ScrollView>
@@ -237,56 +241,52 @@ export default function VendorSelectScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingBottom: 12,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+    borderBottomWidth: 1,
   },
   backBtn: { width: 36, alignItems: 'flex-start' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  headerTitle: { fontSize: 18, fontWeight: '700' },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { fontSize: 14, color: '#64748b' },
+  loadingText: { fontSize: 14 },
   content: { padding: 16, gap: 16 },
   section: { gap: 10 },
-  stepLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: '#2563eb', textTransform: 'uppercase' },
-  stepHint: { fontSize: 12, color: '#64748b', marginTop: -6 },
-  resultsLabel: { fontSize: 13, fontWeight: '600', color: '#475569' },
+  stepLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
+  stepHint: { fontSize: 12, marginTop: -6 },
+  resultsLabel: { fontSize: 13, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderWidth: 1.5, borderColor: '#cbd5e1', borderRadius: 999,
-    paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#fff',
+    borderWidth: 1.5, borderRadius: 999,
+    paddingHorizontal: 12, paddingVertical: 6,
   },
-  chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  chipTextActive: { color: '#fff' },
+  chipText: { fontSize: 13, fontWeight: '600' },
   emptyState: { alignItems: 'center', paddingVertical: 40, gap: 10 },
-  emptyText: { fontSize: 14, color: '#94a3b8', textAlign: 'center' },
+  emptyText: { fontSize: 14, textAlign: 'center' },
   vendorCard: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 14,
-    borderWidth: 1, borderColor: '#e2e8f0', gap: 10, marginBottom: 12,
+    borderRadius: 16, padding: 14,
+    borderWidth: 1, gap: 10, marginBottom: 12,
   },
-  vendorCardSponsored: { borderColor: '#fbbf24', backgroundColor: '#fffbeb' },
   sponsoredBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
-    backgroundColor: '#fef3c7', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3,
   },
-  sponsoredText: { fontSize: 11, fontWeight: '700', color: '#92400e' },
+  sponsoredText: { fontSize: 11, fontWeight: '700' },
   vendorHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#eff6ff', alignItems: 'center', justifyContent: 'center' },
-  iconCircleSponsored: { backgroundColor: '#fef3c7' },
-  vendorName: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 2 },
+  iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  vendorName: { fontSize: 15, fontWeight: '700', marginBottom: 2 },
   vendorMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  vendorCategory: { fontSize: 12, color: '#2563eb', fontWeight: '600' },
-  vendorCity: { fontSize: 12, color: '#64748b' },
-  vendorDetails: { gap: 4, paddingTop: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  vendorCategory: { fontSize: 12, fontWeight: '600' },
+  vendorCity: { fontSize: 12 },
+  vendorDetails: { gap: 4, paddingTop: 6, borderTopWidth: 1 },
   detailRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  detailText: { fontSize: 12, color: '#475569', flex: 1 },
+  detailText: { fontSize: 12, flex: 1 },
   selectBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, backgroundColor: '#2563eb', borderRadius: 12, paddingVertical: 12, marginTop: 4,
+    gap: 6, borderRadius: 12, paddingVertical: 12, marginTop: 4,
   },
   selectBtnSponsored: { backgroundColor: '#b45309' },
-  selectBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  selectBtnText: { fontWeight: '700', fontSize: 14 },
 });

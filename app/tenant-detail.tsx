@@ -23,7 +23,7 @@ import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { DbTransaction, fetchTenantTransactions, supabase } from '@/lib/supabase';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
-import { fmtShortDate, fmtDate } from '@/lib/dateUtils';
+import { fmtShortDate, fmtDate, toISODateLocal } from '@/lib/dateUtils';
 
 interface CoTenant {
   id: string;
@@ -33,7 +33,7 @@ interface CoTenant {
 }
 
 const PAYMENT_CATEGORIES = [
-  { key: 'rent', label: 'Rent', color: '#3b82f6', active: true },
+  { key: 'rent', label: 'Rent', color: '#8E959B', active: true },
   { key: 'maintenance', label: 'Maintenance', color: '#10b981', active: false },
   { key: 'utility', label: 'Utility', color: '#f59e0b', active: false },
   { key: 'other', label: 'Other', color: '#a855f7', active: false },
@@ -227,14 +227,13 @@ export default function TenantDetailScreen() {
   } : null;
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F8F9FA';
-  const cardBgColor = isDark ? '#1A242E' : '#FFFFFF';
-  const borderColor = isDark ? '#2E3A48' : '#E9ECEF';
-  const textColor = isDark ? '#F8F9FA' : '#101921';
-  const secondaryTextColor = isDark ? '#B0B8C1' : '#687588';
-  const primaryColor = '#137fec';
-
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const handleDelete = () => {
     if (!tenant || !tenantData) return;
     
@@ -308,7 +307,7 @@ export default function TenantDetailScreen() {
             {tenant.profilePicture ? (
               <Image source={{ uri: tenant.profilePicture }} style={styles.heroAvatar} />
             ) : (
-              <View style={[styles.heroAvatarPlaceholder, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}>
+              <View style={[styles.heroAvatarPlaceholder, { backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}>
                 <ThemedText style={[styles.heroAvatarInitial, { color: primaryColor }]}>
                   {tenant.name.charAt(0).toUpperCase()}
                 </ThemedText>
@@ -442,8 +441,8 @@ export default function TenantDetailScreen() {
             </ThemedText>
             {coTenants.map((coTenant) => (
               <View key={coTenant.id} style={[styles.coTenantRow, { borderTopColor: borderColor }]}> 
-                <View style={[styles.coTenantAvatar, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}> 
-                  <ThemedText style={styles.coTenantAvatarText}>
+                <View style={[styles.coTenantAvatar, { backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}> 
+                  <ThemedText style={[styles.coTenantAvatarText, { color: textColor }]}>
                     {coTenant.full_name?.charAt(0).toUpperCase() || '?'}
                   </ThemedText>
                 </View>
@@ -471,14 +470,14 @@ export default function TenantDetailScreen() {
         <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
           <View style={styles.paymentOverviewHeader}>
             <ThemedText style={[styles.cardTitle, { color: textColor }]}>Payment Overview</ThemedText>
-            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#253040' : '#e5e7eb' }]}>
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
               {([1, 3, 6] as const).map(p => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.periodBtn, paymentPeriod === p && { backgroundColor: primaryColor }]}
                   onPress={() => setPaymentPeriod(p)}
                 >
-                  <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === p ? '#fff' : secondaryTextColor }]}>
+                  <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === p ? onPrimaryColor : secondaryTextColor }]}>
                     {p}M
                   </ThemedText>
                 </TouchableOpacity>
@@ -492,7 +491,7 @@ export default function TenantDetailScreen() {
                   setShowCRModal(true);
                 }}
               >
-                <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                <ThemedText style={[styles.periodBtnText, { color: paymentPeriod === 'cr' ? onPrimaryColor : secondaryTextColor }]}>
                   CR
                 </ThemedText>
               </TouchableOpacity>
@@ -569,7 +568,7 @@ export default function TenantDetailScreen() {
                 <MaterialCommunityIcons name="cash-plus" size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.ledgerActionButton, { backgroundColor: '#137fec' }]}
+                style={[styles.ledgerActionButton, { backgroundColor: isDark ? '#26282C' : '#111315' }]}
                 onPress={() => {
                   if (!tenant) return;
                   router.push({
@@ -595,7 +594,7 @@ export default function TenantDetailScreen() {
                   style={[
                     styles.categoryButton,
                     selectedCategory === category.key && {
-                      backgroundColor: isDark ? '#1e3a5f' : '#dbeafe',
+                      backgroundColor: isDark ? '#222428' : '#EDEDEF',
                     },
                   ]}
                   onPress={() => setSelectedCategory(category.key)}
@@ -606,7 +605,7 @@ export default function TenantDetailScreen() {
                       {
                         color:
                           selectedCategory === category.key
-                            ? '#137fec'
+                            ? textColor
                             : secondaryTextColor,
                         fontWeight: selectedCategory === category.key ? '600' : '500',
                       },
@@ -716,7 +715,7 @@ export default function TenantDetailScreen() {
             </ThemedText>
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
             >
               <ThemedText style={{ color: crDraftStart ? textColor : secondaryTextColor }}>
@@ -730,7 +729,7 @@ export default function TenantDetailScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftStart(toISODateLocal(date));
                 }}
               />
             )}
@@ -743,7 +742,7 @@ export default function TenantDetailScreen() {
             )}
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
             >
               <ThemedText style={{ color: crDraftEnd ? textColor : secondaryTextColor }}>
@@ -757,7 +756,7 @@ export default function TenantDetailScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftEnd(toISODateLocal(date));
                 }}
               />
             )}
@@ -791,7 +790,7 @@ export default function TenantDetailScreen() {
                   setShowCRModal(false);
                 }}
               >
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+                <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Apply</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -975,7 +974,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   coTenantAvatarText: {
-    color: '#137fec',
     fontSize: 16,
     fontWeight: '700',
   },

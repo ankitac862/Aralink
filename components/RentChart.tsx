@@ -22,7 +22,7 @@ const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, tota
   const greenColor = '#34C759';
   const redColor = '#FF3B30';
   const advanceColor = '#AF52DE'; // purple for cash in advance
-  const trackColor = isDark ? '#374151' : '#E5E7EB';
+  const trackColor = isDark ? '#26282C' : '#E5E5E7';
 
   const formatCurrency = (n: number) =>
     n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -52,10 +52,10 @@ const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, tota
         </Svg>
 
         <View style={styles.centerTextContainer}>
-          <Text style={[styles.centerTextLarge, { color: isDark ? '#F2F2F7' : '#101c22' }]}>
+          <Text style={[styles.centerTextLarge, { color: isDark ? '#FFFFFF' : '#111315' }]}>
             ${formatCurrency(collected)}
           </Text>
-          <Text style={[styles.centerTextSmall, { color: isDark ? '#a0aec0' : '#8E8E93' }]}>
+          <Text style={[styles.centerTextSmall, { color: isDark ? '#9BA1A6' : '#6E7377' }]}>
             {advance > 0 ? `+$${formatCurrency(advance)} adv.` : `of $${formatCurrency(total)}`}
           </Text>
         </View>

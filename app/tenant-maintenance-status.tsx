@@ -48,9 +48,14 @@ export default function TenantMaintenanceStatusScreen() {
     return list.filter((req) => req.status === filter);
   }, [requests, filter, user]);
 
-  const bgColor = colorScheme === 'dark' ? '#0f172a' : '#f8fafc';
-  const cardColor = colorScheme === 'dark' ? '#142033' : '#ffffff';
-  const textColor = colorScheme === 'dark' ? '#f8fafc' : '#111827';
+  const isDark = colorScheme === 'dark';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const chipBg = isDark ? '#26282C' : '#E8E8EA';
+  const accent = isDark ? '#FFFFFF' : '#111315';
+  const onAccent = isDark ? '#0B0B0C' : '#FFFFFF';
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>
@@ -70,9 +75,9 @@ export default function TenantMaintenanceStatusScreen() {
           return (
             <TouchableOpacity
               key={item.value}
-              style={[styles.filterChip, active && styles.filterChipActive]}
+              style={[styles.filterChip, { backgroundColor: active ? accent : chipBg }]}
               onPress={() => setFilter(item.value)}>
-              <Text style={[styles.filterText, active && { color: '#fff' }]}>{item.label}</Text>
+              <Text style={[styles.filterText, { color: active ? onAccent : subText }]}>{item.label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -88,18 +93,18 @@ export default function TenantMaintenanceStatusScreen() {
             style={[styles.card, { backgroundColor: cardColor }]}
             onPress={() => router.push({ pathname: '/tenant-maintenance-detail', params: { id: item.id } })}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={[styles.cardTitle, { color: textColor }]}>{item.title}</Text>
               <StatusChip status={item.status} />
             </View>
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardSubtitle, { color: subText }]}>
               {item.property} • {item.unit}
             </Text>
-            <Text style={styles.cardDescription} numberOfLines={2}>
+            <Text style={[styles.cardDescription, { color: subText }]} numberOfLines={2}>
               {item.description}
             </Text>
             <View style={styles.metaRow}>
-              <MaterialCommunityIcons name="clock-outline" size={16} color="#94a3b8" />
-              <Text style={styles.metaText}>
+              <MaterialCommunityIcons name="clock-outline" size={16} color={subText} />
+              <Text style={[styles.metaText, { color: subText }]}>
                 Updated {fmtDateTime(item.updatedAt)}
               </Text>
             </View>
@@ -107,9 +112,9 @@ export default function TenantMaintenanceStatusScreen() {
         )}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <MaterialCommunityIcons name="clipboard-text-outline" size={48} color="#94a3b8" />
-            <Text style={styles.emptyTitle}>No requests yet</Text>
-            <Text style={styles.emptySubtitle}>Submit your first maintenance request to get started.</Text>
+            <MaterialCommunityIcons name="clipboard-text-outline" size={48} color={subText} />
+            <Text style={[styles.emptyTitle, { color: textColor }]}>No requests yet</Text>
+            <Text style={[styles.emptySubtitle, { color: subText }]}>Submit your first maintenance request to get started.</Text>
           </View>
         }
       />
@@ -142,14 +147,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 14,
-    backgroundColor: '#e2e8f0',
-  },
-  filterChipActive: {
-    backgroundColor: '#2563eb',
   },
   filterText: {
     fontWeight: '600',
-    color: '#1e293b',
   },
   card: {
     borderRadius: 16,
@@ -170,16 +170,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     flex: 1,
     marginRight: 12,
-    color: '#111827',
   },
   cardSubtitle: {
     fontSize: 13,
-    color: '#475569',
     fontWeight: '600',
   },
   cardDescription: {
     fontSize: 14,
-    color: '#475569',
   },
   metaRow: {
     flexDirection: 'row',
@@ -187,7 +184,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   metaText: {
-    color: '#94a3b8',
     fontSize: 12,
   },
   emptyState: {
@@ -201,7 +197,6 @@ const styles = StyleSheet.create({
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#6b7280',
     textAlign: 'center',
   },
 });

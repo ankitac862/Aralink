@@ -25,13 +25,13 @@ export default function SplashRoute() {
   }, [isInitialized]);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>
       <View style={styles.logoContainer}>
-        <View style={styles.logo}>
+        <View style={[styles.logo, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
           <ThemedText style={styles.logoText}>🏠</ThemedText>
         </View>
         <ThemedText style={[styles.appName, { color: textColor }]}>
@@ -43,7 +43,7 @@ export default function SplashRoute() {
       </View>
       <ActivityIndicator 
         size="large" 
-        color="#2A64F5" 
+        color={textColor} 
         style={styles.loader}
       />
     </View>
@@ -64,7 +64,6 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 20,
-    backgroundColor: '#2A64F5',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,

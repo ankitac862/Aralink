@@ -58,12 +58,13 @@ export default function LandlordApplicationsScreen() {
   const [approvingMoveInId, setApprovingMoveInId] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
 
   // Load applications when screen comes into focus
   useFocusEffect(
@@ -236,7 +237,7 @@ export default function LandlordApplicationsScreen() {
       case 'submitted':
         return '#FF9500';
       case 'under_review':
-        return '#007AFF';
+        return '#8E959B';
       case 'approved':
         return '#34C759';
       case 'lease_ready':
@@ -337,8 +338,8 @@ export default function LandlordApplicationsScreen() {
                   },
                 });
               }}>
-              <MaterialCommunityIcons name="file-document-edit" size={16} color="#fff" />
-              <ThemedText style={styles.actionButtonText}>Generate Lease</ThemedText>
+              <MaterialCommunityIcons name="file-document-edit" size={16} color={onPrimaryColor} />
+              <ThemedText style={[styles.actionButtonText, { color: onPrimaryColor }]}>Generate Lease</ThemedText>
             </TouchableOpacity>
           )}
 
@@ -411,8 +412,8 @@ export default function LandlordApplicationsScreen() {
               handleApproveMoveIn(item);
             }}
             disabled={approvingMoveInId === item.id}>
-            <MaterialCommunityIcons name="home-import-outline" size={16} color="#fff" />
-            <ThemedText style={styles.actionButtonText}>
+            <MaterialCommunityIcons name="home-import-outline" size={16} color={onPrimaryColor} />
+            <ThemedText style={[styles.actionButtonText, { color: onPrimaryColor }]}>
               {approvingMoveInId === item.id ? 'Approving…' : 'Approve Move-In'}
             </ThemedText>
           </TouchableOpacity>
@@ -461,7 +462,7 @@ export default function LandlordApplicationsScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor, bottom: insets.bottom + 16 }]}
         onPress={() => router.push('/add-applicant')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
     </ThemedView>
   );

@@ -27,13 +27,14 @@ export default function ForgotPasswordScreen() {
   const { resetPassword, clearError } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#2A64F5';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#1a202c' : '#ffffff';
-  const borderColor = isDark ? '#334155' : '#D1D5DB';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subtextColor = isDark ? '#94a3b8' : '#6B7280';
-  const placeholderColor = isDark ? '#64748b' : '#9ca3af';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subtextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const placeholderColor = isDark ? '#9BA1A6' : '#6E7377';
 
   const handleSendReset = async () => {
     if (!email) {
@@ -78,7 +79,7 @@ export default function ForgotPasswordScreen() {
           style={[
             styles.input,
             {
-              backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+              backgroundColor: isDark ? '#26282C' : '#E8E8EA',
               borderColor,
               color: textColor,
             },
@@ -100,9 +101,9 @@ export default function ForgotPasswordScreen() {
           onPress={handleSendReset}
         >
           {isSubmitting ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={onPrimaryColor} />
           ) : (
-            <ThemedText style={styles.buttonText}>Send reset link</ThemedText>
+            <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Send reset link</ThemedText>
           )}
         </TouchableOpacity>
 

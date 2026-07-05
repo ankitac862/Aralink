@@ -30,15 +30,16 @@ export default function AddApplicantScreen() {
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#0d141b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
-  const primaryColor = '#137fec';
-  const infoBgColor = isDark ? '#1e3a5f' : '#eff6ff';
-  const infoTextColor = isDark ? '#93c5fd' : '#1e40af';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const inputBgColor = isDark ? '#141517' : '#F7F7F8';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const infoBgColor = isDark ? '#222428' : '#EDEDEF';
+  const infoTextColor = isDark ? '#9BA1A6' : '#3C4043';
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -406,7 +407,7 @@ export default function AddApplicantScreen() {
                               <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
                                 {option.label}
                               </ThemedText>
-                              <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
+                              <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
                                 <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
                                   {option.type === 'single_unit' ? 'Single' : 'Multi'}
                                 </ThemedText>
@@ -543,9 +544,9 @@ export default function AddApplicantScreen() {
             onPress={handleSubmit}
             disabled={isSubmitting}>
             {isSubmitting ? (
-              <ActivityIndicator color="#ffffff" />
+              <ActivityIndicator color={onPrimaryColor} />
             ) : (
-              <ThemedText style={styles.submitButtonText}>Send Invite</ThemedText>
+              <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Send Invite</ThemedText>
             )}
           </TouchableOpacity>
         </ScrollView>

@@ -19,7 +19,6 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAraPartnerStore } from '@/store/araPartnerStore';
 
-const PRIMARY = '#2A64F5';
 
 export default function SubmitReferral() {
   const router = useRouter();
@@ -28,12 +27,14 @@ export default function SubmitReferral() {
   const isDark = colorScheme === 'dark';
   const { submitReferral, isLoading, profile } = useAraPartnerStore();
 
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBg = isDark ? '#1a202c' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subText = isDark ? '#94a3b8' : '#6B7280';
-  const borderColor = isDark ? '#334155' : '#E5E7EB';
-  const inputBg = isDark ? '#0f172a' : '#F9FAFB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const PRIMARY = isDark ? '#FFFFFF' : '#111315';
+  const ON_PRIMARY = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const inputBg = isDark ? '#141517' : '#F7F7F8';
 
   const [form, setForm] = useState({
     landlordName: '',
@@ -102,23 +103,23 @@ export default function SubmitReferral() {
               onAddressSelect={(address) => setForm({ ...form, propertyAddress: address.formattedAddress })}
               onError={() => setForm({ ...form, propertyAddress: form.propertyAddress })}
             />
-            <View style={[styles.infoBox, { backgroundColor: isDark ? '#1e3a5f' : '#EFF6FF' }]}>
-              <MaterialCommunityIcons name="information" size={16} color={PRIMARY} />
-              <ThemedText style={[styles.infoText, { color: PRIMARY }]}>
+            <View style={[styles.infoBox, { backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}>
+              <MaterialCommunityIcons name="information" size={16} color={subText} />
+              <ThemedText style={[styles.infoText, { color: subText }]}>
                 Each property address can only be referred once.
               </ThemedText>
             </View>
           </View>
 
           <TouchableOpacity
-            style={[styles.submitBtn, { opacity: isLoading ? 0.6 : 1 }]}
+            style={[styles.submitBtn, { backgroundColor: PRIMARY, opacity: isLoading ? 0.6 : 1 }]}
             onPress={handleSubmit}
             disabled={isLoading}
           >
             {isLoading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={ON_PRIMARY} />
             ) : (
-              <ThemedText style={styles.submitBtnText}>Submit Referral</ThemedText>
+              <ThemedText style={[styles.submitBtnText, { color: ON_PRIMARY }]}>Submit Referral</ThemedText>
             )}
           </TouchableOpacity>
         </ScrollView>
@@ -182,7 +183,6 @@ const styles = StyleSheet.create({
   },
   infoText: { fontSize: 12, flex: 1 },
   submitBtn: {
-    backgroundColor: PRIMARY,
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',

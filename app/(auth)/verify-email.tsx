@@ -23,11 +23,12 @@ export default function VerifyEmailScreen() {
   const [isResending, setIsResending] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#2A64F5';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#1a202c' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subtextColor = isDark ? '#94a3b8' : '#6B7280';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subtextColor = isDark ? '#9BA1A6' : '#6E7377';
 
   const email = params.email || '';
 
@@ -91,7 +92,7 @@ export default function VerifyEmailScreen() {
         <View style={[styles.stepsCard, { backgroundColor: cardBgColor }]}>
           <View style={styles.step}>
             <View style={[styles.stepNumber, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.stepNumberText}>1</ThemedText>
+              <ThemedText style={[styles.stepNumberText, { color: onPrimaryColor }]}>1</ThemedText>
             </View>
             <ThemedText style={[styles.stepText, { color: textColor }]}>
               Check your email inbox
@@ -99,7 +100,7 @@ export default function VerifyEmailScreen() {
           </View>
           <View style={styles.step}>
             <View style={[styles.stepNumber, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.stepNumberText}>2</ThemedText>
+              <ThemedText style={[styles.stepNumberText, { color: onPrimaryColor }]}>2</ThemedText>
             </View>
             <ThemedText style={[styles.stepText, { color: textColor }]}>
               Click the verification link
@@ -107,7 +108,7 @@ export default function VerifyEmailScreen() {
           </View>
           <View style={styles.step}>
             <View style={[styles.stepNumber, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.stepNumberText}>3</ThemedText>
+              <ThemedText style={[styles.stepNumberText, { color: onPrimaryColor }]}>3</ThemedText>
             </View>
             <ThemedText style={[styles.stepText, { color: textColor }]}>
               Return here and log in
@@ -120,7 +121,7 @@ export default function VerifyEmailScreen() {
           style={[styles.loginButton, { backgroundColor: primaryColor }]}
           onPress={handleGoToLogin}
         >
-          <ThemedText style={styles.loginButtonText}>Go to Login</ThemedText>
+          <ThemedText style={[styles.loginButtonText, { color: onPrimaryColor }]}>Go to Login</ThemedText>
         </TouchableOpacity>
 
         {/* Resend Link */}

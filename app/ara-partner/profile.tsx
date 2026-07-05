@@ -21,7 +21,6 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { useAraPartnerStore, PaymentMethod } from '@/store/araPartnerStore';
 
-const PRIMARY = '#2A64F5';
 
 export default function AraPartnerProfile() {
   const router = useRouter();
@@ -32,12 +31,14 @@ export default function AraPartnerProfile() {
   const { user } = useAuthStore();
   const { profile, loadProfile, createProfile, updateProfile, isLoading } = useAraPartnerStore();
 
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBg = isDark ? '#1a202c' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subText = isDark ? '#94a3b8' : '#6B7280';
-  const borderColor = isDark ? '#334155' : '#E5E7EB';
-  const inputBg = isDark ? '#0f172a' : '#F9FAFB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const PRIMARY = isDark ? '#FFFFFF' : '#111315';
+  const ON_PRIMARY = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const inputBg = isDark ? '#141517' : '#F7F7F8';
 
   const [isEditing, setIsEditing] = useState(edit === 'true');
   const [form, setForm] = useState({
@@ -142,7 +143,7 @@ export default function AraPartnerProfile() {
           {!isEditing ? (
             <TouchableOpacity onPress={() => setIsEditing(true)} style={styles.editBtn}>
               <MaterialCommunityIcons name="pencil" size={16} color={PRIMARY} />
-              <ThemedText style={styles.editBtnText}>Edit</ThemedText>
+              <ThemedText style={[styles.editBtnText, { color: PRIMARY }]}>Edit</ThemedText>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity onPress={handleCancelEdit}>
@@ -192,7 +193,7 @@ export default function AraPartnerProfile() {
                       ]}
                       onPress={() => setForm({ ...form, paymentMethod: method })}
                     >
-                      <ThemedText style={[styles.toggleText, { color: form.paymentMethod === method ? '#fff' : subText }]}>
+                      <ThemedText style={[styles.toggleText, { color: form.paymentMethod === method ? ON_PRIMARY : subText }]}>
                         {method === 'etransfer' ? 'e-Transfer' : 'Bank Account'}
                       </ThemedText>
                     </TouchableOpacity>
@@ -226,14 +227,14 @@ export default function AraPartnerProfile() {
 
           {isEditing && (
             <TouchableOpacity
-              style={[styles.saveBtn, { opacity: isLoading ? 0.6 : 1 }]}
+              style={[styles.saveBtn, { backgroundColor: PRIMARY, opacity: isLoading ? 0.6 : 1 }]}
               onPress={handleSave}
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={ON_PRIMARY} />
               ) : (
-                <ThemedText style={styles.saveBtnText}>Save Changes</ThemedText>
+                <ThemedText style={[styles.saveBtnText, { color: ON_PRIMARY }]}>Save Changes</ThemedText>
               )}
             </TouchableOpacity>
           )}
@@ -279,7 +280,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontWeight: '700' },
   editBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  editBtnText: { color: '#2A64F5', fontWeight: '600', fontSize: 14 },
+  editBtnText: { fontWeight: '600', fontSize: 14 },
   cancelText: { fontSize: 14, fontWeight: '500' },
   scroll: { paddingHorizontal: 20, paddingBottom: 40 },
   sectionTitle: { fontSize: 15, fontWeight: '700', marginTop: 20, marginBottom: 8 },
@@ -319,7 +320,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   saveBtn: {
-    backgroundColor: '#2A64F5',
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',

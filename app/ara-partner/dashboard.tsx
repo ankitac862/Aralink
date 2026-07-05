@@ -26,12 +26,13 @@ export default function AraPartnerDashboard() {
     useAraPartnerStore();
 
   // Match app-wide color palette
-  const primaryColor = '#4A90E2';
-  const bgColor = isDark ? '#101c22' : '#F2F2F7';
-  const cardBg = isDark ? '#1A2831' : '#ffffff';
-  const textColor = isDark ? '#F2F2F7' : '#101c22';
-  const subText = isDark ? '#a0aec0' : '#8E8E93';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
 
   useFocusEffect(
     useCallback(() => {
@@ -76,7 +77,7 @@ export default function AraPartnerDashboard() {
         </View>
         <TouchableOpacity onPress={() => router.push('/ara-partner/profile' as any)}>
           <View style={[styles.avatar, { backgroundColor: primaryColor }]}>
-            <ThemedText style={styles.avatarText}>
+            <ThemedText style={[styles.avatarText, { color: onPrimaryColor }]}>
               {(profile?.fullName || user?.name || 'A')[0].toUpperCase()}
             </ThemedText>
           </View>
@@ -106,26 +107,26 @@ export default function AraPartnerDashboard() {
 
         {/* Complete Profile Banner */}
         {showProfileBanner && (
-          <View style={[styles.profileBanner, { backgroundColor: isDark ? '#0f1e2e' : '#F0F7FF', borderColor: isDark ? '#1e3a5f' : '#BAD6F8' }]}>
-            <View style={[styles.profileBannerIcon, { backgroundColor: isDark ? '#1e3a5f' : '#DBEAFE' }]}>
-              <MaterialCommunityIcons name="account-edit-outline" size={20} color={isDark ? '#60a5fa' : '#2563EB'} />
+          <View style={[styles.profileBanner, { backgroundColor: isDark ? '#222428' : '#EDEDEF', borderColor: isDark ? '#222428' : '#EDEDEF' }]}>
+            <View style={[styles.profileBannerIcon, { backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}>
+              <MaterialCommunityIcons name="account-edit-outline" size={20} color={textColor} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
-              <ThemedText style={[styles.profileBannerTitle, { color: isDark ? '#e2eeff' : '#1E3A5F' }]}>
+              <ThemedText style={[styles.profileBannerTitle, { color: textColor }]}>
                 Complete your profile
               </ThemedText>
-              <ThemedText style={[styles.profileBannerSub, { color: isDark ? '#7bafd4' : '#4A7FB5' }]}>
+              <ThemedText style={[styles.profileBannerSub, { color: subText }]}>
                 Add your {[!profile?.phone && 'phone number', !profile?.companyName && 'company name'].filter(Boolean).join(' & ')} to finish setup
               </ThemedText>
             </View>
             <TouchableOpacity
               onPress={() => router.push('/ara-partner/profile?edit=true' as any)}
-              style={[styles.profileBannerBtn, { backgroundColor: isDark ? '#1e3a5f' : '#2563EB' }]}
+              style={[styles.profileBannerBtn, { backgroundColor: primaryColor }]}
             >
-              <ThemedText style={styles.profileBannerBtnText}>Update</ThemedText>
+              <ThemedText style={[styles.profileBannerBtnText, { color: onPrimaryColor }]}>Update</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setProfileBannerDismissed(true)} style={styles.profileBannerClose}>
-              <MaterialCommunityIcons name="close" size={15} color={isDark ? '#4a7fb5' : '#93B8DC'} />
+              <MaterialCommunityIcons name="close" size={15} color={subText} />
             </TouchableOpacity>
           </View>
         )}
@@ -157,12 +158,12 @@ export default function AraPartnerDashboard() {
               <MaterialCommunityIcons
                 name={a.icon as any}
                 size={26}
-                color={a.filled ? '#fff' : primaryColor}
+                color={a.filled ? onPrimaryColor : primaryColor}
               />
               <ThemedText
                 style={[
                   styles.actionLabel,
-                  { color: a.filled ? '#fff' : textColor },
+                  { color: a.filled ? onPrimaryColor : textColor },
                 ]}
               >
                 {a.label}

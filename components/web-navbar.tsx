@@ -41,13 +41,13 @@ export function WebNavbar({ items, userRole }: WebNavbarProps) {
   const isDark = colorScheme === 'dark';
   
   // Enhanced color scheme with better theme support
-  const bgColor = isDark ? '#0f172a' : '#ffffff';
-  const borderColor = isDark ? '#1e293b' : '#e2e8f0';
-  const textPrimaryColor = isDark ? '#f1f5f9' : '#0f172a';
-  const textSecondaryColor = isDark ? '#cbd5e1' : '#64748b';
+  const bgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
   const activeColor = Colors[colorScheme ?? 'light'].tint;
-  const inactiveColor = isDark ? '#94a3b8' : '#78716c';
-  const hoverBgColor = isDark ? '#1e293b' : '#f1f5f9';
+  const inactiveColor = isDark ? '#9BA1A6' : '#6E7377';
+  const hoverBgColor = isDark ? '#26282C' : '#E8E8EA';
   
   const isCompactMode = windowWidth < 768;
 

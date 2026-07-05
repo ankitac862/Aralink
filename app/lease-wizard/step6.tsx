@@ -67,12 +67,13 @@ export default function LeaseWizardStep6() {
   const [generationMessage, setGenerationMessage] = useState('');
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const successColor = '#10b981';
 
   const totalRent = (formData.baseRent || 0) + (formData.parkingRent || 0) + (formData.otherServicesRent || 0);
@@ -458,8 +459,8 @@ export default function LeaseWizardStep6() {
                 style={[styles.documentActionButton, { backgroundColor: primaryColor }]}
                 onPress={handleViewDocument}
               >
-                <MaterialCommunityIcons name="eye" size={18} color="#fff" />
-                <ThemedText style={styles.documentActionText}>View</ThemedText>
+                <MaterialCommunityIcons name="eye" size={18} color={onPrimaryColor} />
+                <ThemedText style={[styles.documentActionText, { color: onPrimaryColor }]}>View</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.documentActionButton, { backgroundColor: successColor }]}
@@ -542,9 +543,9 @@ export default function LeaseWizardStep6() {
                 disabled={isSending}
               >
                 {isSending ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={onPrimaryColor} />
                 ) : (
-                  <ThemedText style={styles.modalButtonTextPrimary}>
+                  <ThemedText style={[styles.modalButtonTextPrimary, { color: onPrimaryColor }]}>
                     Send Lease
                   </ThemedText>
                 )}
@@ -581,11 +582,11 @@ export default function LeaseWizardStep6() {
             disabled={isGenerating || isUploading || isSending}
           >
             {isGenerating ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={onPrimaryColor} />
             ) : (
               <>
-                <MaterialCommunityIcons name="file-document-outline" size={18} color="#fff" />
-                <ThemedText style={styles.generateButtonText}>
+                <MaterialCommunityIcons name="file-document-outline" size={18} color={onPrimaryColor} />
+                <ThemedText style={[styles.generateButtonText, { color: onPrimaryColor }]}>
                   {documentUrl ? 'Regenerate' : 'Generate'}
                 </ThemedText>
               </>

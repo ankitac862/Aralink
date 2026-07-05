@@ -43,13 +43,13 @@ export default function LeaseWizardStep6b() {
   } = useOntarioLeaseStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const inputBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const handleNext = () => {
     nextStep();
     router.push('/lease-wizard/step6'); // Go to final review step
@@ -349,8 +349,8 @@ export default function LeaseWizardStep6b() {
             style={[styles.primaryButton, { backgroundColor: primaryColor }]}
             onPress={handleNext}
           >
-            <ThemedText style={styles.primaryButtonText}>Review & Generate</ThemedText>
-            <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
+            <ThemedText style={[styles.primaryButtonText, { color: onPrimaryColor }]}>Review & Generate</ThemedText>
+            <MaterialCommunityIcons name="arrow-right" size={20} color={onPrimaryColor} />
           </TouchableOpacity>
         </View>
       </View>

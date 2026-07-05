@@ -4262,6 +4262,34 @@ export async function markAllNotificationsAsRead(userId: string) {
   }
 }
 
+export async function clearAllNotifications(userId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('user_id', userId);
+    if (error) { console.error('Error clearing notifications:', error); return false; }
+    return true;
+  } catch (error) {
+    console.error('Error clearing notifications:', error);
+    return false;
+  }
+}
+
+export async function deleteNotification(notificationId: string) {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('id', notificationId);
+    if (error) { console.error('Error deleting notification:', error); return false; }
+    return true;
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    return false;
+  }
+}
+
 // Get unread notification count
 export async function getUnreadNotificationCount(userId: string): Promise<number> {
   try {

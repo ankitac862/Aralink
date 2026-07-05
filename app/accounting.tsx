@@ -18,7 +18,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { fmtShortDate } from '@/lib/dateUtils';
+import { fmtShortDate, toISODateLocal } from '@/lib/dateUtils';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
@@ -93,13 +93,13 @@ export default function AccountingScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1a2632' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#e0e6ed' : '#0d141b';
-  const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   // Load transactions on mount and every time the screen comes into focus.
   // useFocusEffect covers both the initial mount and re-focus after adding a transaction.
   useFocusEffect(
@@ -192,11 +192,18 @@ export default function AccountingScreen() {
     const months: { label: string; start: string; end: string }[] = [];
     if (chartPeriod === 'cr') {
       if (!customRange) return [];
+      // iterate from the 1st of each month so day-31 starts can't skip months
+      // and the end month is always included
       const d = new Date(customRange.start + 'T00:00:00');
+      d.setDate(1);
       const endD = new Date(customRange.end + 'T00:00:00');
+      endD.setDate(1);
       while (d <= endD) {
-        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        const monthStart = toISODateLocal(new Date(d.getFullYear(), d.getMonth(), 1));
+        const monthEnd = toISODateLocal(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+        // clamp partial first/last months to the selected range
+        const start = monthStart < customRange.start ? customRange.start : monthStart;
+        const end = monthEnd > customRange.end ? customRange.end : monthEnd;
         months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
         d.setMonth(d.getMonth() + 1);
       }
@@ -267,7 +274,7 @@ export default function AccountingScreen() {
   // Map category to colors
   const getCategoryColors = (category: string): { bgColor: string; color: string } => {
     const colorMap: Record<string, { bgColor: string; color: string }> = {
-      rent: { bgColor: '#EFF6FF', color: '#2563EB' },
+      rent: { bgColor: '#EDEDEF', color: '#3C4043' },
       garage: { bgColor: '#F3E8FF', color: '#9333EA' },
       parking: { bgColor: '#FFF7ED', color: '#EA580C' },
       utility: { bgColor: '#FEF9C3', color: '#CA8A04' },
@@ -289,7 +296,7 @@ export default function AccountingScreen() {
           styles.transactionCard,
           { 
             backgroundColor: cardBgColor,
-            borderColor: isDark ? '#374151' : '#e5e7eb',
+            borderColor: isDark ? '#26282C' : '#E5E5E7',
             opacity: isPending ? 0.6 : 1,
           },
         ]}
@@ -380,7 +387,7 @@ export default function AccountingScreen() {
       >
         {/* Income/Expense Toggle */}
         <View style={styles.toggleContainer}>
-          <View style={[styles.toggleWrapper, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+          <View style={[styles.toggleWrapper, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
             <TouchableOpacity
               style={[
                 styles.toggleOption,
@@ -480,14 +487,14 @@ export default function AccountingScreen() {
               </ThemedText>
             </View>
             {/* Period toggle: 1M / 3M / 6M / CR */}
-            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
               {([1, 3, 6] as const).map(p => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.periodBtn, chartPeriod === p && { backgroundColor: primaryColor }]}
                   onPress={() => setChartPeriod(p)}
                 >
-                  <ThemedText style={[styles.periodBtnText, { color: chartPeriod === p ? '#fff' : secondaryTextColor }]}>
+                  <ThemedText style={[styles.periodBtnText, { color: chartPeriod === p ? onPrimaryColor : secondaryTextColor }]}>
                     {p}M
                   </ThemedText>
                 </TouchableOpacity>
@@ -501,7 +508,7 @@ export default function AccountingScreen() {
                   setShowCRModal(true);
                 }}
               >
-                <ThemedText style={[styles.periodBtnText, { color: chartPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                <ThemedText style={[styles.periodBtnText, { color: chartPeriod === 'cr' ? onPrimaryColor : secondaryTextColor }]}>
                   CR
                 </ThemedText>
               </TouchableOpacity>
@@ -573,14 +580,14 @@ export default function AccountingScreen() {
         <View style={[styles.incomeExpenseCard, { backgroundColor: cardBgColor, borderColor }]}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <ThemedText style={[styles.incomeExpenseTitle, { color: textColor }]}>Revenue by Property</ThemedText>
-            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#253040' : '#e5e7eb' }]}>
+            <View style={[styles.periodToggle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
               {([1, 3, 6] as const).map(p => (
                 <TouchableOpacity
                   key={p}
                   style={[styles.periodBtn, propPeriod === p && { backgroundColor: primaryColor }]}
                   onPress={() => setPropPeriod(p)}
                 >
-                  <ThemedText style={[styles.periodBtnText, { color: propPeriod === p ? '#fff' : secondaryTextColor }]}>
+                  <ThemedText style={[styles.periodBtnText, { color: propPeriod === p ? onPrimaryColor : secondaryTextColor }]}>
                     {p}M
                   </ThemedText>
                 </TouchableOpacity>
@@ -594,7 +601,7 @@ export default function AccountingScreen() {
                   setShowPropCRModal(true);
                 }}
               >
-                <ThemedText style={[styles.periodBtnText, { color: propPeriod === 'cr' ? '#fff' : secondaryTextColor }]}>
+                <ThemedText style={[styles.periodBtnText, { color: propPeriod === 'cr' ? onPrimaryColor : secondaryTextColor }]}>
                   CR
                 </ThemedText>
               </TouchableOpacity>
@@ -649,7 +656,7 @@ export default function AccountingScreen() {
                 style={[
                   styles.categoryText,
                   { 
-                    color: selectedCategory === cat.key ? '#ffffff' : textColor,
+                    color: selectedCategory === cat.key ? onPrimaryColor : textColor,
                     fontWeight: selectedCategory === cat.key ? '700' : '500',
                   },
                 ]}
@@ -683,8 +690,8 @@ export default function AccountingScreen() {
                 style={[styles.addFirstButton, { backgroundColor: primaryColor }]}
                 onPress={() => router.push('/add-transaction')}
               >
-                <MaterialCommunityIcons name="plus" size={20} color="#ffffff" />
-                <ThemedText style={styles.addFirstButtonText}>
+                <MaterialCommunityIcons name="plus" size={20} color={onPrimaryColor} />
+                <ThemedText style={[styles.addFirstButtonText, { color: onPrimaryColor }]}>
                   Add Your First Transaction
                 </ThemedText>
               </TouchableOpacity>
@@ -710,7 +717,7 @@ export default function AccountingScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor }]}
         onPress={() => router.push('/add-transaction')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
 
       {/* Custom Range modal */}
@@ -728,7 +735,7 @@ export default function AccountingScreen() {
             </ThemedText>
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
             >
               <ThemedText style={{ color: crDraftStart ? textColor : secondaryTextColor }}>
@@ -742,7 +749,7 @@ export default function AccountingScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftStart(toISODateLocal(date));
                 }}
               />
             )}
@@ -753,7 +760,7 @@ export default function AccountingScreen() {
             )}
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
             >
               <ThemedText style={{ color: crDraftEnd ? textColor : secondaryTextColor }}>
@@ -767,7 +774,7 @@ export default function AccountingScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftEnd(toISODateLocal(date));
                 }}
               />
             )}
@@ -799,7 +806,7 @@ export default function AccountingScreen() {
                   setShowCRModal(false);
                 }}
               >
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+                <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Apply</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -821,7 +828,7 @@ export default function AccountingScreen() {
             </ThemedText>
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowPropCRStartPicker(true); setShowPropCREndPicker(false); }}
             >
               <ThemedText style={{ color: propCrDraftStart ? textColor : secondaryTextColor }}>
@@ -846,7 +853,7 @@ export default function AccountingScreen() {
             )}
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2632' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowPropCREndPicker(true); setShowPropCRStartPicker(false); }}
             >
               <ThemedText style={{ color: propCrDraftEnd ? textColor : secondaryTextColor }}>
@@ -892,7 +899,7 @@ export default function AccountingScreen() {
                   setShowPropCRModal(false);
                 }}
               >
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+                <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Apply</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -1346,7 +1353,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,

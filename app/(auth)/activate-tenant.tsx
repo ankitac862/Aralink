@@ -35,13 +35,14 @@ export default function ActivateTenantScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#2A64F5';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#1a202c' : '#ffffff';
-  const borderColor = isDark ? '#334155' : '#D1D5DB';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subtextColor = isDark ? '#94a3b8' : '#6B7280';
-  const placeholderColor = isDark ? '#64748b' : '#9ca3af';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subtextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const placeholderColor = isDark ? '#9BA1A6' : '#6E7377';
 
   // Validate invitation token
   useEffect(() => {
@@ -232,7 +233,7 @@ export default function ActivateTenantScreen() {
                 style={[styles.button, { backgroundColor: primaryColor }]}
                 onPress={() => router.back()}
               >
-                <ThemedText style={styles.buttonText}>Go Back</ThemedText>
+                <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Go Back</ThemedText>
               </TouchableOpacity>
             </View>
           </View>
@@ -250,7 +251,7 @@ export default function ActivateTenantScreen() {
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={[styles.logo, { backgroundColor: primaryColor }]}>
-            <MaterialCommunityIcons name="check-circle" size={32} color="#fff" />
+            <MaterialCommunityIcons name="check-circle" size={32} color={onPrimaryColor} />
           </View>
         </View>
 
@@ -275,7 +276,7 @@ export default function ActivateTenantScreen() {
                 style={[
                   styles.input,
                   {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                    backgroundColor: isDark ? '#26282C' : '#E8E8EA',
                     borderColor,
                     color: textColor,
                   },
@@ -297,7 +298,7 @@ export default function ActivateTenantScreen() {
                 style={[
                   styles.displayBox,
                   {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                    backgroundColor: isDark ? '#26282C' : '#E8E8EA',
                     borderColor,
                   },
                 ]}
@@ -316,7 +317,7 @@ export default function ActivateTenantScreen() {
               <View style={[
                 styles.passwordInputContainer,
                 {
-                  backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                  backgroundColor: isDark ? '#26282C' : '#E8E8EA',
                   borderColor,
                 }
               ]}>
@@ -379,7 +380,7 @@ export default function ActivateTenantScreen() {
             {/* Info Note */}
             <View style={[
               styles.infoBox,
-              { backgroundColor: isDark ? '#1e293b' : '#EFF6FF', borderColor: primaryColor }
+              { backgroundColor: isDark ? '#222428' : '#EDEDEF', borderColor: primaryColor }
             ]}>
               <MaterialCommunityIcons name="information" size={16} color={primaryColor} />
               <ThemedText style={[styles.infoText, { color: subtextColor }]}>

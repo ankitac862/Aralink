@@ -94,9 +94,15 @@ export default function TenantMaintenanceRequestScreen() {
   const [pendingGroup, setPendingGroup] = useState<PropertyGroup | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardColor = isDark ? '#151f2b' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const border = isDark ? '#26282C' : '#E5E5E7';
+  const subtle = isDark ? '#141517' : '#F7F7F8';
+  const chipBg = isDark ? '#26282C' : '#E8E8EA';
+  const accent = isDark ? '#FFFFFF' : '#111315';
+  const onAccent = isDark ? '#0B0B0C' : '#FFFFFF';
 
   // Load tenant's linked properties, build hierarchical groups
   useEffect(() => {
@@ -359,17 +365,17 @@ export default function TenantMaintenanceRequestScreen() {
         <View style={styles.addressGroup}>
           <Text style={styles.addressLabel}>ADDRESS</Text>
           <TouchableOpacity
-            style={styles.addressSelector}
+            style={[styles.addressSelector, { backgroundColor: cardColor, borderColor: border }]}
             onPress={() => { if (hasMultipleChoices) setModalOpen(true); }}
             activeOpacity={hasMultipleChoices ? 0.7 : 1}>
-            <MaterialCommunityIcons name="home-city" size={20} color="#64748b" />
+            <MaterialCommunityIcons name="home-city" size={20} color={subText} />
             <Text
-              style={[styles.addressSelectorText, { color: selectedAddress ? '#111827' : '#94a3b8' }]}
+              style={[styles.addressSelectorText, { color: selectedAddress ? textColor : subText }]}
               numberOfLines={1}>
               {selectedAddress ? selectedAddress.displayLabel : 'Select an address…'}
             </Text>
             {hasMultipleChoices && (
-              <MaterialCommunityIcons name="chevron-down" size={20} color="#64748b" />
+              <MaterialCommunityIcons name="chevron-down" size={20} color={subText} />
             )}
           </TouchableOpacity>
         </View>
@@ -381,7 +387,7 @@ export default function TenantMaintenanceRequestScreen() {
 
           <FormInput label="Title" description="Give this request a short title">
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: subtle, borderColor: border, color: textColor }]}
               placeholder="E.g., Leaky faucet in bathroom"
               value={title}
               onChangeText={setTitle}
@@ -391,7 +397,7 @@ export default function TenantMaintenanceRequestScreen() {
 
           <FormInput label="Describe the issue" description="The more details the better.">
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.input, styles.textArea, { backgroundColor: subtle, borderColor: border, color: textColor }]}
               placeholder="What happened? When did you notice it? Any previous fixes attempted?"
               value={description}
               onChangeText={setDescription}
@@ -408,10 +414,10 @@ export default function TenantMaintenanceRequestScreen() {
                 return (
                   <TouchableOpacity
                     key={level.value}
-                    style={[styles.urgencyCard, active && styles.urgencyActive]}
+                    style={[styles.urgencyCard, { backgroundColor: active ? accent : cardColor, borderColor: active ? accent : border }]}
                     onPress={() => setUrgency(level.value as any)}>
-                    <MaterialCommunityIcons name={level.icon as any} size={22} color={active ? '#fff' : '#2563eb'} />
-                    <Text style={[styles.urgencyLabel, active && { color: '#fff' }]}>{level.label}</Text>
+                    <MaterialCommunityIcons name={level.icon as any} size={22} color={active ? onAccent : textColor} />
+                    <Text style={[styles.urgencyLabel, { color: active ? onAccent : textColor }]}>{level.label}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -419,9 +425,9 @@ export default function TenantMaintenanceRequestScreen() {
           </FormInput>
 
           <FormInput label="Availability" description="When can maintenance access the unit?">
-            <TouchableOpacity style={styles.availabilityButton} onPress={() => setShowDatePicker(true)}>
-              <MaterialCommunityIcons name="calendar-clock" size={20} color="#2563eb" />
-              <Text style={styles.availabilityText}>{formattedAvailability}</Text>
+            <TouchableOpacity style={[styles.availabilityButton, { borderColor: border, backgroundColor: subtle }]} onPress={() => setShowDatePicker(true)}>
+              <MaterialCommunityIcons name="calendar-clock" size={20} color={textColor} />
+              <Text style={[styles.availabilityText, { color: textColor }]}>{formattedAvailability}</Text>
             </TouchableOpacity>
             {showDatePicker && (
               <DateTimePicker
@@ -442,22 +448,22 @@ export default function TenantMaintenanceRequestScreen() {
             <FilePreview files={attachments} onRemove={handleRemoveFile} />
           </FormInput>
 
-          <View style={styles.permissionCard}>
+          <View style={[styles.permissionCard, { backgroundColor: subtle }]}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.permissionTitle}>Permission to Enter</Text>
-              <Text style={styles.permissionDescription}>Allow maintenance to enter if I'm not home.</Text>
+              <Text style={[styles.permissionTitle, { color: textColor }]}>Permission to Enter</Text>
+              <Text style={[styles.permissionDescription, { color: subText }]}>Allow maintenance to enter if I'm not home.</Text>
             </View>
             <Switch
               value={permissionToEnter}
               onValueChange={setPermissionToEnter}
-              trackColor={{ false: '#CBD5F5', true: '#2563eb' }}
+              trackColor={{ false: chipBg, true: isDark ? '#4ADE80' : '#15803D' }}
               thumbColor="#fff"
             />
           </View>
         </View>
       </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: cardColor, borderTopColor: border }]}>
         <TouchableOpacity
           style={[styles.submitButton, submitting && { opacity: 0.6 }]}
           onPress={handleSubmit}
@@ -472,31 +478,31 @@ export default function TenantMaintenanceRequestScreen() {
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={closeModal}>
-        <View style={styles.modalContainer}>
+        <View style={[styles.modalContainer, { backgroundColor: bgColor }]}>
           {/* Header */}
-          <View style={styles.modalHeader}>
+          <View style={[styles.modalHeader, { backgroundColor: cardColor, borderBottomColor: border }]}>
             {modalStep === 'unit' ? (
               <TouchableOpacity
                 style={styles.modalBackBtn}
                 onPress={() => { setModalStep('property'); setPendingGroup(null); }}>
-                <MaterialCommunityIcons name="arrow-left" size={22} color="#111827" />
+                <MaterialCommunityIcons name="arrow-left" size={22} color={textColor} />
               </TouchableOpacity>
             ) : (
               <View style={styles.modalBackBtn} />
             )}
-            <Text style={styles.modalTitle}>
+            <Text style={[styles.modalTitle, { color: textColor }]}>
               {modalStep === 'property' ? 'Select Property' : 'Select Unit'}
             </Text>
             <TouchableOpacity onPress={closeModal} style={styles.modalCloseBtn}>
-              <MaterialCommunityIcons name="close" size={22} color="#111827" />
+              <MaterialCommunityIcons name="close" size={22} color={textColor} />
             </TouchableOpacity>
           </View>
 
           {/* Breadcrumb (shown on unit step) */}
           {modalStep === 'unit' && pendingGroup && (
-            <View style={styles.breadcrumb}>
-              <MaterialCommunityIcons name="home" size={14} color="#64748b" />
-              <Text style={styles.breadcrumbText} numberOfLines={1}>
+            <View style={[styles.breadcrumb, { backgroundColor: subtle, borderBottomColor: border }]}>
+              <MaterialCommunityIcons name="home" size={14} color={subText} />
+              <Text style={[styles.breadcrumbText, { color: subText }]} numberOfLines={1}>
                 {pendingGroup.propertyAddress}
               </Text>
             </View>
@@ -510,20 +516,20 @@ export default function TenantMaintenanceRequestScreen() {
               contentContainerStyle={styles.listContent}
               renderItem={({ item: group }) => (
                 <TouchableOpacity
-                  style={styles.listItem}
+                  style={[styles.listItem, { backgroundColor: cardColor, borderBottomColor: border }]}
                   onPress={() => handlePropertySelect(group)}>
-                  <View style={styles.listItemIcon}>
-                    <MaterialCommunityIcons name="home" size={22} color="#2563eb" />
+                  <View style={[styles.listItemIcon, { backgroundColor: chipBg }]}>
+                    <MaterialCommunityIcons name="home" size={22} color={textColor} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.listItemTitle}>{group.propertyAddress}</Text>
-                    <Text style={styles.listItemSub}>
+                    <Text style={[styles.listItemTitle, { color: textColor }]}>{group.propertyAddress}</Text>
+                    <Text style={[styles.listItemSub, { color: subText }]}>
                       {group.options.length - 1 > 0
                         ? `${group.options.length - 1} unit${group.options.length - 1 > 1 ? 's' : ''}`
                         : 'Whole property'}
                     </Text>
                   </View>
-                  <MaterialCommunityIcons name="chevron-right" size={20} color="#94a3b8" />
+                  <MaterialCommunityIcons name="chevron-right" size={20} color={subText} />
                 </TouchableOpacity>
               )}
             />
@@ -540,27 +546,27 @@ export default function TenantMaintenanceRequestScreen() {
                 const active = selectedAddress?.id === option.id;
                 return (
                   <TouchableOpacity
-                    style={styles.listItem}
+                    style={[styles.listItem, { backgroundColor: cardColor, borderBottomColor: border }]}
                     onPress={() => handleUnitSelect(option)}>
-                    <View style={[styles.listItemIcon, active && { backgroundColor: '#dbeafe' }]}>
+                    <View style={[styles.listItemIcon, { backgroundColor: active ? accent : chipBg }]}>
                       <MaterialCommunityIcons
                         name={isMain ? 'home' : 'door'}
                         size={22}
-                        color={active ? '#2563eb' : '#64748b'}
+                        color={active ? onAccent : subText}
                       />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.listItemTitle, active && { color: '#2563eb' }]}>
+                      <Text style={[styles.listItemTitle, { color: textColor }]}>
                         {isMain ? 'Main Address' : option.unitName || option.displayLabel}
                       </Text>
-                      <Text style={styles.listItemSub}>
+                      <Text style={[styles.listItemSub, { color: subText }]}>
                         {isMain ? 'Whole property' : option.propertyAddress}
                       </Text>
                     </View>
                     <MaterialCommunityIcons
                       name={active ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
                       size={22}
-                      color={active ? '#2563eb' : '#d1d5db'}
+                      color={active ? accent : border}
                     />
                   </TouchableOpacity>
                 );
@@ -595,7 +601,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-    color: '#4c739a',
     marginBottom: 6,
   },
   addressSelector: {
@@ -605,8 +610,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d1d5db',
-    backgroundColor: '#ffffff',
     gap: 10,
   },
   addressSelectorText: { flex: 1, fontSize: 16 },
@@ -614,48 +617,40 @@ const styles = StyleSheet.create({
   // Form fields
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
     borderRadius: 12,
     padding: 12,
-    backgroundColor: '#fff',
     fontSize: 15,
-    color: '#111827',
   },
   textArea: { minHeight: 120, textAlignVertical: 'top' },
   urgencyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   urgencyCard: {
     borderWidth: 1,
-    borderColor: '#cbd5f5',
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#fff',
   },
-  urgencyActive: { backgroundColor: '#22c55e', borderColor: '#16a34a' },
-  urgencyLabel: { fontWeight: '600', color: '#2563eb' },
+  urgencyLabel: { fontWeight: '600' },
   availabilityButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     borderWidth: 1,
-    borderColor: '#d1d5db',
     borderRadius: 12,
     padding: 12,
   },
-  availabilityText: { fontWeight: '600', color: '#111827' },
+  availabilityText: { fontWeight: '600' },
   permissionCard: {
-    backgroundColor: '#f8fafc',
     borderRadius: 16,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  permissionTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
-  permissionDescription: { fontSize: 13, color: '#475569' },
+  permissionTitle: { fontSize: 16, fontWeight: '600' },
+  permissionDescription: { fontSize: 13 },
   footer: {
     position: 'absolute',
     left: 0,
@@ -663,15 +658,13 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: 16,
     paddingTop: 12,
-    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
   },
   submitButton: { backgroundColor: '#16a34a', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
   submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   // Modal
-  modalContainer: { flex: 1, backgroundColor: '#f8fafc' },
+  modalContainer: { flex: 1 },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -679,23 +672,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
   },
   modalBackBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   modalCloseBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#111827', flex: 1, textAlign: 'center' },
+  modalTitle: { fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   breadcrumb: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#f1f5f9',
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
   },
-  breadcrumbText: { fontSize: 13, color: '#64748b', flex: 1 },
+  breadcrumbText: { fontSize: 13, flex: 1 },
   listContent: { paddingBottom: 40 },
   listItem: {
     flexDirection: 'row',
@@ -703,18 +692,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    backgroundColor: '#fff',
     gap: 12,
   },
   listItemIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#f1f5f9',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  listItemTitle: { fontSize: 15, fontWeight: '600', color: '#111827', marginBottom: 2 },
-  listItemSub: { fontSize: 12, color: '#64748b' },
+  listItemTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  listItemSub: { fontSize: 12 },
 });

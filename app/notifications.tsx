@@ -47,13 +47,14 @@ export default function NotificationsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
-  const unreadBgColor = isDark ? '#1e3a5f' : '#eff6ff';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const unreadBgColor = isDark ? '#222428' : '#EDEDEF';
 
   const loadNotifications = async () => {
     if (!user?.id) return;
@@ -300,7 +301,7 @@ export default function NotificationsScreen() {
           <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Notifications</ThemedText>
           {unreadCount > 0 && (
             <View style={[styles.badge, { backgroundColor: primaryColor }]}>
-              <ThemedText style={styles.badgeText}>{unreadCount}</ThemedText>
+              <ThemedText style={[styles.badgeText, { color: onPrimaryColor }]}>{unreadCount}</ThemedText>
             </View>
           )}
         </View>

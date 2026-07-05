@@ -40,6 +40,12 @@ export function fmtDateTime(iso: string | null | undefined, fallback = 'N/A'): s
 }
 
 /** Convert a Date object → "MM/DD/YYYY" string for storing in form fields */
+/** Format a Date as YYYY-MM-DD using LOCAL date parts (toISOString shifts across
+ *  midnight in non-UTC timezones and can save the wrong day from a date picker). */
+export function toISODateLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function fmtDateInput(d: Date): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
 }

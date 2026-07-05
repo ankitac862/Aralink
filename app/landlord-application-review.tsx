@@ -28,13 +28,14 @@ export default function LandlordApplicationReviewScreen() {
   const [applicationLease, setApplicationLease] = useState<DbLease | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
-  const modalBg = isDark ? '#192734' : '#ffffff';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const modalBg = isDark ? '#1A1B1E' : '#FFFFFF';
 
   // Load application details
   useEffect(() => {
@@ -429,7 +430,7 @@ export default function LandlordApplicationReviewScreen() {
                 <TouchableOpacity
                   style={[styles.approveButton, { backgroundColor: primaryColor, paddingVertical: 10, flex: 1, minWidth: 140 }]}
                   onPress={() => router.push(`/lease-detail?id=${applicationLease.id}`)}>
-                  <ThemedText style={styles.approveButtonText}>Open Lease</ThemedText>
+                  <ThemedText style={[styles.approveButtonText, { color: onPrimaryColor }]}>Open Lease</ThemedText>
                 </TouchableOpacity>
 
                 {canEditLease(applicationLease) && (
@@ -729,7 +730,7 @@ export default function LandlordApplicationReviewScreen() {
               style={[styles.approveButton, { backgroundColor: primaryColor }]}
               onPress={handleApprove}
               disabled={isProcessing}>
-              <ThemedText style={styles.approveButtonText}>Approve Application</ThemedText>
+              <ThemedText style={[styles.approveButtonText, { color: onPrimaryColor }]}>Approve Application</ThemedText>
             </TouchableOpacity>
           </View>
         )}
@@ -793,7 +794,7 @@ export default function LandlordApplicationReviewScreen() {
             <TouchableOpacity
               style={[styles.modalButton, { backgroundColor: primaryColor }]}
               onPress={() => handleApproveWithTenant('now')}>
-              <ThemedText style={styles.modalButtonText}>Generate Lease Now</ThemedText>
+              <ThemedText style={[styles.modalButtonText, { color: onPrimaryColor }]}>Generate Lease Now</ThemedText>
             </TouchableOpacity>
 
             <TouchableOpacity

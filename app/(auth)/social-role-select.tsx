@@ -41,12 +41,13 @@ export default function SocialRoleSelectScreen() {
   const { completeSocialSignIn, pendingOAuthSession, signOut } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#2A64F5';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#1a202c' : '#ffffff';
-  const borderColor = isDark ? '#334155' : '#D1D5DB';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subtextColor = isDark ? '#94a3b8' : '#6B7280';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subtextColor = isDark ? '#9BA1A6' : '#6E7377';
 
   // If somehow the pending session is gone, go back (must be in effect, not render)
   useEffect(() => {
@@ -96,7 +97,7 @@ export default function SocialRoleSelectScreen() {
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={[styles.logo, { backgroundColor: primaryColor }]}>
-            <MaterialCommunityIcons name="home" size={32} color="#fff" />
+            <MaterialCommunityIcons name="home" size={32} color={onPrimaryColor} />
           </View>
         </View>
 
@@ -116,7 +117,7 @@ export default function SocialRoleSelectScreen() {
                 style={[
                   styles.roleCard,
                   {
-                    backgroundColor: isSelected ? `${primaryColor}12` : (isDark ? '#1e293b' : '#F4F6F8'),
+                    backgroundColor: isSelected ? `${primaryColor}12` : (isDark ? '#26282C' : '#E8E8EA'),
                     borderColor: isSelected ? primaryColor : borderColor,
                     borderWidth: isSelected ? 2 : 1,
                   },
@@ -126,7 +127,7 @@ export default function SocialRoleSelectScreen() {
               >
                 <View style={[
                   styles.roleIcon,
-                  { backgroundColor: isSelected ? `${primaryColor}20` : (isDark ? '#334155' : '#e5e7eb') },
+                  { backgroundColor: isSelected ? `${primaryColor}20` : (isDark ? '#26282C' : '#E5E5E7') },
                 ]}>
                   <MaterialCommunityIcons
                     name={role.icon as any}
@@ -153,7 +154,7 @@ export default function SocialRoleSelectScreen() {
             style={[
               styles.continueButton,
               {
-                backgroundColor: selectedRole ? primaryColor : (isDark ? '#334155' : '#D1D5DB'),
+                backgroundColor: selectedRole ? primaryColor : (isDark ? '#26282C' : '#E5E5E7'),
                 opacity: loading ? 0.7 : 1,
               },
             ]}

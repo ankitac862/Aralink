@@ -34,13 +34,14 @@ export default function AddPropertyScreen() {
   const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
-  const inputBgColor = isDark ? '#1f2937' : '#ffffff';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
 
   // Toggle for manual address entry mode
   const [manualAddressMode, setManualAddressMode] = useState(false);
@@ -443,7 +444,7 @@ export default function AddPropertyScreen() {
 
             {/* Display parsed address fields (read-only feedback) */}
             {(structuredAddress.city || manualAddress.city) && (
-              <View style={[styles.addressPreview, { backgroundColor: isDark ? '#1a242d' : '#f0f9ff', borderColor: primaryColor }]}>
+              <View style={[styles.addressPreview, { backgroundColor: isDark ? '#222428' : '#EDEDEF', borderColor: primaryColor }]}>
                 <MaterialCommunityIcons name="check-circle" size={18} color={primaryColor} />
                 <View style={styles.addressPreviewContent}>
                   <ThemedText style={[styles.addressPreviewLabel, { color: secondaryTextColor }]}>
@@ -675,7 +676,7 @@ export default function AddPropertyScreen() {
                   >
                     <ThemedText style={[
                       styles.utilityButtonText,
-                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'landlord' ? '#fff' : textColor },
+                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'landlord' ? onPrimaryColor : textColor },
                     ]}>
                       Landlord
                     </ThemedText>
@@ -699,7 +700,7 @@ export default function AddPropertyScreen() {
                   >
                     <ThemedText style={[
                       styles.utilityButtonText,
-                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'tenant' ? '#fff' : textColor },
+                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'tenant' ? onPrimaryColor : textColor },
                     ]}>
                       Tenant
                     </ThemedText>
@@ -720,8 +721,8 @@ export default function AddPropertyScreen() {
         >
           {isSubmitting ? (
             <View style={styles.submitButtonContent}>
-              <ActivityIndicator size="small" color="#fff" />
-              <ThemedText style={styles.submitButtonText}>Saving Property...</ThemedText>
+              <ActivityIndicator size="small" color={onPrimaryColor} />
+              <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Saving Property...</ThemedText>
             </View>
           ) : (
             <ThemedText style={styles.submitButtonText}>Submit</ThemedText>

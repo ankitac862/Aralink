@@ -26,7 +26,7 @@ import React from 'react';
 
 import RentChart from '@/components/RentChart';
 import { ThemedText } from '@/components/themed-text';
-import { fmtShortDate, fmtDateTime } from '@/lib/dateUtils';
+import { fmtShortDate, fmtDateTime, toISODateLocal } from '@/lib/dateUtils';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
@@ -112,12 +112,13 @@ export default function LandlordDashboardScreen() {
   const [showCREndPicker, setShowCREndPicker] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#4A90E2';
-  const bgColor = isDark ? '#101c22' : '#F2F2F7';
-  const cardBgColor = isDark ? '#1A2831' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F2F2F7' : '#101c22';
-  const textSecondaryColor = isDark ? '#a0aec0' : '#8E8E93';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
 
   // Load data every time the screen comes into focus so changes from other screens are reflected
   useFocusEffect(
@@ -185,11 +186,18 @@ export default function LandlordDashboardScreen() {
 
     if (incomeExpensePeriod === 'cr') {
       if (!ieCustomRange) return;
+      // iterate from the 1st of each month so day-31 starts can't skip months
+      // and the end month is always included
       const d = new Date(ieCustomRange.start + 'T00:00:00');
+      d.setDate(1);
       const endD = new Date(ieCustomRange.end + 'T00:00:00');
+      endD.setDate(1);
       while (d <= endD) {
-        const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-        const end = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+        const monthStart = toISODateLocal(new Date(d.getFullYear(), d.getMonth(), 1));
+        const monthEnd = toISODateLocal(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+        // clamp partial first/last months to the selected range
+        const start = monthStart < ieCustomRange.start ? ieCustomRange.start : monthStart;
+        const end = monthEnd > ieCustomRange.end ? ieCustomRange.end : monthEnd;
         months.push({ label: d.toLocaleDateString('en-US', { month: 'short' }), start, end });
         d.setMonth(d.getMonth() + 1);
       }
@@ -473,7 +481,7 @@ export default function LandlordDashboardScreen() {
                     style={styles.profilePicture}
                   />
                 ) : (
-                  <View style={[styles.profilePicture, { backgroundColor: isDark ? '#475569' : '#e2e8f0' }]}>
+                  <View style={[styles.profilePicture, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
                     <MaterialCommunityIcons name="account" size={24} color={textPrimaryColor} />
                   </View>
                 )}
@@ -520,7 +528,7 @@ export default function LandlordDashboardScreen() {
                   </ThemedText>
                 </View>
                 {/* Period toggle: 1M / 3M / 6M / CR */}
-                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
                   {([1, 3, 6] as const).map(p => (
                     <TouchableOpacity
                       key={p}
@@ -585,14 +593,14 @@ export default function LandlordDashboardScreen() {
                   </ThemedText>
                 </View>
                 {/* Period toggle: 1M / 3M / 6M / CR */}
-                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
+                <View style={[styles.rentPeriodToggle, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
                   {([1, 3, 6] as const).map(p => (
                     <TouchableOpacity
                       key={p}
                       style={[styles.rentPeriodBtn, incomeExpensePeriod === p && { backgroundColor: primaryColor }]}
                       onPress={() => setIncomeExpensePeriod(p)}
                     >
-                      <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === p ? '#fff' : textSecondaryColor }]}>
+                      <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === p ? onPrimaryColor : textSecondaryColor }]}>
                         {p}M
                       </ThemedText>
                     </TouchableOpacity>
@@ -606,7 +614,7 @@ export default function LandlordDashboardScreen() {
                       setCrModalTarget('ie');
                     }}
                   >
-                    <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === 'cr' ? '#fff' : textSecondaryColor }]}>
+                    <ThemedText style={[styles.rentPeriodBtnText, { color: incomeExpensePeriod === 'cr' ? onPrimaryColor : textSecondaryColor }]}>
                       CR
                     </ThemedText>
                   </TouchableOpacity>
@@ -693,7 +701,7 @@ export default function LandlordDashboardScreen() {
                 style={[
                   styles.dot,
                   {
-                    backgroundColor: chartPage === i ? primaryColor : (isDark ? '#394a57' : '#D1D5DB'),
+                    backgroundColor: chartPage === i ? primaryColor : (isDark ? '#26282C' : '#E5E5E7'),
                     width: chartPage === i ? 20 : 8,
                   },
                 ]}
@@ -786,7 +794,7 @@ export default function LandlordDashboardScreen() {
         <TouchableOpacity
           style={[styles.fab, { backgroundColor: primaryColor }]}
           onPress={() => setShowAddMenu(!showAddMenu)}>
-          <MaterialCommunityIcons name={showAddMenu ? 'close' : 'plus'} size={28} color="#fff" />
+          <MaterialCommunityIcons name={showAddMenu ? 'close' : 'plus'} size={28} color={onPrimaryColor} />
         </TouchableOpacity>
       </View>
 
@@ -805,7 +813,7 @@ export default function LandlordDashboardScreen() {
             </ThemedText>
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#1a2831' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 10, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCRStartPicker(true); setShowCREndPicker(false); }}
             >
               <ThemedText style={{ color: crDraftStart ? textPrimaryColor : textSecondaryColor }}>
@@ -819,18 +827,18 @@ export default function LandlordDashboardScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftStart(toISODateLocal(date));
                 }}
               />
             )}
             {showCRStartPicker && Platform.OS === 'ios' && (
               <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCRStartPicker(false)}>
-                <ThemedText style={{ color: '#137fec', fontWeight: '600' }}>Done</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity
-              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#1a2831' : '#f9fafb' }}
+              style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
               onPress={() => { setShowCREndPicker(true); setShowCRStartPicker(false); }}
             >
               <ThemedText style={{ color: crDraftEnd ? textPrimaryColor : textSecondaryColor }}>
@@ -844,13 +852,13 @@ export default function LandlordDashboardScreen() {
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={(_e, date) => {
                   if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(date.toISOString().split('T')[0]);
+                  if (date) setCrDraftEnd(toISODateLocal(date));
                 }}
               />
             )}
             {showCREndPicker && Platform.OS === 'ios' && (
               <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCREndPicker(false)}>
-                <ThemedText style={{ color: '#137fec', fontWeight: '600' }}>Done</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
               </TouchableOpacity>
             )}
 
@@ -878,7 +886,7 @@ export default function LandlordDashboardScreen() {
                   setCrModalTarget(null);
                 }}
               >
-                <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Apply</ThemedText>
+                <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Apply</ThemedText>
               </TouchableOpacity>
             </View>
           </View>

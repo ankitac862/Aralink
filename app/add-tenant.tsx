@@ -40,15 +40,16 @@ export default function AddTenantScreen() {
   const existingTenant = id ? getTenantById(id) : null;
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#0d141b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
-  const primaryColor = '#137fec';
-  const infoBgColor = isDark ? '#1e3a5f' : '#eff6ff';
-  const infoTextColor = isDark ? '#93c5fd' : '#1e40af';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const inputBgColor = isDark ? '#141517' : '#F7F7F8';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const infoBgColor = isDark ? '#222428' : '#EDEDEF';
+  const infoTextColor = isDark ? '#9BA1A6' : '#3C4043';
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -652,7 +653,7 @@ export default function AddTenantScreen() {
               {formData.photo ? (
                 <Image source={{ uri: formData.photo }} style={styles.photo} />
               ) : (
-                <View style={[styles.photoPlaceholder, { backgroundColor: isDark ? '#374151' : '#e5e7eb', borderColor }]}>
+                <View style={[styles.photoPlaceholder, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}>
                   <MaterialCommunityIcons name="camera-plus" size={48} color={secondaryTextColor} />
                 </View>
               )}
@@ -670,7 +671,7 @@ export default function AddTenantScreen() {
               <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
                 <TouchableOpacity
                   onPress={() => pickIdProof(1)}
-                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#374151' : '#e5e7eb', borderColor }]}
+                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
                 >
                   {formData.idProof1 ? (
                     <Image source={{ uri: formData.idProof1 }} style={styles.idProofImage} />
@@ -684,7 +685,7 @@ export default function AddTenantScreen() {
               <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
                 <TouchableOpacity
                   onPress={() => pickIdProof(2)}
-                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#374151' : '#e5e7eb', borderColor }]}
+                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
                 >
                   {formData.idProof2 ? (
                     <Image source={{ uri: formData.idProof2 }} style={styles.idProofImage} />
@@ -796,7 +797,7 @@ export default function AddTenantScreen() {
                           <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
                             {option.label}
                           </ThemedText>
-                          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
+                          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
                             <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
                               {option.type === 'single_unit' ? 'Single' : 'Multi'}
                             </ThemedText>
@@ -984,7 +985,7 @@ export default function AddTenantScreen() {
               <TouchableOpacity
                 style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
                 onPress={() => setShowStartDatePicker(false)}>
-                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
               </TouchableOpacity>
             )}
             {showEndDatePicker && (
@@ -1002,7 +1003,7 @@ export default function AddTenantScreen() {
               <TouchableOpacity
                 style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
                 onPress={() => setShowEndDatePicker(false)}>
-                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
               </TouchableOpacity>
             )}
 
@@ -1034,8 +1035,8 @@ export default function AddTenantScreen() {
         >
           {isSubmitting ? (
             <View style={styles.submitButtonContent}>
-              <ActivityIndicator size="small" color="#fff" />
-              <ThemedText style={styles.submitButtonText}>Saving...</ThemedText>
+              <ActivityIndicator size="small" color={onPrimaryColor} />
+              <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Saving...</ThemedText>
             </View>
           ) : (
             <ThemedText style={styles.submitButtonText}>

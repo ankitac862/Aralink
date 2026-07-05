@@ -15,37 +15,45 @@ export default function TenantMaintenanceRequestConfirmationScreen() {
   const { requests } = useMaintenanceStore();
   const request = id ? requests.find((req) => req.id === id) : undefined;
 
-  const bgColor = colorScheme === 'dark' ? '#0f172a' : '#f8fafc';
-  const cardColor = colorScheme === 'dark' ? '#142033' : '#ffffff';
-  const textColor = colorScheme === 'dark' ? '#f8fafc' : '#111827';
+  const isDark = colorScheme === 'dark';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const accent = isDark ? '#FFFFFF' : '#111315';
+  const onAccent = isDark ? '#0B0B0C' : '#FFFFFF';
+  const success = isDark ? '#4ADE80' : '#15803D';
+  const successBg = isDark ? '#1E3B2A' : '#DFF2E4';
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor, paddingTop: insets.top + 32 }]}>
-      <View style={styles.iconCircle}>
-        <MaterialCommunityIcons name="check" size={38} color="#22c55e" />
+      <View style={[styles.iconCircle, { backgroundColor: successBg }]}>
+        <MaterialCommunityIcons name="check" size={38} color={success} />
       </View>
       <Text style={[styles.title, { color: textColor }]}>Request Submitted!</Text>
-      <Text style={styles.description}>
+      <Text style={[styles.description, { color: subText }]}>
         Your maintenance request has been received. Our property team will review the details and reach out shortly.
       </Text>
 
       <View style={[styles.card, { backgroundColor: cardColor }]}>
         <View style={styles.row}>
-          <MaterialCommunityIcons name="identifier" size={20} color="#111827" />
-          <Text style={styles.cardText}>{request?.id || 'Pending ID'}</Text>
+          <MaterialCommunityIcons name="identifier" size={20} color={subText} />
+          <Text style={[styles.cardText, { color: textColor }]}>{request?.id || 'Pending ID'}</Text>
         </View>
         <View style={styles.row}>
-          <MaterialCommunityIcons name="progress-clock" size={20} color="#111827" />
-          <Text style={styles.cardText}>{request?.status.replace('_', ' ') ?? 'Under review'}</Text>
+          <MaterialCommunityIcons name="progress-clock" size={20} color={subText} />
+          <Text style={[styles.cardText, { color: textColor }]}>{request?.status.replace('_', ' ') ?? 'Under review'}</Text>
         </View>
       </View>
 
-      <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/tenant-maintenance-status')}>
-        <Text style={styles.primaryText}>View Request Status</Text>
+      <TouchableOpacity
+        style={[styles.primaryButton, { backgroundColor: accent }]}
+        onPress={() => router.push('/tenant-maintenance-status')}>
+        <Text style={[styles.primaryText, { color: onAccent }]}>View Request Status</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/(tabs)/tenant-dashboard')}>
-        <Text style={styles.secondaryText}>Go to Dashboard</Text>
+        <Text style={[styles.secondaryText, { color: textColor }]}>Go to Dashboard</Text>
       </TouchableOpacity>
     </View>
   );
@@ -62,7 +70,6 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#dcfce7',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -74,7 +81,6 @@ const styles = StyleSheet.create({
   description: {
     fontSize: 15,
     textAlign: 'center',
-    color: '#475569',
   },
   card: {
     width: '100%',
@@ -90,17 +96,14 @@ const styles = StyleSheet.create({
   cardText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
   },
   primaryButton: {
     width: '100%',
-    backgroundColor: '#16a34a',
     paddingVertical: 14,
     borderRadius: 14,
     alignItems: 'center',
   },
   primaryText: {
-    color: '#fff',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -108,9 +111,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   secondaryText: {
-    color: '#2563eb',
     fontSize: 15,
     fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });
-

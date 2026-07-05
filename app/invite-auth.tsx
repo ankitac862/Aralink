@@ -60,13 +60,13 @@ export default function InviteAuthScreen() {
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#0f172a' : '#f8fafc';
-  const cardColor = isDark ? '#111827' : '#ffffff';
-  const borderColor = isDark ? '#1f2937' : '#d1d5db';
-  const textColor = isDark ? '#f9fafb' : '#0f172a';
-  const secondaryText = isDark ? '#94a3b8' : '#64748b';
-  const primaryColor = '#2A64F5';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryText = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const showMessage = (title: string, message: string) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.alert(`${title}\n\n${message}`);
@@ -356,7 +356,7 @@ export default function InviteAuthScreen() {
                 <View
                   style={[
                     styles.emailDisplay,
-                    { backgroundColor: isDark ? '#0b1220' : '#f8fafc', borderColor },
+                    { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderColor },
                   ]}
                 >
                   <ThemedText style={[styles.emailText, { color: textColor }]}>{tokenAndEmail.email}</ThemedText>
@@ -368,7 +368,7 @@ export default function InviteAuthScreen() {
               <TextInput
                 style={[
                   styles.input,
-                  { backgroundColor: isDark ? '#0b1220' : '#f8fafc', borderColor, color: textColor },
+                  { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderColor, color: textColor },
                 ]}
                 value={password}
                 onChangeText={setPassword}
@@ -384,7 +384,7 @@ export default function InviteAuthScreen() {
               <TextInput
                 style={[
                   styles.input,
-                  { backgroundColor: isDark ? '#0b1220' : '#f8fafc', borderColor, color: textColor },
+                  { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderColor, color: textColor },
                 ]}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -412,9 +412,9 @@ export default function InviteAuthScreen() {
               disabled={isSubmitting || isBootstrapping}
             >
               {isSubmitting ? (
-                <ActivityIndicator size="small" color="#ffffff" />
+                <ActivityIndicator size="small" color={onPrimaryColor} />
               ) : (
-                <ThemedText style={styles.buttonText}>Set Password</ThemedText>
+                <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Set Password</ThemedText>
               )}
             </TouchableOpacity>
           </>

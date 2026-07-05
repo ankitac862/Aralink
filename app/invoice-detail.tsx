@@ -107,7 +107,7 @@ export default function InvoiceDetailScreen() {
             )}
             {showDatePicker && Platform.OS === 'ios' && (
               <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowDatePicker(false)}>
-                <ThemedText style={{ color: '#2563eb', fontWeight: '600' }}>Done</ThemedText>
+                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
               </TouchableOpacity>
             )}
           </ThemedView>

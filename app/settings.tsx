@@ -19,12 +19,13 @@ export default function SettingsScreen() {
   const [isSaving, setIsSaving] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f6f6f8';
-  const cardBgColor = isDark ? '#1f2937' : '#f8f9fc';
-  const borderColor = isDark ? '#4b5563' : '#cfd7e7';
-  const textColor = isDark ? '#f3f4f6' : '#0d121b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#4c669a';
-  const primaryColor = '#135bec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#141517' : '#F7F7F8';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
 
   const SettingSection = ({
     title,
@@ -67,7 +68,7 @@ export default function SettingsScreen() {
         style={[
           styles.input,
           {
-            backgroundColor: isDark ? '#111827' : '#ffffff',
+            backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF',
             borderColor,
             color: textColor,
           },
@@ -89,7 +90,7 @@ export default function SettingsScreen() {
     value: boolean;
     onValueChange: (value: boolean) => void;
   }) => (
-    <View style={[styles.toggleItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}>
+    <View style={[styles.toggleItem, { backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF' }]}>
       <ThemedText style={[styles.toggleLabel, { color: textColor }]}>{label}</ThemedText>
       <Switch
         value={value}
@@ -102,7 +103,7 @@ export default function SettingsScreen() {
 
   const ButtonItem = ({ label, icon }: { label: string; icon: string }) => (
     <TouchableOpacity
-      style={[styles.buttonItem, { backgroundColor: isDark ? '#111827' : '#ffffff' }]}>
+      style={[styles.buttonItem, { backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF' }]}>
       <ThemedText style={[styles.buttonItemText, { color: textColor }]}>{label}</ThemedText>
       <MaterialCommunityIcons name={icon as any} size={20} color={secondaryTextColor} />
     </TouchableOpacity>
@@ -127,7 +128,7 @@ export default function SettingsScreen() {
           <ThemedText style={[styles.roleSwitcherLabel, { color: secondaryTextColor }]}>
             Viewing As:
           </ThemedText>
-          <View style={[styles.roleButtons, { backgroundColor: isDark ? '#1a2332' : '#e7ebf3' }]}>
+          <View style={[styles.roleButtons, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
             {['owner', 'manager'].map((r) => (
               <TouchableOpacity
                 key={r}
@@ -157,7 +158,7 @@ export default function SettingsScreen() {
             style={styles.profileImage}
           />
           <TouchableOpacity style={[styles.editButton, { backgroundColor: primaryColor }]}>
-            <MaterialCommunityIcons name="pencil" size={14} color="white" />
+            <MaterialCommunityIcons name="pencil" size={14} color={onPrimaryColor} />
           </TouchableOpacity>
           <ThemedText style={[styles.profileName, { color: textColor }]}>Alex Johnson</ThemedText>
           <ThemedText style={[styles.profileRole, { color: secondaryTextColor }]}>
@@ -185,7 +186,7 @@ export default function SettingsScreen() {
               <View
                 style={[
                   styles.toggleItem,
-                  { backgroundColor: isDark ? '#111827' : '#ffffff' },
+                  { backgroundColor: isDark ? '#1A1B1E' : '#FFFFFF' },
                 ]}>
                 <View>
                   <ThemedText style={[styles.toggleLabel, { color: textColor }]}>
@@ -219,7 +220,7 @@ export default function SettingsScreen() {
             setIsSaving(true);
             setTimeout(() => setIsSaving(false), 500);
           }}>
-          <ThemedText style={styles.saveButtonText}>Save Changes</ThemedText>
+          <ThemedText style={[styles.saveButtonText, { color: onPrimaryColor }]}>Save Changes</ThemedText>
         </TouchableOpacity>
       </View>
     </ThemedView>

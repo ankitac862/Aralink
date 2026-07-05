@@ -39,13 +39,13 @@ export default function LeaseWizardStep6a() {
   } = useOntarioLeaseStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const inputBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const updateUtility = (field: string, value: any) => {
     updateFormData('utilities', {
       ...formData.utilities,
@@ -240,7 +240,7 @@ export default function LeaseWizardStep6a() {
                   >
                     <ThemedText style={[
                       styles.utilityButtonText,
-                      { color: formData.utilities?.electricity === option ? '#fff' : textColor },
+                      { color: formData.utilities?.electricity === option ? onPrimaryColor : textColor },
                     ]}>
                       {option.charAt(0).toUpperCase() + option.slice(1)}
                     </ThemedText>
@@ -265,7 +265,7 @@ export default function LeaseWizardStep6a() {
                   >
                     <ThemedText style={[
                       styles.utilityButtonText,
-                      { color: formData.utilities?.heat === option ? '#fff' : textColor },
+                      { color: formData.utilities?.heat === option ? onPrimaryColor : textColor },
                     ]}>
                       {option.charAt(0).toUpperCase() + option.slice(1)}
                     </ThemedText>
@@ -290,7 +290,7 @@ export default function LeaseWizardStep6a() {
                   >
                     <ThemedText style={[
                       styles.utilityButtonText,
-                      { color: formData.utilities?.water === option ? '#fff' : textColor },
+                      { color: formData.utilities?.water === option ? onPrimaryColor : textColor },
                     ]}>
                       {option.charAt(0).toUpperCase() + option.slice(1)}
                     </ThemedText>
@@ -331,8 +331,8 @@ export default function LeaseWizardStep6a() {
             style={[styles.primaryButton, { backgroundColor: primaryColor }]}
             onPress={handleNext}
           >
-            <ThemedText style={styles.primaryButtonText}>Continue</ThemedText>
-            <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
+            <ThemedText style={[styles.primaryButtonText, { color: onPrimaryColor }]}>Continue</ThemedText>
+            <MaterialCommunityIcons name="arrow-right" size={20} color={onPrimaryColor} />
           </TouchableOpacity>
         </View>
       </View>

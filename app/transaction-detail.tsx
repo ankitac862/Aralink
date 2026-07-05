@@ -34,13 +34,13 @@ export default function TransactionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1a2632' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#e0e6ed' : '#0d141b';
-  const secondaryTextColor = isDark ? '#94a3b8' : '#4c739a';
-  const primaryColor = '#137fec';
-  
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const [transaction, setTransaction] = useState<TransactionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -379,15 +379,15 @@ export default function TransactionDetailScreen() {
 
           {/* Action Buttons */}
           <View style={styles.actionButtonsContainer}>
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
+            <TouchableOpacity style={[styles.actionButton, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
               <MaterialCommunityIcons name="share-variant" size={20} color={textColor} />
               <ThemedText style={[styles.actionButtonText, { color: textColor }]}>
                 Share
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: primaryColor }]}>
-              <MaterialCommunityIcons name="download" size={20} color="#ffffff" />
-              <ThemedText style={[styles.actionButtonText, { color: '#ffffff' }]}>
+              <MaterialCommunityIcons name="download" size={20} color={onPrimaryColor} />
+              <ThemedText style={[styles.actionButtonText, { color: onPrimaryColor }]}>
                 Receipt
               </ThemedText>
             </TouchableOpacity>

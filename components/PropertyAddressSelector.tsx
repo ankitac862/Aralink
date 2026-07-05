@@ -66,12 +66,12 @@ export default function PropertyAddressSelector({
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
 
   // Theme colors
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const inputBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const inputBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
 
   // Load properties on mount
   useEffect(() => {
@@ -398,7 +398,7 @@ export default function PropertyAddressSelector({
                   contentContainerStyle={styles.listContent}
                   ListHeaderComponent={
                     <TouchableOpacity
-                      style={[styles.listItem, { borderBottomColor: borderColor, backgroundColor: isDark ? '#1a2636' : '#f0f9ff' }]}
+                      style={[styles.listItem, { borderBottomColor: borderColor, backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}
                       onPress={() => completeSelection(selectedProperty)}
                     >
                       <View style={styles.listItemIcon}>
@@ -426,7 +426,7 @@ export default function PropertyAddressSelector({
                   contentContainerStyle={styles.listContent}
                   ListHeaderComponent={
                     <TouchableOpacity
-                      style={[styles.listItem, { borderBottomColor: borderColor, backgroundColor: isDark ? '#1a2636' : '#f0f9ff' }]}
+                      style={[styles.listItem, { borderBottomColor: borderColor, backgroundColor: isDark ? '#222428' : '#EDEDEF' }]}
                       onPress={() => completeSelection(selectedProperty!, selectedUnit)}
                     >
                       <View style={styles.listItemIcon}>

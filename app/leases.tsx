@@ -5,7 +5,7 @@
  * Allows viewing, downloading, and managing lease documents.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -14,8 +14,11 @@ import {
   ActivityIndicator,
   Linking,
   Alert,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -51,12 +54,13 @@ export default function LeasesScreen() {
   const [convertingLeaseId, setConvertingLeaseId] = useState<string | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const primaryColor = '#137fec';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const warningColor = '#f59e0b';
 
   const property = params.propertyId ? getPropertyById(params.propertyId) : null;
@@ -68,7 +72,7 @@ export default function LeasesScreen() {
       case 'generated':
         return '#f59e0b';
       case 'uploaded':
-        return '#3b82f6';
+        return '#8E959B';
       case 'sent':
         return '#8b5cf6';
       case 'signed':
@@ -135,6 +139,21 @@ export default function LeasesScreen() {
 
   useEffect(() => {
     loadLeases();
+  }, [user?.id, params.propertyId]);
+
+  useFocusEffect(
+    useCallback(() => { loadLeases(); }, [user?.id, params.propertyId])
+  );
+
+  useEffect(() => {
+    const appStateRef = { current: AppState.currentState };
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (appStateRef.current.match(/inactive|background/) && next === 'active') {
+        loadLeases();
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
   }, [user?.id, params.propertyId]);
 
   const loadLeases = async () => {
@@ -294,8 +313,8 @@ export default function LeasesScreen() {
                 style={[styles.createButton, { backgroundColor: primaryColor }]}
                 onPress={() => router.push('/properties' as any)}
               >
-                <MaterialCommunityIcons name="plus" size={20} color="#fff" />
-                <ThemedText style={styles.createButtonText}>Create Lease</ThemedText>
+                <MaterialCommunityIcons name="plus" size={20} color={onPrimaryColor} />
+                <ThemedText style={[styles.createButtonText, { color: onPrimaryColor }]}>Create Lease</ThemedText>
               </TouchableOpacity>
             </>
           )}
@@ -441,7 +460,7 @@ export default function LeasesScreen() {
           style={[styles.fab, { backgroundColor: primaryColor }]}
           onPress={() => router.push('/lease-wizard' as any)}
         >
-          <MaterialCommunityIcons name="plus" size={28} color="white" />
+          <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
         </TouchableOpacity>
       )}
     </ThemedView>
@@ -596,7 +615,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,

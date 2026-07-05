@@ -42,13 +42,14 @@ export default function ProfileScreen() {
   const [portfolioStats, setPortfolioStats] = useState<PortfolioStats | null>(null);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f1f5f9';
-  const cardBg = isDark ? '#1e2736' : '#ffffff';
-  const border = isDark ? '#2d3a4a' : '#e2e8f0';
-  const textColor = isDark ? '#f1f5f9' : '#0f172a';
-  const subText = isDark ? '#94a3b8' : '#64748b';
-  const primary = '#2563eb';
-  const inputBg = isDark ? '#141c27' : '#f8fafc';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const border = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const primary = isDark ? '#FFFFFF' : '#111315';
+  const onPrimary = isDark ? '#0B0B0C' : '#FFFFFF';
+  const inputBg = isDark ? '#141517' : '#F7F7F8';
 
   // Split stored full name into first/last on mount
   useEffect(() => {
@@ -233,7 +234,7 @@ export default function ProfileScreen() {
               <Image source={{ uri: user.avatarUrl }} style={styles.avatar} key={user.avatarUrl} />
             ) : (
               <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: primary }]}>
-                <ThemedText style={styles.initials}>{getInitials()}</ThemedText>
+                <ThemedText style={[styles.initials, { color: onPrimary }]}>{getInitials()}</ThemedText>
               </View>
             )}
             <TouchableOpacity
@@ -241,8 +242,8 @@ export default function ProfileScreen() {
               onPress={handlePickAvatar}
               disabled={isUploadingAvatar}>
               {isUploadingAvatar
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <MaterialCommunityIcons name="camera" size={16} color="#fff" />}
+                ? <ActivityIndicator size="small" color={onPrimary} />
+                : <MaterialCommunityIcons name="camera" size={16} color={onPrimary} />}
             </TouchableOpacity>
           </View>
           <ThemedText style={[styles.displayName, { color: textColor }]}>
@@ -346,7 +347,7 @@ export default function ProfileScreen() {
             <ThemedText style={[styles.fieldLabel, { color: subText }]}>Email Address</ThemedText>
             <View style={styles.lockedRow}>
               <ThemedText style={[styles.fieldValue, { color: textColor, flex: 1 }]}>{user.email}</ThemedText>
-              <View style={[styles.lockBadge, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
+              <View style={[styles.lockBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
                 <MaterialCommunityIcons name="lock-outline" size={13} color={subText} />
                 <ThemedText style={[styles.lockText, { color: subText }]}>Cannot change</ThemedText>
               </View>
@@ -417,8 +418,8 @@ export default function ProfileScreen() {
             onPress={handleSave}
             disabled={isSaving}>
             {isSaving
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <ThemedText style={styles.saveBtnText}>Save Changes</ThemedText>}
+              ? <ActivityIndicator color={onPrimary} size="small" />
+              : <ThemedText style={[styles.saveBtnText, { color: onPrimary }]}>Save Changes</ThemedText>}
           </TouchableOpacity>
         </View>
       )}

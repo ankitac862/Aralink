@@ -16,12 +16,13 @@ export default function TenantLeaseSubmittedScreen() {
   const { tenantApplication } = useLeaseStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
 
   const applicationId = tenantApplication?.id || 'RNT-' + Date.now().toString().slice(-5);
 
@@ -51,7 +52,7 @@ export default function TenantLeaseSubmittedScreen() {
         <TouchableOpacity
           style={[styles.button, { backgroundColor: primaryColor }]}
           onPress={() => router.push('/tenant-lease-status')}>
-          <ThemedText style={styles.buttonText}>View Application Status</ThemedText>
+          <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>View Application Status</ThemedText>
         </TouchableOpacity>
 
         <TouchableOpacity

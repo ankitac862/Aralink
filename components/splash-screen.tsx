@@ -31,7 +31,7 @@ export default function SplashScreenComponent() {
   }, []);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>

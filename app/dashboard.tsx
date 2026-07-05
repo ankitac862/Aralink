@@ -92,13 +92,13 @@ export default function DashboardScreen() {
   }, [user]);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#18181b' : '#f8fafc';
-  const cardBgColor = isDark ? '#27272a' : '#ffffff';
-  const borderColor = isDark ? '#3f3f46' : '#e2e8f0';
-  const textColor = isDark ? '#fafafa' : '#0f172a';
-  const secondaryTextColor = isDark ? '#a1a1aa' : '#64748b';
-  const primaryColor = '#3B82F6';
-
+  const bgColor = isDark ? '#141517' : '#F7F7F8';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const isLandlordOrManager = userRole === 'landlord' || userRole === 'manager';
   const quickAccessItems = isLandlordOrManager ? LANDLORD_MANAGER_ITEMS : TENANT_ITEMS;
 
@@ -124,7 +124,7 @@ export default function DashboardScreen() {
         {/* Header */}
         <View style={styles.headerContainer}>
           <View style={styles.headerLeft}>
-            <View style={[styles.avatarContainer, { backgroundColor: isDark ? '#3f3f46' : '#e2e8f0' }]}>
+            <View style={[styles.avatarContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}>
               <MaterialCommunityIcons name="account-circle" size={32} color={secondaryTextColor} />
             </View>
             <View>
@@ -184,7 +184,7 @@ export default function DashboardScreen() {
                             borderTopColor: '#10b981',
                             borderRightColor: '#fbbf24',
                             borderBottomColor: '#60a5fa',
-                            borderLeftColor: isDark ? '#3f3f46' : '#e2e8f0',
+                            borderLeftColor: isDark ? '#26282C' : '#E5E5E7',
                           },
                         ]}>
                       </View>
@@ -236,7 +236,7 @@ export default function DashboardScreen() {
                     style={[
                       styles.periodButton,
                       {
-                        backgroundColor: selectedTimePeriod === period ? primaryColor : (isDark ? '#3f3f46' : '#e2e8f0'),
+                        backgroundColor: selectedTimePeriod === period ? primaryColor : (isDark ? '#26282C' : '#E5E5E7'),
                       },
                     ]}
                     onPress={() => setSelectedTimePeriod(period as any)}>

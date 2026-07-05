@@ -78,13 +78,13 @@ export default function MaintenanceScreen() {
   const [filter, setFilter] = useState<string>('all');
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f6f6f8';
-  const cardBgColor = isDark ? '#1e293b' : '#ffffff';
-  const borderColor = isDark ? '#334155' : '#e2e8f0';
-  const textColor = isDark ? '#f1f5f9' : '#0f172a';
-  const secondaryTextColor = isDark ? '#94a3b8' : '#475569';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const filteredRequests = MOCK_REQUESTS.filter((r) => {
     const matchSearch = r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.id.toLowerCase().includes(searchQuery.toLowerCase());
@@ -196,7 +196,7 @@ export default function MaintenanceScreen() {
                 style={[
                   styles.chipText,
                   filter === status
-                    ? { color: 'white', fontWeight: '600' }
+                    ? { color: onPrimaryColor, fontWeight: '600' }
                     : { color: textColor, fontWeight: '500' },
                 ]}>
                 {status.charAt(0).toUpperCase() + status.slice(1)}
@@ -233,7 +233,7 @@ export default function MaintenanceScreen() {
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: primaryColor }]}
         onPress={() => router.push('/maintenance-detail')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
     </ThemedView>
   );
@@ -376,7 +376,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
-    shadowColor: '#137fec',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,

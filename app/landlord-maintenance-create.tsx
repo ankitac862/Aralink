@@ -32,6 +32,7 @@ import { UploadButton, UploadedFile } from '@/components/maintenance/UploadButto
 import { FilePreview } from '@/components/maintenance/FilePreview';
 import { ProgressHeader } from '@/components/maintenance/ProgressHeader';
 import type { MaintenanceCreatorRole } from '@/lib/maintenancePermissions';
+import { useAppTheme } from '@/hooks/use-app-theme';
 
 const categoryOptions = [
   { label: 'Plumbing', value: 'plumbing', icon: 'water-pump' },
@@ -66,6 +67,7 @@ export default function LandlordMaintenanceCreateScreen() {
   const { addRequest } = useMaintenanceStore();
   const { user } = useAuth();
   const { loadFromSupabase: loadProperties } = usePropertyStore();
+  const t = useAppTheme();
 
   const callerRole: MaintenanceCreatorRole =
     (user?.role as MaintenanceCreatorRole) ?? 'landlord';
@@ -182,12 +184,12 @@ export default function LandlordMaintenanceCreateScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: t.bg }]}>
       <View style={[styles.appBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color="#111827" />
+          <MaterialCommunityIcons name="arrow-left" size={22} color={t.text} />
         </TouchableOpacity>
-        <Text style={styles.appBarTitle}>New Maintenance Request</Text>
+        <Text style={[styles.appBarTitle, { color: t.text }]}>New Maintenance Request</Text>
         <View style={styles.iconPlaceholder} />
       </View>
 
@@ -201,7 +203,7 @@ export default function LandlordMaintenanceCreateScreen() {
 
         {/* Address — step-by-step: property → unit → sub-unit */}
         <View style={styles.addressGroup}>
-          <Text style={styles.addressLabel}>ADDRESS</Text>
+          <Text style={[styles.addressLabel, { color: t.textSecondary }]}>ADDRESS</Text>
           <PropertyAddressSelector
             onSelect={handleAddressSelect}
             selectedPropertyId={selectedAddress?.propertyId}
@@ -212,28 +214,28 @@ export default function LandlordMaintenanceCreateScreen() {
           />
         </View>
 
-        <View style={styles.card}>
+        <View style={[styles.card, { backgroundColor: t.card }]}>
           <FormInput label="Category">
             <CategoryDropdown value={category} onSelect={setCategory} options={categoryOptions} />
           </FormInput>
 
           <FormInput label="Title" description="Short summary of the issue">
             <TextInput
-              style={styles.input}
+              style={[styles.input, { backgroundColor: t.subtle, borderColor: t.border, color: t.text }]}
               placeholder="E.g., Broken heater in bedroom"
               value={title}
               onChangeText={setTitle}
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={t.textSecondary}
             />
           </FormInput>
 
           <FormInput label="Description">
             <TextInput
-              style={[styles.input, styles.textArea]}
+              style={[styles.input, styles.textArea, { backgroundColor: t.subtle, borderColor: t.border, color: t.text }]}
               placeholder="Describe the issue in detail"
               value={description}
               onChangeText={setDescription}
-              placeholderTextColor="#94a3b8"
+              placeholderTextColor={t.textSecondary}
               multiline
               numberOfLines={4}
             />
@@ -246,14 +248,14 @@ export default function LandlordMaintenanceCreateScreen() {
                 return (
                   <TouchableOpacity
                     key={level.value}
-                    style={[styles.urgencyCard, active && styles.urgencyActive]}
+                    style={[styles.urgencyCard, { backgroundColor: active ? t.accent : t.card, borderColor: active ? t.accent : t.border }]}
                     onPress={() => setUrgency(level.value as any)}>
                     <MaterialCommunityIcons
                       name={level.icon as any}
                       size={20}
-                      color={active ? '#fff' : '#2563eb'}
+                      color={active ? t.onAccent : t.text}
                     />
-                    <Text style={[styles.urgencyLabel, active && { color: '#fff' }]}>
+                    <Text style={[styles.urgencyLabel, { color: active ? t.onAccent : t.text }]}>
                       {level.label}
                     </Text>
                   </TouchableOpacity>
@@ -264,10 +266,10 @@ export default function LandlordMaintenanceCreateScreen() {
 
           <FormInput label="Availability" description="When can maintenance access the unit?">
             <TouchableOpacity
-              style={styles.availabilityButton}
+              style={[styles.availabilityButton, { borderColor: t.border, backgroundColor: t.subtle }]}
               onPress={() => setShowDatePicker(true)}>
-              <MaterialCommunityIcons name="calendar-clock" size={20} color="#2563eb" />
-              <Text style={styles.availabilityText}>
+              <MaterialCommunityIcons name="calendar-clock" size={20} color={t.text} />
+              <Text style={[styles.availabilityText, { color: t.text }]}>
                 {fmtDateTime(availabilityDate.toISOString())}
               </Text>
             </TouchableOpacity>
@@ -290,29 +292,29 @@ export default function LandlordMaintenanceCreateScreen() {
             <FilePreview files={attachments} onRemove={handleRemoveFile} />
           </FormInput>
 
-          <View style={styles.permissionCard}>
+          <View style={[styles.permissionCard, { backgroundColor: t.subtle }]}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.permissionTitle}>Permission to Enter</Text>
-              <Text style={styles.permissionDescription}>
+              <Text style={[styles.permissionTitle, { color: t.text }]}>Permission to Enter</Text>
+              <Text style={[styles.permissionDescription, { color: t.textSecondary }]}>
                 Maintenance may enter if tenant is not home.
               </Text>
             </View>
             <Switch
               value={permissionToEnter}
               onValueChange={setPermissionToEnter}
-              trackColor={{ false: '#CBD5F5', true: '#2563eb' }}
+              trackColor={{ false: t.chip, true: t.success }}
               thumbColor="#fff"
             />
           </View>
         </View>
       </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: t.card, borderTopColor: t.border }]}>
         <TouchableOpacity
-          style={[styles.submitButton, submitting && { opacity: 0.6 }]}
+          style={[styles.submitButton, { backgroundColor: t.accent }, submitting && { opacity: 0.6 }]}
           onPress={handleSubmit}
           disabled={submitting}>
-          <Text style={styles.submitText}>
+          <Text style={[styles.submitText, { color: t.onAccent }]}>
             {submitting ? 'Submitting…' : 'Create Request'}
           </Text>
         </TouchableOpacity>
@@ -322,7 +324,7 @@ export default function LandlordMaintenanceCreateScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
+  container: { flex: 1 },
   appBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -332,9 +334,9 @@ const styles = StyleSheet.create({
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   iconPlaceholder: { width: 40 },
-  appBarTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  appBarTitle: { fontSize: 18, fontWeight: '700' },
   content: { padding: 16, paddingBottom: 120, gap: 16 },
-  card: { backgroundColor: '#fff', borderRadius: 18, padding: 20, gap: 12 },
+  card: { borderRadius: 18, padding: 20, gap: 12 },
 
   // Address selector
   addressGroup: { marginBottom: 0 },
@@ -343,54 +345,45 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
-    color: '#4c739a',
     marginBottom: 4,
   },
 
   input: {
     borderWidth: 1,
-    borderColor: '#d1d5db',
     borderRadius: 12,
     padding: 12,
-    backgroundColor: '#fff',
     fontSize: 15,
-    color: '#111827',
   },
   textArea: { minHeight: 100, textAlignVertical: 'top' },
   urgencyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   urgencyCard: {
     borderWidth: 1,
-    borderColor: '#cbd5f5',
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#fff',
   },
-  urgencyActive: { backgroundColor: '#2563eb', borderColor: '#1d4ed8' },
-  urgencyLabel: { fontWeight: '600', color: '#2563eb' },
+  urgencyLabel: { fontWeight: '600' },
   availabilityButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     borderWidth: 1,
-    borderColor: '#d1d5db',
     borderRadius: 12,
     padding: 12,
   },
-  availabilityText: { fontWeight: '600', color: '#111827' },
+  availabilityText: { fontWeight: '600' },
   permissionCard: {
-    backgroundColor: '#f8fafc',
     borderRadius: 16,
     padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  permissionTitle: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  permissionDescription: { fontSize: 13, color: '#475569' },
+  permissionTitle: { fontSize: 15, fontWeight: '600' },
+  permissionDescription: { fontSize: 13 },
   footer: {
     position: 'absolute',
     left: 0,
@@ -398,15 +391,12 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: 16,
     paddingTop: 12,
-    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
   },
   submitButton: {
-    backgroundColor: '#2563eb',
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
   },
-  submitText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  submitText: { fontSize: 16, fontWeight: '700' },
 });

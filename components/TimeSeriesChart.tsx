@@ -64,13 +64,13 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
   const getLineColor = () => {
     if (type === 'income') return '#16A34A';
     if (type === 'expense') return '#DC2626';
-    return '#137fec';
+    return '#8E959B';
   };
 
   const lineColor = getLineColor();
-  const axisColor = isDark ? '#475569' : '#cbd5e1';
-  const textColor = isDark ? '#e0e6ed' : '#0d141b';
-  const gridColor = isDark ? '#1e293b' : '#f1f5f9';
+  const axisColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const gridColor = isDark ? '#26282C' : '#E8E8EA';
 
   // Format date label (show every 2nd date to avoid crowding)
   const getDateLabel = (dateStr: string, index: number) => {
@@ -197,7 +197,7 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
             cy={point.y}
             r={5}
             fill={lineColor}
-            stroke={isDark ? '#101922' : '#ffffff'}
+            stroke={isDark ? '#1A1B1E' : '#FFFFFF'}
             strokeWidth={2}
           />
         ))}

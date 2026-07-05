@@ -62,14 +62,14 @@ export default function PropertyDetailScreen() {
   const imageScrollRef = useRef<FlatList>(null);
   
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1A2831' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#0d141b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const inputBgColor = isDark ? '#141517' : '#F7F7F8';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   // Load property from Supabase and local store
   const loadProperty = useCallback(async () => {
     if (!id) return;
@@ -514,7 +514,7 @@ export default function PropertyDetailScreen() {
                     style={[
                       styles.indicator,
                       {
-                        backgroundColor: index === currentImageIndex ? primaryColor : (isDark ? '#475569' : '#cbd5e1'),
+                        backgroundColor: index === currentImageIndex ? primaryColor : (isDark ? '#26282C' : '#E5E5E7'),
                       },
                     ]}
                   />
@@ -719,7 +719,7 @@ export default function PropertyDetailScreen() {
                 >
                   <ThemedText style={[
                     styles.utilityButtonText,
-                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'landlord' ? '#fff' : textColor },
+                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'landlord' ? onPrimaryColor : textColor },
                   ]}>
                     Landlord
                   </ThemedText>
@@ -750,7 +750,7 @@ export default function PropertyDetailScreen() {
                 >
                   <ThemedText style={[
                     styles.utilityButtonText,
-                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'tenant' ? '#fff' : textColor },
+                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'tenant' ? onPrimaryColor : textColor },
                   ]}>
                     Tenant
                   </ThemedText>
@@ -782,7 +782,7 @@ export default function PropertyDetailScreen() {
 
           {/* Single unit — rented as a whole: show banner */}
           {property.propertyType === 'single_unit' && property.rentCompleteProperty && (
-            <View style={[styles.emptyState, { backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 16 }]}>
+            <View style={[styles.emptyState, { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderRadius: 12, padding: 16 }]}>
               <MaterialCommunityIcons name="home-outline" size={40} color={secondaryTextColor} />
               <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
                 Rented as a whole
@@ -927,8 +927,8 @@ export default function PropertyDetailScreen() {
                 style={[styles.leaseActionButton, { backgroundColor: primaryColor }]}
                 onPress={() => router.push(`/lease-wizard?propertyId=${property.id}` as any)}
               >
-                <MaterialCommunityIcons name="plus" size={18} color="#fff" />
-                <ThemedText style={styles.leaseActionButtonText}>Generate Lease</ThemedText>
+                <MaterialCommunityIcons name="plus" size={18} color={onPrimaryColor} />
+                <ThemedText style={[styles.leaseActionButtonText, { color: onPrimaryColor }]}>Generate Lease</ThemedText>
               </TouchableOpacity>
             </View>
 
@@ -1026,7 +1026,7 @@ export default function PropertyDetailScreen() {
 
                 {/* Rooms — hidden when the unit is rented as a whole */}
                 {selectedUnit.rentEntireUnit ? (
-                  <View style={[styles.modalSection, { backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 10, padding: 12 }]}>
+                  <View style={[styles.modalSection, { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderRadius: 10, padding: 12 }]}>
                     <MaterialCommunityIcons name="information-outline" size={18} color={secondaryTextColor} />
                     <ThemedText style={[styles.modalEmptyText, { color: secondaryTextColor, marginTop: 4 }]}>
                       This unit is rented as a whole. Rooms cannot be added.
@@ -1059,7 +1059,7 @@ export default function PropertyDetailScreen() {
                     selectedUnit.subUnits.map((room) => (
               <TouchableOpacity 
                         key={room.id}
-                        style={[styles.modalRoomItem, { backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor }]}
+                        style={[styles.modalRoomItem, { backgroundColor: isDark ? '#141517' : '#F7F7F8', borderColor }]}
                         onPress={() => {
                           setShowUnitModal(false);
                           setSelectedRoomUnitId(selectedUnit?.id);
@@ -1242,8 +1242,8 @@ export default function PropertyDetailScreen() {
                           style={[styles.modalLeaseHalfButton, { backgroundColor: primaryColor }]}
                           onPress={() => { setShowRoomModal(false); router.push(wizardUrl as any); }}
                         >
-                          <MaterialCommunityIcons name="file-document-edit-outline" size={16} color="#fff" />
-                          <ThemedText style={styles.modalButtonText}>Generate Lease</ThemedText>
+                          <MaterialCommunityIcons name="file-document-edit-outline" size={16} color={onPrimaryColor} />
+                          <ThemedText style={[styles.modalButtonText, { color: onPrimaryColor }]}>Generate Lease</ThemedText>
                         </TouchableOpacity>
                       </View>
                       {/* Bottom row: View Leases (full width) */}
@@ -1273,8 +1273,8 @@ export default function PropertyDetailScreen() {
                           }
                         }}
                       >
-                        <MaterialCommunityIcons name="pencil" size={18} color="#fff" />
-                        <ThemedText style={styles.modalButtonText}>Edit Room</ThemedText>
+                        <MaterialCommunityIcons name="pencil" size={18} color={onPrimaryColor} />
+                        <ThemedText style={[styles.modalButtonText, { color: onPrimaryColor }]}>Edit Room</ThemedText>
                       </TouchableOpacity>
                     </View>
                   );
@@ -1289,7 +1289,7 @@ export default function PropertyDetailScreen() {
       {isEditMode && (
         <View style={[styles.footer, { borderTopColor: borderColor, backgroundColor: bgColor, paddingBottom: insets.bottom + 16 }]}>
           <TouchableOpacity
-            style={[styles.cancelButton, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}
+            style={[styles.cancelButton, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}
             onPress={() => {
               setIsEditMode(false);
               // Reload to discard unsaved changes
@@ -1317,9 +1317,9 @@ export default function PropertyDetailScreen() {
             disabled={isSaving}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={onPrimaryColor} />
             ) : (
-              <ThemedText style={styles.saveButtonText}>Save Changes</ThemedText>
+              <ThemedText style={[styles.saveButtonText, { color: onPrimaryColor }]}>Save Changes</ThemedText>
             )}
               </TouchableOpacity>
             </View>
@@ -1475,7 +1475,9 @@ const styles = StyleSheet.create({
   },
   radioGroup: {
     flexDirection: 'row',
-    gap: 16,
+    flexWrap: 'wrap',
+    gap: 12,
+    rowGap: 10,
   },
   propertyTypeGrid: {
     flexDirection: 'row',

@@ -64,11 +64,12 @@ export default function TenantDashboardScreen() {
   const [pendingLeases, setPendingLeases] = useState<DbLease[]>([]);
 
   const isDark = colorScheme === 'dark';
-  const primaryColor = '#4A90E2';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
   const warningColor = '#F5A623';
   const isApplicantOnly = !propertyInfo;
 
@@ -679,7 +680,7 @@ export default function TenantDashboardScreen() {
               People living with you at this property
             </ThemedText>
             {coTenants.map((coTenant, index) => (
-              <View key={coTenant.id} style={[styles.coTenantItem, { borderTopColor: isDark ? '#374151' : '#e5e7eb' }]}>
+              <View key={coTenant.id} style={[styles.coTenantItem, { borderTopColor: isDark ? '#26282C' : '#E5E5E7' }]}>
                 <View style={[styles.coTenantAvatar, { backgroundColor: `${primaryColor}20` }]}>
                   <ThemedText style={[styles.coTenantAvatarText, { color: primaryColor }]}>
                     {coTenant.full_name?.charAt(0).toUpperCase() || '?'}
@@ -735,7 +736,7 @@ export default function TenantDashboardScreen() {
             <TouchableOpacity
               style={[styles.payButton, { backgroundColor: primaryColor }]}
               onPress={() => router.push('/dashboard')}>
-              <ThemedText style={styles.payButtonText}>Pay Now</ThemedText>
+              <ThemedText style={[styles.payButtonText, { color: onPrimaryColor }]}>Pay Now</ThemedText>
             </TouchableOpacity>
           </View>
         </View>}
@@ -746,9 +747,9 @@ export default function TenantDashboardScreen() {
             style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
             onPress={handleStartApplicationPress}>
             <View style={styles.maintenanceButtonIcon}>
-              <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
+              <MaterialCommunityIcons name="file-document-outline" size={20} color={onPrimaryColor} />
             </View>
-            <ThemedText style={styles.maintenanceButtonText}>Start Application</ThemedText>
+            <ThemedText style={[styles.maintenanceButtonText, { color: onPrimaryColor }]}>Start Application</ThemedText>
           </TouchableOpacity>
         )}
 
@@ -787,9 +788,9 @@ export default function TenantDashboardScreen() {
           style={[styles.maintenanceButton, { backgroundColor: primaryColor }]}
           onPress={() => router.push('/tenant-maintenance-request')}>
           <View style={styles.maintenanceButtonIcon}>
-            <MaterialCommunityIcons name="wrench" size={20} color="#fff" />
+            <MaterialCommunityIcons name="wrench" size={20} color={onPrimaryColor} />
           </View>
-          <ThemedText style={styles.maintenanceButtonText}>Submit Maintenance Request</ThemedText>
+          <ThemedText style={[styles.maintenanceButtonText, { color: onPrimaryColor }]}>Submit Maintenance Request</ThemedText>
         </TouchableOpacity>}
 
         {!isApplicantOnly && <TouchableOpacity
@@ -846,7 +847,7 @@ export default function TenantDashboardScreen() {
         <View style={{ height: 20 }} />
 
         {isApplicantOnly && (!propertyInfo && !pendingInvites.length && !pendingLeases.length) && (
-           <View style={[styles.welcomeCard, { backgroundColor: cardBgColor, borderColor: isDark ? '#374151' : '#e5e7eb', borderWidth: 1, marginTop: 16 }]}>
+           <View style={[styles.welcomeCard, { backgroundColor: cardBgColor, borderColor: isDark ? '#26282C' : '#E5E5E7', borderWidth: 1, marginTop: 16 }]}>
             <ThemedText type="subtitle" style={{ color: textPrimaryColor, marginBottom: 8 }}>Application Status</ThemedText>
             <ThemedText style={{ color: textSecondaryColor, marginBottom: 16, lineHeight: 20 }}>
               You are currently registered as an applicant. If you recently signed a lease, your move-in date is pending final landlord approval. Once approved, your active property view will open automatically on your move-in date.

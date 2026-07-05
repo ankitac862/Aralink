@@ -46,12 +46,13 @@ export default function TenantLeaseStartScreen() {
   const [hasCheckedInvites, setHasCheckedInvites] = useState(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const primaryColor = '#2A64F5';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
 
   // Check for pending invites if not coming from invite link
   useEffect(() => {
@@ -177,7 +178,7 @@ export default function TenantLeaseStartScreen() {
             <>
               {isFromInvite && propertyAddress && (
                 <>
-                  <View style={[styles.addressBox, { backgroundColor: isDark ? '#1a242d' : '#f3f4f6', borderColor }]}>
+                  <View style={[styles.addressBox, { backgroundColor: isDark ? '#26282C' : '#E8E8EA', borderColor }]}>
                     <MaterialCommunityIcons name="map-marker" size={20} color={primaryColor} />
                     <View style={{ flex: 1, marginLeft: 8 }}>
                       <ThemedText style={[styles.addressLabel, { color: textSecondaryColor }]}>Property Address</ThemedText>
@@ -186,7 +187,7 @@ export default function TenantLeaseStartScreen() {
                   </View>
 
                   {unitInfo?.unitName && (
-                    <View style={[styles.addressBox, { backgroundColor: isDark ? '#1a242d' : '#f3f4f6', borderColor, marginTop: 12 }]}>
+                    <View style={[styles.addressBox, { backgroundColor: isDark ? '#26282C' : '#E8E8EA', borderColor, marginTop: 12 }]}>
                       <MaterialCommunityIcons name="office-building" size={20} color={primaryColor} />
                       <View style={{ flex: 1, marginLeft: 8 }}>
                         <ThemedText style={[styles.addressLabel, { color: textSecondaryColor }]}>Unit</ThemedText>
@@ -196,7 +197,7 @@ export default function TenantLeaseStartScreen() {
                   )}
 
                   {unitInfo?.subUnitName && (
-                    <View style={[styles.addressBox, { backgroundColor: isDark ? '#1a242d' : '#f3f4f6', borderColor, marginTop: 12 }]}>
+                    <View style={[styles.addressBox, { backgroundColor: isDark ? '#26282C' : '#E8E8EA', borderColor, marginTop: 12 }]}>
                       <MaterialCommunityIcons name="door" size={20} color={primaryColor} />
                       <View style={{ flex: 1, marginLeft: 8 }}>
                         <ThemedText style={[styles.addressLabel, { color: textSecondaryColor }]}>Room</ThemedText>
@@ -211,7 +212,7 @@ export default function TenantLeaseStartScreen() {
                 <View style={[styles.inputContainer, { borderColor }]}>
                   <ThemedText style={[styles.inputLabel, { color: textSecondaryColor }]}>Property Address *</ThemedText>
                   <TextInput
-                    style={[styles.input, { color: textPrimaryColor, backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor }]}
+                    style={[styles.input, { color: textPrimaryColor, backgroundColor: isDark ? '#141517' : '#F7F7F8', borderColor }]}
                     placeholder="Enter the property address"
                     placeholderTextColor={textSecondaryColor}
                     value={propertyAddress}
@@ -239,13 +240,13 @@ export default function TenantLeaseStartScreen() {
             <TouchableOpacity
               style={[styles.primaryButton, { backgroundColor: primaryColor }]}
               onPress={() => router.push('/tenant-lease-status')}>
-              <ThemedText style={styles.buttonText}>View Application Status</ThemedText>
+              <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>View Application Status</ThemedText>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[styles.primaryButton, { backgroundColor: primaryColor }]}
               onPress={handleStartApplication}>
-              <ThemedText style={styles.buttonText}>Start Application</ThemedText>
+              <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Start Application</ThemedText>
             </TouchableOpacity>
           )}
         </View>

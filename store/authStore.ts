@@ -683,22 +683,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ isLoading: true, error: null });
 
       const redirectTo = 'https://www.aaralink.ca/invite-auth';
+      const supabaseUrl = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '');
+      const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
-      // Use a separate client with implicit flow so the reset link works in any web browser.
-      // The main client uses PKCE — its verifier is stored on-device, making web links fail.
-      const { createClient } = await import('@supabase/supabase-js');
-      const implicitClient = createClient(
-        process.env.EXPO_PUBLIC_SUPABASE_URL!,
-        process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
-        { auth: { flowType: 'implicit', persistSession: false } }
-      );
-      const { error } = await implicitClient.auth.resetPasswordForEmail(email, {
-        redirectTo,
+      // Call the raw REST endpoint to avoid PKCE — the SDK stores the verifier on-device
+      // which means the web browser clicking the email link can't complete the exchange.
+      const res = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify({ email, redirect_to: redirectTo }),
       });
 
+      const error = res.ok ? null : await res.text();
+
       if (error) {
-        set({ isLoading: false, error: error.message });
-        return { success: false, error: error.message };
+        set({ isLoading: false, error });
+        return { success: false, error };
       }
 
       set({ isLoading: false });

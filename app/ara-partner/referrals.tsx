@@ -16,7 +16,6 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAraPartnerStore, Referral, ReferralStatus } from '@/store/araPartnerStore';
 
-const PRIMARY = '#2A64F5';
 type Filter = 'all' | ReferralStatus;
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -33,11 +32,12 @@ export default function MyReferrals() {
   const { referrals, loadReferrals, isLoading } = useAraPartnerStore();
   const [filter, setFilter] = useState<Filter>('all');
 
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBg = isDark ? '#1a202c' : '#ffffff';
-  const textColor = isDark ? '#F4F6F8' : '#111827';
-  const subText = isDark ? '#94a3b8' : '#6B7280';
-  const borderColor = isDark ? '#334155' : '#E5E7EB';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const subText = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const PRIMARY = isDark ? '#FFFFFF' : '#111315';
 
   useFocusEffect(useCallback(() => { loadReferrals(); }, []));
 
@@ -135,10 +135,10 @@ export default function MyReferrals() {
                 <>
                   <ThemedText style={[styles.emptyText, { color: subText }]}>No referrals yet</ThemedText>
                   <TouchableOpacity
-                    style={styles.emptyBtn}
+                    style={[styles.emptyBtn, { backgroundColor: PRIMARY }]}
                     onPress={() => router.push('/ara-partner/submit-referral' as any)}
                   >
-                    <ThemedText style={styles.emptyBtnText}>Submit Your First Referral</ThemedText>
+                    <ThemedText style={[styles.emptyBtnText, { color: isDark ? '#0B0B0C' : '#FFFFFF' }]}>Submit Your First Referral</ThemedText>
                   </TouchableOpacity>
                 </>
               ) : (
@@ -192,7 +192,6 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 80, gap: 12 },
   emptyText: { fontSize: 16 },
   emptyBtn: {
-    backgroundColor: '#2A64F5',
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 24,

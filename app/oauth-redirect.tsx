@@ -20,11 +20,11 @@ export default function OAuthRedirectScreen() {
   const handled = useRef(false);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101c22' : '#F2F2F7';
-  const textPrimaryColor = isDark ? '#F2F2F7' : '#101c22';
-  const textSecondaryColor = isDark ? '#9CA3AF' : '#6B7280';
-  const primaryColor = '#4A90E2';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   useEffect(() => {
     if (handled.current) return;
     handled.current = true;
@@ -62,7 +62,7 @@ export default function OAuthRedirectScreen() {
           <TouchableOpacity
             style={[styles.button, { backgroundColor: primaryColor }]}
             onPress={() => router.replace('/(auth)')}>
-            <ThemedText style={styles.buttonText}>Back to Login</ThemedText>
+            <ThemedText style={[styles.buttonText, { color: onPrimaryColor }]}>Back to Login</ThemedText>
           </TouchableOpacity>
         </View>
       ) : (

@@ -37,14 +37,14 @@ export default function AddUnitScreen() {
   const isEditing = !!unitId;
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
-  const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#0d141b';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
-  const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
-  const primaryColor = '#137fec';
-
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const inputBgColor = isDark ? '#141517' : '#F7F7F8';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -470,7 +470,7 @@ export default function AddUnitScreen() {
                       style={[styles.datePickerDone, { backgroundColor: primaryColor }]}
                       onPress={() => setShowDatePicker(null)}
                     >
-                      <ThemedText style={{ color: '#fff', fontWeight: '700' }}>Done</ThemedText>
+                      <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Done</ThemedText>
                     </TouchableOpacity>
                   </View>
                   {showDatePicker && (
@@ -556,7 +556,7 @@ export default function AddUnitScreen() {
           onPress={handleSubmit}
           disabled={isSubmitting}
         >
-          <ThemedText style={styles.submitButtonText}>
+          <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>
             {isSubmitting ? 'Saving...' : isEditing ? 'Save Changes' : 'Add Unit'}
           </ThemedText>
         </TouchableOpacity>

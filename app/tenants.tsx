@@ -31,12 +31,13 @@ export default function TenantsScreen() {
   );
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101622' : '#f4f6f8';
-  const cardBgColor = isDark ? '#1e293b' : '#ffffff';
-  const borderColor = isDark ? '#334155' : '#e0e0e0';
-  const textColor = isDark ? '#e0e0e0' : '#212529';
-  const secondaryTextColor = isDark ? '#9ca3af' : '#6c757d';
-  const primaryColor = '#005a9c';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const textColor = isDark ? '#FFFFFF' : '#111315';
+  const secondaryTextColor = isDark ? '#9BA1A6' : '#6E7377';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
 
   const displayTenants = tenants.map(tenant => {
     const property = getPropertyById(tenant.propertyId);
@@ -155,7 +156,7 @@ export default function TenantsScreen() {
 
       {/* Floating Action Button */}
       <TouchableOpacity style={[styles.fab, { backgroundColor: primaryColor }]} onPress={() => router.push('/add-tenant')}>
-        <MaterialCommunityIcons name="plus" size={28} color="white" />
+        <MaterialCommunityIcons name="plus" size={28} color={onPrimaryColor} />
       </TouchableOpacity>
     </ThemedView>
   );

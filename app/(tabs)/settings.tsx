@@ -27,12 +27,13 @@ export default function SettingsScreen() {
   const { signOut, user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#101922' : '#F4F6F8';
-  const cardBgColor = isDark ? '#192734' : '#ffffff';
-  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
-  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
-  const borderColor = isDark ? '#394a57' : '#E5E7EB';
-  const primaryColor = '#2A64F5';
+  const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
+  const cardBgColor = isDark ? '#1A1B1E' : '#FFFFFF';
+  const textPrimaryColor = isDark ? '#FFFFFF' : '#111315';
+  const textSecondaryColor = isDark ? '#9BA1A6' : '#6E7377';
+  const borderColor = isDark ? '#26282C' : '#E5E5E7';
+  const primaryColor = isDark ? '#FFFFFF' : '#111315';
+  const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const dangerColor = '#FF3B30';
 
   const accountItems: SettingItem[] = [
@@ -107,7 +108,7 @@ export default function SettingsScreen() {
                   <MaterialCommunityIcons
                     name="chevron-right"
                     size={20}
-                    color={isDark ? '#4b5563' : '#d1d5db'}
+                    color={isDark ? '#26282C' : '#E5E5E7'}
                   />
                 )
               )}
