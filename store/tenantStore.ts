@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import {
+  ArchiveDeleteResult,
   createTenant as createTenantInDb,
   DbTenant,
   deleteTenantFromDb,
@@ -17,6 +18,8 @@ export interface Tenant {
   propertyId: string;
   unitId?: string;
   unitName?: string;
+  subUnitId?: string | null;
+  subUnitName?: string | null;
   photo?: string;
   idProof1?: string;
   idProof2?: string;
@@ -44,7 +47,7 @@ interface TenantStore {
   loadFromSupabase: (userId: string) => Promise<void>;
   addTenant: (tenant: Omit<Tenant, 'id' | 'createdAt' | 'status'>, userId?: string) => Promise<string>;
   updateTenant: (id: string, updates: Partial<Tenant>) => Promise<void>;
-  deleteTenant: (id: string) => Promise<void>;
+  deleteTenant: (id: string, userId: string) => Promise<ArchiveDeleteResult>;
   getTenantById: (id: string) => Tenant | undefined;
   getTenantsByProperty: (propertyId: string) => Tenant[];
 }
@@ -62,6 +65,8 @@ const dbToLocalTenant = (dbTenant: DbTenant): Tenant => ({
   propertyId: dbTenant.property_id,
   unitId: dbTenant.unit_id,
   unitName: dbTenant.unit_name,
+  subUnitId: dbTenant.sub_unit_id ?? null,
+  subUnitName: dbTenant.sub_unit_name ?? null,
   photo: dbTenant.photo,
   idProof1: dbTenant.id_proof_1,
   idProof2: dbTenant.id_proof_2,
@@ -83,6 +88,8 @@ const localToDbTenant = (tenant: Partial<Tenant>, userId: string): Partial<DbTen
   property_id: tenant.propertyId || '',
   unit_id: tenant.unitId,
   unit_name: tenant.unitName,
+  sub_unit_id: tenant.subUnitId ?? null,
+  sub_unit_name: tenant.subUnitName ?? null,
   photo: tenant.photo,
   id_proof_1: tenant.idProof1,
   id_proof_2: tenant.idProof2,
@@ -212,18 +219,14 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     }
   },
   
-  deleteTenant: async (id) => {
-    // Update local state first
-    set((state) => ({
-      tenants: state.tenants.filter((t) => t.id !== id),
-    }));
-    
-    // Try to delete from Supabase
-    try {
-      await deleteTenantFromDb(id);
-    } catch (error) {
-      console.error('Error deleting tenant from Supabase:', error);
+  deleteTenant: async (id, userId) => {
+    const result = await deleteTenantFromDb(id, userId);
+    if (result.deleted) {
+      set((state) => ({
+        tenants: state.tenants.filter((t) => t.id !== id),
+      }));
     }
+    return result;
   },
   
   getTenantById: (id) => {

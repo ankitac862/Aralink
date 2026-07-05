@@ -226,7 +226,7 @@ export default function AddRoomScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteSubUnit(propertyId, unitId, roomId);
+              await deleteSubUnit(propertyId, unitId, roomId, user?.id ?? '');
               router.back();
             } catch {
               Alert.alert('Error', 'Failed to delete room. Please try again.');

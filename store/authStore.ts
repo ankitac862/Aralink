@@ -144,6 +144,44 @@ const resolveAuthIdentifier = (identifier: string): { type: 'email' | 'phone'; v
   return { type: 'email', value: '', error: 'Please enter a valid email or phone number' };
 };
 
+// ── Realtime profile subscription ──────────────────────────────────────────
+// Watches the current user's row in `profiles` for role changes
+// (e.g. landlord converts applicant → tenant). When user_type changes the
+// auth store is updated instantly so the app re-routes without a logout/login.
+let _profileChannel: ReturnType<typeof supabase.channel> | null = null;
+
+function subscribeToProfileChanges(userId: string) {
+  if (_profileChannel) {
+    supabase.removeChannel(_profileChannel);
+    _profileChannel = null;
+  }
+  _profileChannel = supabase
+    .channel(`profile-role:${userId}`)
+    .on(
+      'postgres_changes' as const,
+      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
+      async (payload: { new: Record<string, unknown> }) => {
+        const newRole = payload.new['user_type'] as UserRole | undefined;
+        if (!newRole) return;
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser && newRole !== currentUser.role) {
+          console.log(`🔄 Role changed via realtime: ${currentUser.role} → ${newRole}`);
+          await setStorageValue('userRole', newRole);
+          useAuthStore.setState({ user: { ...currentUser, role: newRole } });
+        }
+      }
+    )
+    .subscribe();
+}
+
+function unsubscribeFromProfileChanges() {
+  if (_profileChannel) {
+    supabase.removeChannel(_profileChannel);
+    _profileChannel = null;
+  }
+}
+// ───────────────────────────────────────────────────────────────────────────
+
 // Helper to convert Supabase user and profile to AuthUser
 const toAuthUser = (user: User, profile: UserProfile | null, defaultRole?: UserRole): AuthUser => {
   const role = profile?.user_type || 
@@ -204,6 +242,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             const authUser = toAuthUser(newSession.user, profile, role ?? undefined);
             await setStorageValue('userRole', authUser.role);
             set({ user: authUser, session: newSession });
+            subscribeToProfileChanges(newSession.user.id);
           } else if (event === 'TOKEN_REFRESHED' && newSession?.user) {
             // Use the in-memory role as primary source to prevent role flipping
             const currentRole = get().user?.role;
@@ -212,6 +251,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             set({ user: authUser, session: newSession });
           } else if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !newSession)) {
             // TOKEN_REFRESHED with no session = refresh token was invalid/expired
+            unsubscribeFromProfileChanges();
             set({ user: null, session: null });
           }
         } catch (e) {
@@ -290,6 +330,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       isInitialized: true,
       isLoading: false,
     });
+
+    // Subscribe to profile changes for already-logged-in users so a role
+    // change (e.g. applicant → tenant) is reflected immediately on their device.
+    subscribeToProfileChanges(sessionUser.id);
 
     // ── Step 5: Register auth state listener ──
     registerListener();
@@ -492,6 +536,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signOut: async () => {
+    unsubscribeFromProfileChanges();
     try {
       await supabase.auth.signOut();
     } catch (error) {

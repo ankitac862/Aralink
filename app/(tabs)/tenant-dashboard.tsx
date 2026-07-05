@@ -361,8 +361,8 @@ export default function TenantDashboardScreen() {
 
     console.log('🔔 Notification announcements:', notificationAnnouncements.length);
 
-    // Show at most 8 most recent activity items
-    setAnnouncements(notificationAnnouncements.slice(0, 8));
+    // Show at most 3 most recent activity items
+    setAnnouncements(notificationAnnouncements.slice(0, 3));
   };
 
   const quickLinks: QuickLink[] = [
@@ -747,18 +747,25 @@ export default function TenantDashboardScreen() {
         {/* Pending Leases Card */}
         {pendingLeases.length > 0 && (
           <View style={[styles.welcomeCard, { backgroundColor: isDark ? '#451a03' : '#FEF3C7', borderColor: isDark ? '#b45309' : '#F59E0B', borderWidth: 1, marginTop: 16 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <MaterialCommunityIcons name="file-document-edit-outline" size={24} color={isDark ? '#FCD34D' : '#D97706'} style={{ marginRight: 8 }} />
-              <ThemedText type="subtitle" style={{ color: isDark ? '#FDE68A' : '#92400E' }}>Lease Signature Required</ThemedText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: isDark ? 'rgba(251,191,36,0.15)' : 'rgba(245,158,11,0.15)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <MaterialCommunityIcons name="file-document-edit-outline" size={22} color={isDark ? '#FCD34D' : '#D97706'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={{ fontSize: 15, fontWeight: '700', color: isDark ? '#FDE68A' : '#92400E' }}>Lease Signature Required</ThemedText>
+                <ThemedText style={{ fontSize: 12, color: isDark ? '#FCD34D' : '#B45309', marginTop: 2 }}>
+                  {pendingLeases.length} agreement{pendingLeases.length > 1 ? 's' : ''} waiting
+                </ThemedText>
+              </View>
             </View>
-            <ThemedText style={{ color: isDark ? '#FCD34D' : '#B45309', marginBottom: 16, lineHeight: 20 }}>
-              You have {pendingLeases.length} lease agreement(s) waiting for your signature. Please review and sign to proceed.
+            <ThemedText style={{ color: isDark ? '#FCD34D' : '#B45309', marginBottom: 16, lineHeight: 20, fontSize: 14 }}>
+              Please review and sign your lease agreement to proceed with your rental.
             </ThemedText>
             <TouchableOpacity
-              style={[styles.maintenanceButton, { backgroundColor: '#F59E0B', paddingVertical: 12, marginTop: 0 }]}
+              style={{ backgroundColor: '#F59E0B', paddingVertical: 13, borderRadius: 10, alignItems: 'center' }}
               onPress={() => router.push('/tenant-leases')}
             >
-              <ThemedText style={[styles.maintenanceButtonText, { color: '#ffffff' }]}>Review & Sign Leases</ThemedText>
+              <ThemedText style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Review & Sign Lease</ThemedText>
             </TouchableOpacity>
           </View>
         )}
@@ -1138,5 +1145,10 @@ const styles = StyleSheet.create({
   coTenantContact: {
     fontSize: 12,
     marginBottom: 1,
+  },
+  welcomeCard: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
   },
 });
