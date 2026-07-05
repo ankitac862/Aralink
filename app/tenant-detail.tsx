@@ -23,9 +23,22 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTenantStore } from '@/store/tenantStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
-import { DbTransaction, fetchTenantTransactions, supabase } from '@/lib/supabase';
+import {
+  DbTransaction,
+  DbLease,
+  fetchTenantTransactions,
+  fetchLeasesByProperty,
+  createLease,
+  uploadLeaseDocument,
+  deleteLeaseWithCleanup,
+  replaceLeaseDocument,
+  isLeaseFullySigned,
+  supabase,
+} from '@/lib/supabase';
+import * as DocumentPicker from 'expo-document-picker';
+import { LeaseManageDialog, LeaseManageAction } from '@/components/lease-manage-dialog';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
-import { fmtShortDate, fmtDate } from '@/lib/dateUtils';
+import { fmtShortDate } from '@/lib/dateUtils';
 
 interface CoTenant {
   id: string;
@@ -64,6 +77,13 @@ export default function TenantDetailScreen() {
   const [showCREndPicker, setShowCREndPicker] = useState(false);
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [deleteDialogLoading, setDeleteDialogLoading] = useState(false);
+  const [currentLease, setCurrentLease] = useState<DbLease | null>(null);
+  const [leaseLoading, setLeaseLoading] = useState(false);
+  const [leaseManageDialog, setLeaseManageDialog] = useState<{
+    visible: boolean;
+    action: LeaseManageAction;
+    isLoading: boolean;
+  }>({ visible: false, action: 'delete', isLoading: false });
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -139,6 +159,97 @@ export default function TenantDetailScreen() {
 
     loadCoTenants();
   }, [id, tenantData?.propertyId]);
+
+  // Load the current (non-terminated) lease for this tenant's property/unit scope
+  useEffect(() => {
+    const loadLease = async () => {
+      if (!tenantData?.propertyId) return;
+      setLeaseLoading(true);
+      try {
+        const leases = await fetchLeasesByProperty(tenantData.propertyId);
+        const unitId = tenantData.unitId ?? null;
+        const match = leases.find(l => {
+          if (l.status === 'terminated') return false;
+          if (unitId) return l.unit_id === unitId;
+          return !l.unit_id;
+        }) ?? null;
+        setCurrentLease(match);
+      } catch {
+        setCurrentLease(null);
+      } finally {
+        setLeaseLoading(false);
+      }
+    };
+    loadLease();
+  }, [tenantData?.propertyId, tenantData?.unitId]);
+
+  const handleUploadLease = async () => {
+    if (!tenantData || !user?.id) return;
+    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+    if (picked.canceled) return;
+
+    setLeaseLoading(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const draft = await createLease({
+        user_id: user.id,
+        property_id: tenantData.propertyId,
+        ...(tenantData.unitId ? { unit_id: tenantData.unitId } : {}),
+        tenant_id: tenantData.id,
+        status: 'uploaded',
+        version: 1,
+        effective_date: today,
+      });
+      if (!draft) { Alert.alert('Error', 'Failed to create lease record.'); return; }
+
+      const uploadResult = await uploadLeaseDocument(picked.assets[0].uri, draft.id, user.id);
+      if (!uploadResult.success) { Alert.alert('Error', uploadResult.error ?? 'Upload failed.'); return; }
+
+      setCurrentLease({ ...draft, document_url: uploadResult.url });
+      Alert.alert('Uploaded', 'Lease uploaded. Open lease detail to send it to the tenant.');
+      router.push(`/lease-detail?id=${draft.id}` as any);
+    } catch {
+      Alert.alert('Error', 'Failed to upload lease.');
+    } finally {
+      setLeaseLoading(false);
+    }
+  };
+
+  const handleConfirmLeaseManage = async () => {
+    if (!currentLease || !user?.id) return;
+    const { action } = leaseManageDialog;
+
+    if (action === 'delete') {
+      setLeaseManageDialog(d => ({ ...d, isLoading: true }));
+      const result = await deleteLeaseWithCleanup(currentLease, user.id);
+      setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+      if (result.success) {
+        setCurrentLease(null);
+        Alert.alert('Deleted', isLeaseFullySigned(currentLease.status) ? 'Lease archived and deleted.' : 'Lease deleted.');
+      } else {
+        Alert.alert('Delete Failed', result.error ?? 'Something went wrong.');
+      }
+      return;
+    }
+
+    // replace
+    setLeaseManageDialog(d => ({ ...d, visible: false }));
+    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+    if (picked.canceled) return;
+
+    setLeaseManageDialog(d => ({ ...d, visible: true, isLoading: true }));
+    const result = await replaceLeaseDocument(currentLease, picked.assets[0].uri, user.id);
+    setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+    if (result.success) {
+      // Refresh lease from DB via re-fetch
+      const leases = await fetchLeasesByProperty(currentLease.property_id);
+      const updated = leases.find(l => l.id === currentLease.id) ?? null;
+      setCurrentLease(updated);
+      Alert.alert('Replaced', 'Lease document replaced successfully.');
+    } else {
+      Alert.alert('Replace Failed', result.error ?? 'Something went wrong.');
+    }
+  };
 
   // Load the active tenant_property_link to get authoritative unit_id + sub_unit_id
   useEffect(() => {
@@ -230,6 +341,34 @@ export default function TenantDetailScreen() {
     profilePicture: tenantData.photo,
     payments: computedPayments,
   } : null;
+
+  const leaseStatusColor = (status: string) => {
+    switch (status) {
+      case 'draft': return '#6b7280';
+      case 'generated': return '#f59e0b';
+      case 'uploaded': return '#3b82f6';
+      case 'sent': return '#8b5cf6';
+      case 'signed': return '#f59e0b';
+      case 'signed_pending_move_in': return '#10b981';
+      case 'active': return '#10b981';
+      case 'terminated': return '#ef4444';
+      default: return '#6b7280';
+    }
+  };
+
+  const leaseStatusLabel = (status: string) => {
+    switch (status) {
+      case 'draft': return 'Draft';
+      case 'generated': return 'Created (PDF ready)';
+      case 'uploaded': return 'Uploaded';
+      case 'sent': return 'Sent – awaiting signature';
+      case 'signed': return 'Tenant signed – awaiting landlord';
+      case 'signed_pending_move_in': return 'Fully signed (pending move-in)';
+      case 'active': return 'Active';
+      case 'terminated': return 'Terminated';
+      default: return status || 'Unknown';
+    }
+  };
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F8F9FA';
@@ -702,6 +841,72 @@ export default function TenantDetailScreen() {
             </>
           )}
         </View>
+
+        {/* Lease Section */}
+        {user?.role === 'landlord' && (
+          <View style={[styles.section, { backgroundColor: cardBgColor, borderColor }]}>
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="file-document-outline" size={18} color={primaryColor} />
+              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Lease</ThemedText>
+            </View>
+
+            {leaseLoading ? (
+              <ActivityIndicator size="small" color={primaryColor} style={{ marginVertical: 16 }} />
+            ) : currentLease ? (
+              <>
+                {/* Status badge */}
+                <View style={[styles.leaseBadgeRow]}>
+                  <View style={[styles.leaseBadge, { backgroundColor: leaseStatusColor(currentLease.status) + '20' }]}>
+                    <View style={[styles.leaseBadgeDot, { backgroundColor: leaseStatusColor(currentLease.status) }]} />
+                    <ThemedText style={[styles.leaseBadgeText, { color: leaseStatusColor(currentLease.status) }]}>
+                      {leaseStatusLabel(currentLease.status)}
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {/* Actions row */}
+                <View style={styles.leaseActionsRow}>
+                  <TouchableOpacity
+                    style={[styles.leaseActionBtn, { backgroundColor: primaryColor + '18' }]}
+                    onPress={() => router.push(`/lease-detail?id=${currentLease.id}` as any)}
+                  >
+                    <MaterialCommunityIcons name="eye-outline" size={16} color={primaryColor} />
+                    <ThemedText style={[styles.leaseActionText, { color: primaryColor }]}>View</ThemedText>
+                  </TouchableOpacity>
+
+                  {currentLease.status !== 'terminated' && (
+                    <TouchableOpacity
+                      style={[styles.leaseActionBtn, { backgroundColor: '#f59e0b18' }]}
+                      onPress={() => setLeaseManageDialog({ visible: true, action: 'replace', isLoading: false })}
+                    >
+                      <MaterialCommunityIcons name="file-replace-outline" size={16} color="#f59e0b" />
+                      <ThemedText style={[styles.leaseActionText, { color: '#f59e0b' }]}>Replace</ThemedText>
+                    </TouchableOpacity>
+                  )}
+
+                  {currentLease.status !== 'terminated' && (
+                    <TouchableOpacity
+                      style={[styles.leaseActionBtn, { backgroundColor: '#ef444418' }]}
+                      onPress={() => setLeaseManageDialog({ visible: true, action: 'delete', isLoading: false })}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={16} color="#ef4444" />
+                      <ThemedText style={[styles.leaseActionText, { color: '#ef4444' }]}>Delete</ThemedText>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={[styles.uploadLeaseBtn, { borderColor: primaryColor + '60' }]}
+                onPress={handleUploadLease}
+                disabled={leaseLoading}
+              >
+                <MaterialCommunityIcons name="upload" size={20} color={primaryColor} />
+                <ThemedText style={[styles.uploadLeaseBtnText, { color: primaryColor }]}>Upload Lease</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       {/* Custom Range modal */}
@@ -809,6 +1014,16 @@ export default function TenantDetailScreen() {
         isLoading={deleteDialogLoading}
         onCancel={() => setDeleteDialogVisible(false)}
         onConfirm={handleConfirmDelete}
+      />
+
+      <LeaseManageDialog
+        visible={leaseManageDialog.visible}
+        action={leaseManageDialog.action}
+        leaseStatus={currentLease?.status ?? ''}
+        entityName={tenantData ? `${tenantData.firstName} ${tenantData.lastName}` : undefined}
+        isLoading={leaseManageDialog.isLoading}
+        onCancel={() => setLeaseManageDialog(d => ({ ...d, visible: false }))}
+        onConfirm={handleConfirmLeaseManage}
       />
     </ThemedView>
   );
@@ -1166,5 +1381,83 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
     textTransform: 'capitalize',
+  },
+  section: {
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  leaseBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  leaseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  leaseBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  leaseBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  leaseActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    flexWrap: 'wrap',
+  },
+  leaseActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  leaseActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  uploadLeaseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginVertical: 16,
+    paddingVertical: 11,
+    borderRadius: 10,
+    justifyContent: 'center',
+  },
+  uploadLeaseBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

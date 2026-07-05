@@ -15,6 +15,7 @@ import {
   Linking,
   Alert,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -32,7 +33,10 @@ import {
   supabase,
   convertApplicantToTenant,
   leaseNeedsApplicantTenantConversion,
+  deleteLeaseWithCleanup,
+  replaceLeaseDocument,
 } from '@/lib/supabase';
+import { LeaseManageDialog, LeaseManageAction } from '@/components/lease-manage-dialog';
 import { usePropertyStore } from '@/store/propertyStore';
 import { fmtDate } from '@/lib/dateUtils';
 
@@ -49,6 +53,13 @@ export default function LeasesScreen() {
   const [leases, setLeases] = useState<DbLease[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [convertingLeaseId, setConvertingLeaseId] = useState<string | null>(null);
+
+  const [manageDialog, setManageDialog] = useState<{
+    visible: boolean;
+    action: LeaseManageAction;
+    lease: DbLease | null;
+    isLoading: boolean;
+  }>({ visible: false, action: 'delete', lease: null, isLoading: false });
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -111,6 +122,46 @@ export default function LeasesScreen() {
     if (user?.role !== 'landlord') return false;
     if (lease.status === 'signed_pending_move_in' || lease.status === 'active') return false;
     return true;
+  };
+
+  const openManageDialog = (action: LeaseManageAction, lease: DbLease) => {
+    if (lease.status === 'terminated') {
+      Alert.alert('Terminated Lease', 'Terminated leases are kept as history and cannot be deleted from here.');
+      return;
+    }
+    setManageDialog({ visible: true, action, lease, isLoading: false });
+  };
+
+  const handleConfirmManage = async () => {
+    const { action, lease } = manageDialog;
+    if (!lease || !user?.id) return;
+
+    if (action === 'delete') {
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      const result = await deleteLeaseWithCleanup(lease, user.id);
+      setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+      if (result.success) {
+        await loadLeases();
+      } else {
+        Alert.alert('Delete Failed', result.error ?? 'Something went wrong. Please try again.');
+      }
+      return;
+    }
+
+    // replace — pick document first
+    setManageDialog(d => ({ ...d, visible: false }));
+    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+    if (picked.canceled) return;
+
+    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
+    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+    if (result.success) {
+      await loadLeases();
+      Alert.alert('Replaced', 'The lease document has been replaced successfully.');
+    } else {
+      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+    }
   };
 
   const handleEditLease = (lease: DbLease) => {
@@ -431,6 +482,28 @@ export default function LeasesScreen() {
                       </ThemedText>
                     </TouchableOpacity>
                   )}
+
+                {/* Replace document — landlord only, any status except terminated */}
+                {user?.role === 'landlord' && lease.status !== 'terminated' && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#f59e0b18' }]}
+                    onPress={() => openManageDialog('replace', lease)}
+                  >
+                    <MaterialCommunityIcons name="file-replace-outline" size={18} color="#f59e0b" />
+                    <ThemedText style={[styles.actionButtonText, { color: '#f59e0b' }]}>Replace</ThemedText>
+                  </TouchableOpacity>
+                )}
+
+                {/* Delete — landlord only, any status except terminated */}
+                {user?.role === 'landlord' && lease.status !== 'terminated' && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#ef444418' }]}
+                    onPress={() => openManageDialog('delete', lease)}
+                  >
+                    <MaterialCommunityIcons name="trash-can-outline" size={18} color="#ef4444" />
+                    <ThemedText style={[styles.actionButtonText, { color: '#ef4444' }]}>Delete</ThemedText>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
         ))}
@@ -446,6 +519,16 @@ export default function LeasesScreen() {
           <MaterialCommunityIcons name="plus" size={28} color="white" />
         </TouchableOpacity>
       )}
+
+      <LeaseManageDialog
+        visible={manageDialog.visible}
+        action={manageDialog.action}
+        leaseStatus={manageDialog.lease?.status ?? ''}
+        entityName={manageDialog.lease ? getPropertyAddress(manageDialog.lease) : undefined}
+        isLoading={manageDialog.isLoading}
+        onCancel={() => setManageDialog(d => ({ ...d, visible: false }))}
+        onConfirm={handleConfirmManage}
+      />
     </ThemedView>
   );
 }

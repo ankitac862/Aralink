@@ -36,9 +36,12 @@ import {
   supabase,
   resolveLeaseRecipientEmail,
   convertApplicantToTenant,
-  deleteLeaseFromDb,
   resetLeaseForEditing,
+  deleteLeaseWithCleanup,
+  replaceLeaseDocument,
+  isLeaseFullySigned,
 } from '@/lib/supabase';
+import { LeaseManageDialog, LeaseManageAction } from '@/components/lease-manage-dialog';
 import * as DocumentPicker from 'expo-document-picker';
 import { fmtDate, fmtDateTime } from '@/lib/dateUtils';
 import {
@@ -61,6 +64,11 @@ export default function LeaseDetailScreen() {
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [manageDialog, setManageDialog] = useState<{
+    visible: boolean;
+    action: LeaseManageAction;
+    isLoading: boolean;
+  }>({ visible: false, action: 'delete', isLoading: false });
 
   const handleUploadFinalSignature = async () => {
     try {
@@ -452,29 +460,47 @@ export default function LeaseDetailScreen() {
   };
 
   const handleDeleteLease = () => {
-    Alert.alert(
-      'Delete Lease',
-      'Are you sure you want to permanently delete this lease? This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setIsProcessing(true);
-            const ok = await deleteLeaseFromDb(lease!.id);
-            setIsProcessing(false);
-            if (ok) {
-              Alert.alert('Deleted', 'The lease has been deleted.', [
-                { text: 'OK', onPress: () => router.back() },
-              ]);
-            } else {
-              Alert.alert('Error', 'Failed to delete the lease. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+    if (!lease) return;
+    setManageDialog({ visible: true, action: 'delete', isLoading: false });
+  };
+
+  const handleReplaceLease = () => {
+    if (!lease) return;
+    setManageDialog({ visible: true, action: 'replace', isLoading: false });
+  };
+
+  const handleConfirmManage = async () => {
+    if (!lease || !user?.id) return;
+    const { action } = manageDialog;
+
+    if (action === 'delete') {
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      const result = await deleteLeaseWithCleanup(lease, user.id);
+      setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+      if (result.success) {
+        Alert.alert('Deleted', isLeaseFullySigned(lease.status) ? 'Lease archived and deleted.' : 'The lease has been deleted.', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      } else {
+        Alert.alert('Delete Failed', result.error ?? 'Something went wrong. Please try again.');
+      }
+      return;
+    }
+
+    // replace — pick file first
+    setManageDialog(d => ({ ...d, visible: false }));
+    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+    if (picked.canceled) return;
+
+    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
+    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+    if (result.success) {
+      Alert.alert('Replaced', 'The lease document has been replaced.');
+      loadLease();
+    } else {
+      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+    }
   };
 
   const handleEditAndResend = async () => {
@@ -861,7 +887,7 @@ export default function LeaseDetailScreen() {
           {/* Draft (after edit & resend reset): upload new document */}
           {lease.status === 'draft' && (
             <TouchableOpacity
-              style={[styles.sendButton, { backgroundColor: warningColor }]}
+              style={[styles.sendButton, { backgroundColor: warningColor, marginBottom: 12 }]}
               onPress={handleUploadDraftDocument}
               disabled={isProcessing}
             >
@@ -875,8 +901,44 @@ export default function LeaseDetailScreen() {
               )}
             </TouchableOpacity>
           )}
+
+          {/* Replace document — any status with a document, except terminated/rejected */}
+          {!['terminated', 'rejected', 'draft'].includes(lease.status) && lease.document_url && (
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: '#f59e0b', marginBottom: 12 }]}
+              onPress={handleReplaceLease}
+              disabled={isProcessing}
+            >
+              <MaterialCommunityIcons name="file-replace-outline" size={20} color="#fff" />
+              <ThemedText style={styles.sendButtonText}>Replace Document</ThemedText>
+            </TouchableOpacity>
+          )}
+
+          {/* Delete — all statuses except terminated (rejected has its own above) */}
+          {!['terminated', 'rejected'].includes(lease.status) && (
+            <TouchableOpacity
+              style={[styles.sendButton, { backgroundColor: '#ef4444' }]}
+              onPress={handleDeleteLease}
+              disabled={isProcessing}
+            >
+              <MaterialCommunityIcons name="trash-can-outline" size={20} color="#fff" />
+              <ThemedText style={styles.sendButtonText}>Delete Lease</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
       )}
+
+      <LeaseManageDialog
+        visible={manageDialog.visible}
+        action={manageDialog.action}
+        leaseStatus={lease?.status ?? ''}
+        entityName={lease?.form_data?.unitAddress
+          ? `${lease.form_data.unitAddress.streetNumber} ${lease.form_data.unitAddress.streetName}`
+          : undefined}
+        isLoading={manageDialog.isLoading}
+        onCancel={() => setManageDialog(d => ({ ...d, visible: false }))}
+        onConfirm={handleConfirmManage}
+      />
     </ThemedView>
   );
 }
