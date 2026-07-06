@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useState, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
@@ -25,6 +25,7 @@ export default function AddApplicantScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { prefillEmail } = useLocalSearchParams<{ prefillEmail?: string }>();
   const properties = usePropertyStore((state) => state.properties);
   const loadProperties = usePropertyStore((state) => state.loadFromSupabase);
   const { user } = useAuthStore();
@@ -50,6 +51,12 @@ export default function AddApplicantScreen() {
     unitId: '',
     subUnitId: '',
   });
+
+  useEffect(() => {
+    if (prefillEmail) {
+      setFormData(prev => ({ ...prev, email: prefillEmail }));
+    }
+  }, [prefillEmail]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingProperties, setIsLoadingProperties] = useState(true);

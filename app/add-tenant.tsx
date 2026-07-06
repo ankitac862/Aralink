@@ -69,6 +69,7 @@ export default function AddTenantScreen() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPropertyDropdown, setShowPropertyDropdown] = useState(false);
+  const [propertySearch, setPropertySearch] = useState('');
   const [showUnitDropdown, setShowUnitDropdown] = useState(false);
   const [showSubUnitDropdown, setShowSubUnitDropdown] = useState(false);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -295,6 +296,7 @@ export default function AddTenantScreen() {
       endDate: prev.endDate || endDate,
     }));
     setShowPropertyDropdown(false);
+    setPropertySearch('');
 
     // Auto-set rent for single unit properties
     if (property?.propertyType === 'single_unit' && property.rentAmount) {
@@ -624,6 +626,10 @@ export default function AddTenantScreen() {
     type: p.propertyType,
   }));
 
+  const filteredPropertyOptions = propertySearch.trim()
+    ? propertyOptions.filter(o => o.label.toLowerCase().includes(propertySearch.toLowerCase()))
+    : propertyOptions;
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
@@ -756,55 +762,83 @@ export default function AddTenantScreen() {
 
             {/* CASCADING PROPERTY SELECTION */}
             
-            {/* Property Selection */}
+            {/* Property Selection — autocomplete */}
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: textColor }]}>Property Address *</ThemedText>
-              <TouchableOpacity
-                style={[styles.select, { backgroundColor: inputBgColor, borderColor }]}
-                onPress={() => {
-                  setShowPropertyDropdown(!showPropertyDropdown);
-                  setShowUnitDropdown(false);
-                  setShowSubUnitDropdown(false);
-                }}
-              >
-                <ThemedText style={[styles.selectText, { color: formData.propertyId ? textColor : secondaryTextColor }]}>
-                  {selectedProperty 
-                    ? `${selectedProperty.address1}, ${selectedProperty.city}` 
-                    : 'Select a property'}
-                </ThemedText>
-                <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
-              </TouchableOpacity>
+              <View style={[styles.select, { backgroundColor: inputBgColor, borderColor, paddingHorizontal: 0 }]}>
+                <TextInput
+                  style={[styles.autocompleteInput, { color: textColor }]}
+                  placeholder={selectedProperty ? `${selectedProperty.address1}, ${selectedProperty.city}` : 'Search or select a property'}
+                  placeholderTextColor={selectedProperty ? textColor : secondaryTextColor}
+                  value={propertySearch}
+                  onChangeText={(text) => {
+                    setPropertySearch(text);
+                    setShowPropertyDropdown(true);
+                    setShowUnitDropdown(false);
+                    setShowSubUnitDropdown(false);
+                    if (!text) {
+                      setFormData(prev => ({ ...prev, propertyId: '', unitId: '', subUnitId: '' }));
+                    }
+                  }}
+                  onFocus={() => {
+                    setShowPropertyDropdown(true);
+                    setShowUnitDropdown(false);
+                    setShowSubUnitDropdown(false);
+                  }}
+                />
+                {formData.propertyId ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setFormData(prev => ({ ...prev, propertyId: '', unitId: '', subUnitId: '' }));
+                      setPropertySearch('');
+                      setShowPropertyDropdown(false);
+                    }}
+                    style={{ paddingHorizontal: 12 }}
+                  >
+                    <MaterialCommunityIcons name="close-circle" size={18} color={secondaryTextColor} />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => setShowPropertyDropdown(v => !v)}
+                    style={{ paddingHorizontal: 12 }}
+                  >
+                    <MaterialCommunityIcons name="chevron-down" size={20} color={secondaryTextColor} />
+                  </TouchableOpacity>
+                )}
+              </View>
               {showPropertyDropdown && (
                 <View style={[styles.dropdown, { backgroundColor: cardBgColor, borderColor }]}>
-                  {propertyOptions.length === 0 ? (
+                  {filteredPropertyOptions.length === 0 ? (
                     <View style={[styles.dropdownItem, { borderBottomWidth: 0 }]}>
                       <ThemedText style={[styles.dropdownItemText, { color: secondaryTextColor }]}>
-                        No properties available. Add a property first.
+                        {propertyOptions.length === 0 ? 'No properties available. Add a property first.' : 'No match found'}
                       </ThemedText>
                     </View>
                   ) : (
-                    propertyOptions.map((option, index) => (
-                      <TouchableOpacity
-                        key={option.id}
-                        style={[
-                          styles.dropdownItem, 
-                          { borderBottomColor: borderColor },
-                          index === propertyOptions.length - 1 && { borderBottomWidth: 0 }
-                        ]}
-                        onPress={() => handlePropertyChange(option.id)}
-                      >
-                        <View style={styles.dropdownItemContent}>
-                          <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
-                            {option.label}
-                          </ThemedText>
-                          <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
-                            <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
-                              {option.type === 'single_unit' ? 'Single' : 'Multi'}
+                    <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={{ maxHeight: 220 }}>
+                      {filteredPropertyOptions.map((option, index) => (
+                        <TouchableOpacity
+                          key={option.id}
+                          style={[
+                            styles.dropdownItem,
+                            { borderBottomColor: borderColor },
+                            index === filteredPropertyOptions.length - 1 && { borderBottomWidth: 0 }
+                          ]}
+                          onPress={() => handlePropertyChange(option.id)}
+                        >
+                          <View style={styles.dropdownItemContent}>
+                            <ThemedText style={[styles.dropdownItemText, { color: textColor }]}>
+                              {option.label}
                             </ThemedText>
+                            <View style={[styles.propertyTypeBadge, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
+                              <ThemedText style={[styles.propertyTypeText, { color: secondaryTextColor }]}>
+                                {option.type === 'single_unit' ? 'Single' : 'Multi'}
+                              </ThemedText>
+                            </View>
                           </View>
-                        </View>
-                      </TouchableOpacity>
-                    ))
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
                   )}
                 </View>
               )}
@@ -1172,6 +1206,12 @@ const styles = StyleSheet.create({
   selectText: {
     fontSize: 16,
     flex: 1,
+  },
+  autocompleteInput: {
+    flex: 1,
+    fontSize: 16,
+    paddingHorizontal: 16,
+    height: 56,
   },
   dropdown: {
     marginTop: 8,

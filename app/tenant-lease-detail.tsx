@@ -8,7 +8,7 @@
  * - Upload signed document
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -20,7 +20,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -60,9 +60,11 @@ export default function TenantLeaseDetailScreen() {
   const successColor = '#10b981';
   const warningColor = '#f59e0b';
 
-  useEffect(() => {
-    loadLease();
-  }, [id]);
+  useFocusEffect(
+    useCallback(() => {
+      loadLease();
+    }, [id])
+  );
 
   const loadLease = async () => {
     if (!id) return;
@@ -141,12 +143,15 @@ export default function TenantLeaseDetailScreen() {
 
       if (uploadResult.success) {
         // Update lease status to signed, keeping original URL intact and adding new signed version
-        await updateLeaseInDb(lease!.id, { 
-          status: 'signed', // Changed to standard 'signed' indicating Tenant signed it
+        await updateLeaseInDb(lease!.id, {
+          status: 'signed',
           signed_date: new Date().toISOString(),
-          document_url: uploadResult.url, // Override main URL for display if needed
-          signed_pdf_url: uploadResult.url, // Store the signed URL explicitly
-          version: 2, // Increment version to v2 (user signed)
+          // original_pdf_url / document_url stay pointing at the unsigned original
+          // so landlord can see both unsign + tenant-signed before countersigning.
+          // signed_pdf_url holds the tenant-signed copy temporarily;
+          // landlord's countersign upload (v3) will overwrite it.
+          signed_pdf_url: uploadResult.url,
+          version: 2,
         });
 
         // Applicant → tenant conversion runs only after landlord finalizes (v3), not here.

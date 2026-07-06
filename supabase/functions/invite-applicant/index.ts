@@ -215,6 +215,9 @@ serve(async (req) => {
     if (propertyError || !property) return json({ error: 'Property not found' }, 404);
     if (property.user_id !== authData.user.id) return json({ error: 'Forbidden' }, 403);
 
+    const propertyAddress = [property.address1, property.address2, property.city, property.state, property.zip_code]
+      .filter(Boolean).join(', ');
+
     // Ensure landlord has a profile (required for invites.landlord_id foreign key)
     await supabase.from('profiles').upsert(
       {
@@ -298,11 +301,12 @@ serve(async (req) => {
       );
     } else {
       // ── EXISTING USER PATH ────────────────────────────────────────────────
+      // User already has an account — don't send a password-reset email.
+      // Send a custom property invite email instead.
       inviteFlow = 'tenant';
       applicantId = authUserId;
-      emailSent = await sendRecoveryEmailWithRedirect(applicantEmail, supabaseRedirectTo);
-      authEmailKind = emailSent ? 'recovery' : 'none';
-      if (!emailSent) console.warn('[invite-applicant] Recovery email failed for existing user — in-app notification only.');
+      emailSent = false;
+      authEmailKind = 'none';
 
       await supabase.from('profiles').upsert(
         { id: applicantId, email: applicantEmail, full_name: applicantName || applicantEmail.split('@')[0],
@@ -341,18 +345,29 @@ serve(async (req) => {
     let notificationCreated = false;
     if (applicantId) {
       try {
-        const propertyAddress = [property.address1, property.address2, property.city, property.state, property.zip_code]
-          .filter(Boolean).join(', ');
+        const notifTitle = `You've been invited to ${propertyAddress || 'a property'}`;
+        const notifMessage = `You have been invited to apply for ${propertyAddress}. Open the app to review the details and submit your application.`;
         const { error: notifError } = await supabase.from('notifications').insert({
           user_id: applicantId, type: 'invite',
-          title: 'You have been invited to apply for a property',
-          message: 'Open the invite to review the property details and start your application.',
+          title: notifTitle,
+          message: notifMessage,
           data: { token, inviteId: invite.id, propertyId, propertyAddress, unitId: unitId || null,
             subUnitId: subUnitId || null, landlordId: authData.user.id },
           created_at: now.toISOString(),
         });
         if (notifError) console.error('Notification error:', notifError);
         else notificationCreated = true;
+
+        // Push notification — best-effort, non-fatal
+        await supabase.functions.invoke('send-push-notification', {
+          body: {
+            userId: applicantId,
+            title: notifTitle,
+            body: notifMessage,
+            data: { screen: 'invite', token, inviteId: invite.id, propertyId },
+          },
+        }).catch((err: unknown) => console.warn('[invite-applicant] push notification failed:', err));
+
       } catch (err) { console.error('Failed to create notification:', err); }
     }
 

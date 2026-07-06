@@ -52,10 +52,10 @@ export default function TenantsScreen() {
       } else if (property.propertyType === 'multi_unit') {
         locationParts.push(propertyLabel);
         if (unit) locationParts.push(`Unit ${unit.name || unit.id}`);
-        if (tenant.unitName) locationParts.push(`Room ${tenant.unitName}`);
+        if (tenant.subUnitName) locationParts.push(`Room ${tenant.subUnitName}`);
       } else {
         locationParts.push(propertyLabel);
-        if (tenant.unitName) locationParts.push(`Room ${tenant.unitName}`);
+        if (tenant.subUnitName) locationParts.push(`Room ${tenant.subUnitName}`);
       }
     }
 

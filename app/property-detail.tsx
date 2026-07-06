@@ -21,8 +21,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { createLease, DbLease, deleteImage, fetchLeasesByProperty, STORAGE_BUCKETS, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { checkEntityHasTenant, createLease, DbLease, deleteImage, fetchLeasesByProperty, replaceLeaseDocument, STORAGE_BUCKETS, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
@@ -41,9 +42,11 @@ export default function PropertyDetailScreen() {
     getPropertyById,
     updateProperty,
     deleteProperty,
+    deleteUnit,
+    deleteSubUnit,
     loadFromSupabase,
   } = usePropertyStore();
-  const { getTenantsByProperty } = useTenantStore();
+  const { getTenantsByProperty, loadFromSupabase: loadTenants } = useTenantStore();
 
   const [property, setProperty] = useState<Property | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -58,6 +61,27 @@ export default function PropertyDetailScreen() {
   const [propertyLeases, setPropertyLeases] = useState<DbLease[]>([]);
   const [isUpdatingPhotos, setIsUpdatingPhotos] = useState(false);
   const [isUploadingLease, setIsUploadingLease] = useState(false);
+
+  // Delete dialog state
+  const [deleteDialog, setDeleteDialog] = useState<{
+    visible: boolean;
+    entityType: 'property' | 'unit' | 'subunit';
+    entityId: string;
+    entityName: string;
+    hasTenant: boolean;
+    tenantName: string | null;
+    tenantCount: number;
+    isLoading: boolean;
+  }>({
+    visible: false,
+    entityType: 'property',
+    entityId: '',
+    entityName: '',
+    hasTenant: false,
+    tenantName: null,
+    tenantCount: 0,
+    isLoading: false,
+  });
   const scrollViewRef = useRef<ScrollView>(null);
   const imageScrollRef = useRef<FlatList>(null);
   
@@ -76,7 +100,7 @@ export default function PropertyDetailScreen() {
     setIsLoading(true);
     try {
       if (user?.id) {
-        await loadFromSupabase(user.id);
+        await Promise.all([loadFromSupabase(user.id), loadTenants(user.id)]);
       }
       const fetchedProperty = getPropertyById(id);
       if (fetchedProperty) {
@@ -90,7 +114,7 @@ export default function PropertyDetailScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [id, user?.id, loadFromSupabase, getPropertyById]);
+  }, [id, user?.id, loadFromSupabase, loadTenants, getPropertyById]);
 
   useEffect(() => {
     loadProperty();
@@ -117,24 +141,67 @@ export default function PropertyDetailScreen() {
     setCurrentImageIndex(index);
   };
 
+  const openDeleteDialog = async (
+    entityType: 'property' | 'unit' | 'subunit',
+    entityId: string,
+    entityName: string
+  ) => {
+    const check = await checkEntityHasTenant(entityType, entityId);
+    setDeleteDialog({
+      visible: true,
+      entityType,
+      entityId,
+      entityName,
+      hasTenant: check.hasTenant,
+      tenantName: check.tenantName,
+      tenantCount: check.tenantCount,
+      isLoading: false,
+    });
+  };
+
   const handleDeleteProperty = () => {
     if (!property) return;
-    
-    Alert.alert(
-      'Delete Property',
-      'Are you sure you want to delete this property? This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteProperty(property.id);
-    router.back();
-          },
-        },
-      ]
-    );
+    openDeleteDialog('property', property.id, property.address1 || 'this property');
+  };
+
+  const handleDeleteUnit = (unit: Unit) => {
+    openDeleteDialog('unit', unit.id, unit.name);
+  };
+
+  const handleDeleteRoom = (room: SubUnit) => {
+    openDeleteDialog('subunit', room.id, room.name);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!user?.id) return;
+    setDeleteDialog((d) => ({ ...d, isLoading: true }));
+
+    let result: { deleted: boolean; error?: string } = { deleted: false };
+
+    if (deleteDialog.entityType === 'property' && property) {
+      result = await deleteProperty(property.id, user.id);
+    } else if (deleteDialog.entityType === 'unit' && property) {
+      result = await deleteUnit(property.id, deleteDialog.entityId, user.id);
+    } else if (deleteDialog.entityType === 'subunit' && property) {
+      const unitId = property.units.find((u) =>
+        u.subUnits.some((su) => su.id === deleteDialog.entityId)
+      )?.id ?? '';
+      result = await deleteSubUnit(property.id, unitId, deleteDialog.entityId, user.id);
+    }
+
+    setDeleteDialog((d) => ({ ...d, isLoading: false, visible: false }));
+
+    if (result.deleted) {
+      if (deleteDialog.entityType === 'property') {
+        router.back();
+      } else {
+        setShowUnitModal(false);
+        setShowRoomModal(false);
+        loadFromSupabase(user.id, true);
+      }
+    } else {
+      Alert.alert('Delete Failed', result.error || 'Something went wrong. Please try again.');
+    }
   };
 
   const handleTenantDetail = () => {
@@ -190,7 +257,8 @@ export default function PropertyDetailScreen() {
     handleUpdateProperty({ rentCompleteProperty: val });
   };
 
-  const handleUploadLeaseFor = async (unitId?: string, _roomId?: string) => {
+  // Shared helper: pick a PDF, create a new lease record, upload, then navigate
+  const doCreateLeaseUpload = async (unitId?: string) => {
     if (!property || !user?.id) return;
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -213,19 +281,87 @@ export default function PropertyDetailScreen() {
         Alert.alert('Error', 'Failed to create lease record. Please try again.');
         return;
       }
-
       const uploadResult = await uploadLeaseDocument(result.assets[0].uri, draft.id, user.id);
       if (!uploadResult.success) {
         Alert.alert('Error', uploadResult.error || 'Failed to upload document.');
         return;
       }
-
+      const leases = await fetchLeasesByProperty(property.id);
+      setPropertyLeases(leases);
       router.push(`/lease-detail?id=${draft.id}` as any);
     } catch {
       Alert.alert('Error', 'Failed to upload lease. Please try again.');
     } finally {
       setIsUploadingLease(false);
     }
+  };
+
+  // Shared helper: pick a PDF, replace document on an existing lease, then navigate
+  const doReplaceLeaseUpload = async (existingLease: DbLease) => {
+    if (!property || !user?.id) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+
+      setIsUploadingLease(true);
+      const rep = await replaceLeaseDocument(existingLease, result.assets[0].uri, user.id);
+      if (!rep.success) {
+        Alert.alert('Error', rep.error || 'Failed to replace lease document.');
+        return;
+      }
+      const leases = await fetchLeasesByProperty(property.id);
+      setPropertyLeases(leases);
+      router.push(`/lease-detail?id=${existingLease.id}` as any);
+    } catch {
+      Alert.alert('Error', 'Failed to replace lease. Please try again.');
+    } finally {
+      setIsUploadingLease(false);
+    }
+  };
+
+  const handleUploadLeaseFor = (unitId?: string, _roomId?: string) => {
+    if (!property || !user?.id) return;
+
+    // Instance 1 — no active tenant
+    const allTenants = getTenantsByProperty(property.id);
+    const scopedTenants = unitId
+      ? allTenants.filter(t => t.unit_id === unitId)
+      : allTenants;
+    const activeTenants = scopedTenants.filter(t => t.status === 'active');
+
+    if (activeTenants.length === 0) {
+      Alert.alert(
+        'No Active Tenant',
+        'There is no active tenant for this address. Add a tenant first, then upload the lease.',
+      );
+      return;
+    }
+
+    // Instance 2 — tenant exists but already has a non-terminated lease
+    const existingLease = propertyLeases.find(l => {
+      const unitMatch = unitId ? l.unit_id === unitId : true;
+      return unitMatch && l.status !== 'terminated' && l.status !== 'rejected';
+    });
+
+    if (existingLease) {
+      const t = activeTenants[0];
+      const tenantName = `${t.first_name} ${t.last_name}`.trim();
+      Alert.alert(
+        'Lease Already Exists',
+        `There is already an active lease for ${tenantName}. Do you want to replace it with a new document?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Replace', onPress: () => doReplaceLeaseUpload(existingLease) },
+        ],
+      );
+      return;
+    }
+
+    // Instance 3 — tenant exists, no existing lease → upload new
+    doCreateLeaseUpload(unitId);
   };
 
   const handleAddPhotos = async () => {
@@ -970,6 +1106,16 @@ export default function PropertyDetailScreen() {
                 >
                   <MaterialCommunityIcons name="pencil" size={22} color={primaryColor} />
                 </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (selectedUnit) {
+                      setShowUnitModal(false);
+                      handleDeleteUnit(selectedUnit);
+                    }
+                  }}
+                >
+                  <MaterialCommunityIcons name="trash-can-outline" size={22} color="#ef4444" />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={() => setShowUnitModal(false)}>
                   <MaterialCommunityIcons name="close" size={24} color={textColor} />
                 </TouchableOpacity>
@@ -1276,6 +1422,17 @@ export default function PropertyDetailScreen() {
                         <MaterialCommunityIcons name="pencil" size={18} color={onPrimaryColor} />
                         <ThemedText style={[styles.modalButtonText, { color: onPrimaryColor }]}>Edit Room</ThemedText>
                       </TouchableOpacity>
+                      {/* Delete Room */}
+                      <TouchableOpacity
+                        style={[styles.modalEditButton, { backgroundColor: '#ef4444', marginTop: 8 }]}
+                        onPress={() => {
+                          setShowRoomModal(false);
+                          handleDeleteRoom(selectedRoom);
+                        }}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={18} color="#fff" />
+                        <ThemedText style={styles.modalButtonText}>Delete Room</ThemedText>
+                      </TouchableOpacity>
                     </View>
                   );
                 })()}
@@ -1284,6 +1441,19 @@ export default function PropertyDetailScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Archive-Delete confirmation dialog */}
+      <DeleteConfirmDialog
+        visible={deleteDialog.visible}
+        entityType={deleteDialog.entityType}
+        entityName={deleteDialog.entityName}
+        hasTenant={deleteDialog.hasTenant}
+        tenantName={deleteDialog.tenantName}
+        tenantCount={deleteDialog.tenantCount}
+        isLoading={deleteDialog.isLoading}
+        onCancel={() => setDeleteDialog((d) => ({ ...d, visible: false }))}
+        onConfirm={handleConfirmDelete}
+      />
 
       {/* Save Button Footer - Only shows in edit mode */}
       {isEditMode && (

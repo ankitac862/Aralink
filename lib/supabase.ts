@@ -443,6 +443,8 @@ export const STORAGE_BUCKETS = {
   TENANT_PHOTOS: 'tenant-photos',
   UNIT_PHOTOS: 'unit-photos',
   DOCUMENTS: 'documents',
+  LEASE_DOCUMENTS: 'lease-documents',
+  LEASE_ARCHIVES: 'lease-archives',
 } as const;
 
 // =====================================================
@@ -680,23 +682,48 @@ export async function updatePropertyInDb(propertyId: string, updates: Partial<Db
 }
 
 // Delete a property
-export async function deletePropertyFromDb(propertyId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('properties')
-      .delete()
-      .eq('id', propertyId);
+// ─── Archive-Delete Service ──────────────────────────────────────────────────
 
-    if (error) {
-      console.error('Error deleting property:', error);
-      return false;
-    }
+export interface TenantCheckResult {
+  hasTenant: boolean;
+  tenantName: string | null;
+  tenantCount: number;
+}
 
-    return true;
-  } catch (error) {
-    console.error('Error deleting property:', error);
-    return false;
+export interface ArchiveDeleteResult {
+  deleted: boolean;
+  error?: string;
+}
+
+export async function checkEntityHasTenant(
+  entityType: 'property' | 'unit' | 'subunit' | 'tenant',
+  entityId: string
+): Promise<TenantCheckResult> {
+  const { data, error } = await supabase.rpc('check_entity_has_tenant', {
+    p_entity_type: entityType,
+    p_entity_id: entityId,
+  });
+  if (error) {
+    console.error('checkEntityHasTenant error:', error);
+    return { hasTenant: false, tenantName: null, tenantCount: 0 };
   }
+  return {
+    hasTenant: data?.has_tenant ?? false,
+    tenantName: data?.tenant_name ?? null,
+    tenantCount: data?.tenant_count ?? 0,
+  };
+}
+
+export async function deletePropertyFromDb(propertyId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_property', {
+    p_property_id: propertyId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_property error:', error);
+    return { deleted: false, error: error.message };
+  }
+  return { deleted: true };
 }
 
 // Create a unit
@@ -750,24 +777,18 @@ export async function updateUnitInDb(unitId: string, updates: Partial<DbUnit>): 
 }
 
 // Delete a unit
-export async function deleteUnitFromDb(unitId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('units')
-      .delete()
-      .eq('id', unitId);
-
-    if (error) {
-      console.error('Error deleting unit:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting unit:', error);
-    return false;
+export async function deleteUnitFromDb(unitId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_unit', {
+    p_unit_id: unitId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_unit error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
+
 
 // Create a sub-unit (room)
 export async function createSubUnit(subUnit: Omit<DbSubUnit, 'id' | 'created_at' | 'updated_at'>): Promise<DbSubUnit | null> {
@@ -819,24 +840,17 @@ export async function updateSubUnitInDb(subUnitId: string, updates: Partial<DbSu
   }
 }
 
-// Delete a sub-unit
-export async function deleteSubUnitFromDb(subUnitId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('sub_units')
-      .delete()
-      .eq('id', subUnitId);
-
-    if (error) {
-      console.error('Error deleting sub unit:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting sub unit:', error);
-    return false;
+// Delete a sub-unit (archive then hard-delete via RPC)
+export async function deleteSubUnitFromDb(subUnitId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_subunit', {
+    p_subunit_id: subUnitId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_subunit error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
 
 // =====================================================
@@ -853,6 +867,8 @@ export interface DbTenant {
   property_id: string;
   unit_id?: string;
   unit_name?: string;
+  sub_unit_id?: string | null;
+  sub_unit_name?: string | null;
   photo?: string;
   id_proof_1?: string;
   id_proof_2?: string;
@@ -898,7 +914,7 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
       // Get ACTIVE tenant IDs for these properties via tenant_property_links
       const { data: links, error: linksError } = await supabase
         .from('tenant_property_links')
-        .select('tenant_id, status, property_id')
+        .select('tenant_id, status, property_id, unit_id, sub_unit_id')
         .in('property_id', propertyIdsAsStrings)
         .eq('status', 'active');
 
@@ -906,7 +922,17 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
         console.error('❌ Error fetching tenant_property_links:', linksError);
       } else if (links && links.length > 0) {
         console.log(`📋 Found ${links.length} tenant links:`, links);
-        
+
+        // Build a map of tenant_id → link data (property, unit, sub_unit)
+        const tenantLinkMap: Record<string, { property_id: string; unit_id: string | null; sub_unit_id: string | null }> = {};
+        links.forEach(link => {
+          tenantLinkMap[link.tenant_id] = {
+            property_id: link.property_id,
+            unit_id: link.unit_id ?? null,
+            sub_unit_id: link.sub_unit_id ?? null,
+          };
+        });
+
         const tenantIds = [...new Set(links.map(link => link.tenant_id))];
         console.log(`📋 Unique tenant IDs to fetch:`, tenantIds);
 
@@ -921,9 +947,36 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
           console.error('❌ Error fetching tenants by IDs:', tenantsError);
           console.error('❌ Tenant error details:', JSON.stringify(tenantsError, null, 2));
         } else {
-          tenantsFromLinks = tenantsData || [];
+          // Collect sub_unit_ids that need name resolution
+          const subUnitIds = [...new Set(
+            Object.values(tenantLinkMap)
+              .map(l => l.sub_unit_id)
+              .filter((id): id is string => !!id)
+          )];
+
+          let subUnitNameMap: Record<string, string> = {};
+          if (subUnitIds.length > 0) {
+            const { data: subUnits } = await supabase
+              .from('sub_units')
+              .select('id, name')
+              .in('id', subUnitIds);
+            subUnits?.forEach(su => { subUnitNameMap[su.id] = su.name; });
+          }
+
+          // Enrich each tenant with authoritative link data
+          tenantsFromLinks = (tenantsData || []).map(tenant => {
+            const link = tenantLinkMap[tenant.id];
+            if (!link) return tenant;
+            return {
+              ...tenant,
+              property_id: link.property_id || tenant.property_id,
+              unit_id: link.unit_id || tenant.unit_id,
+              sub_unit_id: link.sub_unit_id,
+              sub_unit_name: link.sub_unit_id ? (subUnitNameMap[link.sub_unit_id] ?? null) : null,
+            };
+          });
+
           console.log(`✅ Fetched ${tenantsFromLinks.length} tenants via links`);
-          console.log('📋 Tenant data:', JSON.stringify(tenantsFromLinks, null, 2));
         }
       } else {
         console.log('⚠️ No tenant links found for these properties');
@@ -1019,7 +1072,37 @@ export async function fetchTenantById(tenantId: string): Promise<DbTenant | null
       return null;
     }
 
-    return data;
+    if (!data) return null;
+
+    // Enrich with sub_unit info from tenant_property_links
+    const { data: link } = await supabase
+      .from('tenant_property_links')
+      .select('property_id, unit_id, sub_unit_id')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!link) return data;
+
+    let sub_unit_name: string | null = null;
+    if (link.sub_unit_id) {
+      const { data: su } = await supabase
+        .from('sub_units')
+        .select('name')
+        .eq('id', link.sub_unit_id)
+        .maybeSingle();
+      sub_unit_name = su?.name ?? null;
+    }
+
+    return {
+      ...data,
+      property_id: link.property_id || data.property_id,
+      unit_id: link.unit_id || data.unit_id,
+      sub_unit_id: link.sub_unit_id ?? null,
+      sub_unit_name,
+    };
   } catch (error) {
     console.error('Error fetching tenant:', error);
     return null;
@@ -1076,24 +1159,17 @@ export async function updateTenantInDb(tenantId: string, updates: Partial<DbTena
   }
 }
 
-// Delete a tenant
-export async function deleteTenantFromDb(tenantId: string): Promise<boolean> {
-  try {
-    const { error } = await supabase
-      .from('tenants')
-      .delete()
-      .eq('id', tenantId);
-
-    if (error) {
-      console.error('Error deleting tenant:', error);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error deleting tenant:', error);
-    return false;
+// Delete a tenant (archive then hard-delete via RPC)
+export async function deleteTenantFromDb(tenantId: string, userId: string): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_delete_tenant', {
+    p_tenant_id: tenantId,
+    p_deleted_by: userId,
+  });
+  if (error) {
+    console.error('archive_and_delete_tenant error:', error);
+    return { deleted: false, error: error.message };
   }
+  return { deleted: true };
 }
 
 // =====================================================
@@ -2052,10 +2128,12 @@ export async function getTenantLeaseStatus(tenantId: string): Promise<'active' |
       return 'inactive';
     }
 
-    // Check for signed and active lease
+    // Fully executed lease: both parties signed or actively live
     const now = new Date();
-    const activeLease = leases.find(lease => 
-      lease.status === 'signed' && 
+    const activeLease = leases.find(lease =>
+      (lease.status === 'signed_pending_move_in' ||
+        lease.status === 'active' ||
+        lease.status === 'signed') &&
       (!lease.expiry_date || new Date(lease.expiry_date) > now)
     );
 
@@ -2063,8 +2141,8 @@ export async function getTenantLeaseStatus(tenantId: string): Promise<'active' |
       return 'active';
     }
 
-    // Check for pending leases (sent but not signed)
-    const pendingLease = leases.find(lease => 
+    // Check for pending leases (sent but not yet signed by tenant)
+    const pendingLease = leases.find(lease =>
       lease.status === 'sent' || lease.status === 'generated' || lease.status === 'uploaded'
     );
 
@@ -3447,6 +3525,241 @@ export async function deleteLeaseFromDb(leaseId: string): Promise<boolean> {
   }
 }
 
+// ─── Lease archive / delete / replace helpers ────────────────────────────────
+
+export interface DbLeaseArchive {
+  id: string;
+  original_lease_id: string;
+  user_id?: string;
+  property_id?: string;
+  unit_id?: string;
+  tenant_id?: string;
+  original_document_url?: string;
+  original_storage_key?: string;
+  archived_document_url?: string;
+  archived_storage_key?: string;
+  archive_reason: 'deleted' | 'replaced';
+  original_status: string;
+  archived_at: string;
+  archived_by?: string;
+  lease_effective_date?: string;
+  lease_expiry_date?: string;
+  form_data?: Record<string, unknown>;
+}
+
+/** True for the two statuses where both parties have signed. */
+export function isLeaseFullySigned(status: string): boolean {
+  return status === 'signed_pending_move_in' || status === 'active';
+}
+
+/**
+ * Copy the lease PDF into the lease-archives bucket and insert a metadata row.
+ * Returns success=false WITHOUT throwing if anything fails — callers must check.
+ */
+export async function archiveLeaseDocument(
+  lease: DbLease,
+  userId: string,
+  reason: 'deleted' | 'replaced',
+): Promise<{ success: boolean; error?: string; archivedUrl?: string }> {
+  const srcBucket = STORAGE_BUCKETS.LEASE_DOCUMENTS;
+  const dstBucket = STORAGE_BUCKETS.LEASE_ARCHIVES;
+  const timestamp = Date.now();
+
+  const docUrl = lease.signed_pdf_url || lease.document_url;
+  let archivedUrl: string | undefined;
+  let archivedStorageKey: string | undefined;
+
+  if (docUrl) {
+    // Extract path from public URL: everything after "{bucket}/"
+    const parts = docUrl.split(`${srcBucket}/`);
+    if (parts.length < 2) {
+      return { success: false, error: 'Cannot parse lease document URL for archiving.' };
+    }
+    const originalPath = parts[1];
+    const archivePath = `archives/${userId}/${lease.id}/${timestamp}-${originalPath.split('/').pop() ?? 'lease.pdf'}`;
+
+    // supabase.storage.download() uses response.blob() which doesn't exist in
+    // React Native / Hermes. Fetch the file as an ArrayBuffer instead.
+    const { data: publicUrlData } = supabase.storage.from(srcBucket).getPublicUrl(originalPath);
+    const fetchRes = await fetch(publicUrlData.publicUrl);
+    if (!fetchRes.ok) {
+      return { success: false, error: `Cannot download lease file for archiving (HTTP ${fetchRes.status}).` };
+    }
+    const fileData = await fetchRes.arrayBuffer();
+
+    const { data: uploadData, error: uploadErr } = await supabase.storage
+      .from(dstBucket)
+      .upload(archivePath, fileData, { contentType: 'application/pdf', upsert: true });
+
+    if (uploadErr) {
+      return { success: false, error: `Archive upload failed: ${uploadErr.message}` };
+    }
+
+    archivedStorageKey = uploadData.path;
+    const { data: urlData } = supabase.storage.from(dstBucket).getPublicUrl(uploadData.path);
+    archivedUrl = urlData.publicUrl;
+  }
+
+  const { error: insertErr } = await supabase.from('lease_archives').insert({
+    original_lease_id: lease.id,
+    user_id: userId,
+    property_id: lease.property_id ?? null,
+    unit_id: lease.unit_id ?? null,
+    tenant_id: lease.tenant_id ?? null,
+    original_document_url: docUrl ?? null,
+    original_storage_key: lease.document_storage_key ?? null,
+    archived_document_url: archivedUrl ?? null,
+    archived_storage_key: archivedStorageKey ?? null,
+    archive_reason: reason,
+    original_status: lease.status,
+    archived_by: userId,
+    lease_effective_date: lease.effective_date ?? null,
+    lease_expiry_date: lease.expiry_date ?? null,
+    form_data: (lease.form_data as unknown as Record<string, unknown>) ?? null,
+  });
+
+  if (insertErr) {
+    return { success: false, error: `Archive metadata save failed: ${insertErr.message}` };
+  }
+
+  return { success: true, archivedUrl };
+}
+
+/**
+ * Status-aware lease delete.
+ *
+ * draft / generated / uploaded / sent / signed  → delete record + storage (no archive)
+ * signed_pending_move_in / active               → MUST archive first; abort on archive failure
+ * terminated                                    → not exposed in UI by default
+ *
+ * Does NOT touch tenant_property_links or tenants.status — those are managed separately.
+ */
+export async function deleteLeaseWithCleanup(
+  lease: DbLease,
+  userId: string,
+): Promise<{ success: boolean; error?: string }> {
+  // Step 1: For fully-signed leases, archive the document file first (abort if it fails)
+  if (isLeaseFullySigned(lease.status)) {
+    const archived = await archiveLeaseDocument(lease, userId, 'deleted');
+    if (!archived.success) {
+      return { success: false, error: archived.error ?? 'Archive failed. Delete cancelled.' };
+    }
+  }
+
+  // Step 2: Always archive the lease row to archive_leases (full clone) regardless of status
+  const { error: archiveRowError } = await supabase.from('archive_leases').insert({
+    id: lease.id,
+    user_id: lease.user_id,
+    property_id: lease.property_id,
+    unit_id: lease.unit_id ?? null,
+    tenant_id: lease.tenant_id ?? null,
+    application_id: lease.application_id ?? null,
+    status: lease.status,
+    original_pdf_url: lease.original_pdf_url ?? null,
+    signed_pdf_url: lease.signed_pdf_url ?? null,
+    document_url: lease.document_url ?? null,
+    document_storage_key: lease.document_storage_key ?? null,
+    version: lease.version ?? null,
+    form_data: (lease.form_data as unknown as Record<string, unknown>) ?? null,
+    effective_date: lease.effective_date ?? null,
+    expiry_date: lease.expiry_date ?? null,
+    signed_date: lease.signed_date ?? null,
+    rejection_reason: lease.rejection_reason ?? null,
+    rejected_at: lease.rejected_at ?? null,
+    rejected_by: lease.rejected_by ?? null,
+    created_at: lease.created_at,
+    updated_at: lease.updated_at,
+    deleted_at: new Date().toISOString(),
+    deleted_by: userId,
+  });
+  if (archiveRowError) {
+    return { success: false, error: 'Failed to archive lease record. Delete cancelled.' };
+  }
+
+  // Step 3: Best-effort storage cleanup (don't abort if storage delete fails)
+  const urlsToDelete = [
+    lease.document_url,
+    lease.signed_pdf_url !== lease.document_url ? lease.signed_pdf_url : undefined,
+    lease.original_pdf_url !== lease.document_url ? lease.original_pdf_url : undefined,
+  ].filter((u): u is string => !!u);
+
+  for (const url of urlsToDelete) {
+    await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS).catch(() => {});
+  }
+
+  // Step 4: Delete the live record
+  const deleted = await deleteLeaseFromDb(lease.id);
+  if (!deleted) {
+    return { success: false, error: 'Failed to delete lease record.' };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Replace the document on an existing lease.
+ *
+ * Scope safety: caller supplies the exact lease object — no guessing which
+ * lease belongs to which property/unit.
+ *
+ * signed_pending_move_in / active → archive first, then replace; keep status unchanged
+ * signed                          → replace invalidates tenant signature → reset to 'uploaded'
+ * draft / generated / uploaded / sent → simple replace, set to 'uploaded'
+ *
+ * NEVER makes tenant_property_links or tenants.status inactive.
+ */
+export async function replaceLeaseDocument(
+  existingLease: DbLease,
+  newUri: string,
+  userId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const fullySigned = isLeaseFullySigned(existingLease.status);
+
+  if (fullySigned) {
+    const archived = await archiveLeaseDocument(existingLease, userId, 'replaced');
+    if (!archived.success) {
+      return { success: false, error: archived.error ?? 'Archive failed. Replace cancelled.' };
+    }
+  }
+
+  const uploadResult = await uploadLeaseDocument(newUri, existingLease.id, userId);
+  if (!uploadResult.success) {
+    return { success: false, error: uploadResult.error ?? 'Upload failed.' };
+  }
+
+  // For fully-signed leases: only update the document URL, preserve execution state entirely.
+  // For signed (tenant-only): reset to uploaded — tenant signature is invalidated.
+  // For pre-send statuses: simple replace.
+  const updates: Partial<DbLease> = { document_url: uploadResult.url };
+  if (!fullySigned) {
+    updates.status = 'uploaded';
+    updates.version = 1;
+    if (existingLease.status === 'signed') {
+      updates.signed_pdf_url = null as any;
+      updates.signed_date = null as any;
+    }
+  } else {
+    // Also update signed_pdf_url so the "view signed" button points to the new doc
+    updates.signed_pdf_url = uploadResult.url;
+  }
+
+  await updateLeaseInDb(existingLease.id, updates);
+
+  // Best-effort cleanup of old storage files
+  const oldUrls = [
+    existingLease.document_url,
+    !fullySigned && existingLease.signed_pdf_url !== existingLease.document_url
+      ? existingLease.signed_pdf_url
+      : undefined,
+  ].filter((u): u is string => !!u && u !== uploadResult.url);
+
+  for (const url of oldUrls) {
+    await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS).catch(() => {});
+  }
+
+  return { success: true };
+}
+
 // Upload lease document (PDF)
 export async function uploadLeaseDocument(
   uri: string,
@@ -4774,12 +5087,13 @@ export async function approveApplication(applicationId: string, shouldAddTenant:
           .join(', ')
       : 'Unknown Property';
 
-    // Send notification to tenant (applicant)
+    // Send in-app + push notification to applicant
+    const applicantUserId = application.user_id || application.applicant_id;
     try {
       await supabase
         .from('notifications')
         .insert({
-          user_id: application.applicant_id,
+          user_id: applicantUserId,
           type: 'application_approved',
           title: 'Application Approved! 🎉',
           message: `Your application for ${propertyAddress} has been approved!`,
@@ -4792,9 +5106,18 @@ export async function approveApplication(applicationId: string, shouldAddTenant:
           created_at: new Date().toISOString(),
         });
 
-      console.log('✅ Approval notification sent to applicant:', application.applicant_id);
+      console.log('✅ Approval notification sent to applicant:', applicantUserId);
     } catch (notifError) {
       console.error('Error sending approval notification:', notifError);
+    }
+
+    if (applicantUserId) {
+      await triggerPushNotification({
+        userId: applicantUserId,
+        title: 'Application Approved! 🎉',
+        body: `Your application for ${propertyAddress} has been approved.`,
+        data: { screen: 'tenant-leases', applicationId: application.id },
+      });
     }
 
     return { 

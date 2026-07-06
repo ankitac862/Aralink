@@ -67,6 +67,7 @@ export default function LeaseWizardStep1() {
   const [isLoadingPersons, setIsLoadingPersons] = useState(false);
   const [showTenantSuggestions, setShowTenantSuggestions] = useState<number | null>(null);
   const [tenantSearchQuery, setTenantSearchQuery] = useState('');
+  const [emailStatus, setEmailStatus] = useState<Record<number, 'idle' | 'checking' | 'found' | 'not_found'>>({});
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -246,14 +247,58 @@ export default function LeaseWizardStep1() {
     }
   };
 
+  const checkEmailInDatabase = async (email: string, index: number) => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) return;
+
+    // If this email matches a known person in the dropdown, no need to check
+    const alreadyKnown = personOptions.some(p => p.email?.toLowerCase() === trimmed);
+    if (alreadyKnown) {
+      setEmailStatus(prev => ({ ...prev, [index]: 'found' }));
+      return;
+    }
+
+    setEmailStatus(prev => ({ ...prev, [index]: 'checking' }));
+    try {
+      const { supabase } = await import('@/lib/supabase');
+      const { data } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('email', trimmed)
+        .maybeSingle();
+
+      setEmailStatus(prev => ({ ...prev, [index]: data ? 'found' : 'not_found' }));
+    } catch {
+      setEmailStatus(prev => ({ ...prev, [index]: 'idle' }));
+    }
+  };
+
   const handleNext = () => {
-    // Validation
-    if (!formData.landlordName.trim()) {
-      return;
-    }
-    if (!formData.tenantNames[0]?.trim()) {
-      return;
-    }
+    if (!formData.landlordName.trim()) return;
+    if (!formData.tenantNames[0]?.trim()) return;
+
+    let shouldBlock = false;
+
+    formData.tenantNames.forEach((name, index) => {
+      const matchedPerson = personOptions.find(
+        p => (p.fullName || '').trim().toLowerCase() === name.trim().toLowerCase()
+      );
+      const isManual = !!name.trim() && !matchedPerson;
+      if (!isManual) return;
+
+      const currentEmail = (formData.tenantEmails && formData.tenantEmails[index]) || '';
+      const status = emailStatus[index] || 'idle';
+
+      if (status === 'not_found' || status === 'checking') {
+        shouldBlock = true;
+      } else if (status === 'idle' && currentEmail.trim()) {
+        // Check hasn't been triggered yet — trigger it now and block
+        checkEmailInDatabase(currentEmail, index);
+        shouldBlock = true;
+      }
+    });
+
+    if (shouldBlock) return;
 
     nextStep();
     router.push('/lease-wizard/step2');
@@ -452,21 +497,87 @@ export default function LeaseWizardStep1() {
                     (p) => (p.fullName || '').trim().toLowerCase() === normalizedName
                   );
                   const isManualTenant = !!name.trim() && !matchedPerson;
-
                   if (!isManualTenant) return null;
+
+                  const currentEmail = (formData.tenantEmails && formData.tenantEmails[index]) || '';
+                  const status = emailStatus[index] || 'idle';
+                  const isNotFound = status === 'not_found';
+                  const isFound = status === 'found';
 
                   return (
                     <View style={{ marginTop: 10 }}>
                       <ThemedText style={[styles.label, { color: textColor, marginBottom: 6 }]}>Tenant Email</ThemedText>
-                      <TextInput
-                        style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                        placeholder={`Enter tenant ${index + 1}'s email`}
-                        placeholderTextColor={secondaryTextColor}
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        value={(formData.tenantEmails && formData.tenantEmails[index]) || ''}
-                        onChangeText={(text) => updateTenantEmail(index, text)}
-                      />
+                      <View style={{ position: 'relative' }}>
+                        <TextInput
+                          style={[
+                            styles.input,
+                            {
+                              backgroundColor: inputBgColor,
+                              borderColor: isNotFound ? '#ef4444' : isFound ? '#22c55e' : borderColor,
+                              color: textColor,
+                              paddingRight: status === 'checking' ? 44 : 16,
+                            },
+                          ]}
+                          placeholder={`Enter tenant ${index + 1}'s email`}
+                          placeholderTextColor={secondaryTextColor}
+                          keyboardType="email-address"
+                          autoCapitalize="none"
+                          value={currentEmail}
+                          onChangeText={(text) => {
+                            updateTenantEmail(index, text);
+                            if (emailStatus[index] !== 'idle') {
+                              setEmailStatus(prev => ({ ...prev, [index]: 'idle' }));
+                            }
+                          }}
+                          onBlur={() => checkEmailInDatabase(currentEmail, index)}
+                        />
+                        {status === 'checking' && (
+                          <View style={{ position: 'absolute', right: 14, top: 13 }}>
+                            <ActivityIndicator size="small" color={primaryColor} />
+                          </View>
+                        )}
+                        {isFound && (
+                          <View style={{ position: 'absolute', right: 14, top: 13 }}>
+                            <MaterialCommunityIcons name="check-circle" size={22} color="#22c55e" />
+                          </View>
+                        )}
+                      </View>
+
+                      {isNotFound && (
+                        <View style={{
+                          marginTop: 8,
+                          padding: 12,
+                          borderRadius: 10,
+                          backgroundColor: isDark ? '#3b1212' : '#fef2f2',
+                          borderWidth: 1,
+                          borderColor: isDark ? '#7f1d1d' : '#fca5a5',
+                        }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                            <MaterialCommunityIcons name="account-off-outline" size={18} color="#ef4444" style={{ marginRight: 6 }} />
+                            <ThemedText style={{ color: '#ef4444', fontWeight: '700', fontSize: 13 }}>
+                              No account found
+                            </ThemedText>
+                          </View>
+                          <ThemedText style={{ color: isDark ? '#fca5a5' : '#b91c1c', fontSize: 13, lineHeight: 18, marginBottom: 10 }}>
+                            This email is not registered in Aaralink. Please send them an invite first so they can create an account and sign the lease digitally.
+                          </ThemedText>
+                          <TouchableOpacity
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              backgroundColor: '#ef4444',
+                              paddingVertical: 10,
+                              borderRadius: 8,
+                            }}
+                            onPress={() => router.push({ pathname: '/add-applicant', params: { prefillEmail: currentEmail } })}
+                          >
+                            <MaterialCommunityIcons name="email-arrow-right-outline" size={16} color="#fff" />
+                            <ThemedText style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Send Invite</ThemedText>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   );
                 })()}
@@ -488,13 +599,22 @@ export default function LeaseWizardStep1() {
 
       {/* Footer */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor }]}>
-        <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: primaryColor }]}
-          onPress={handleNext}
-        >
-          <ThemedText style={[styles.primaryButtonText, { color: onPrimaryColor }]}>Continue</ThemedText>
-          <MaterialCommunityIcons name="arrow-right" size={20} color={onPrimaryColor} />
-        </TouchableOpacity>
+        {(() => {
+          const hasUnknownEmail = formData.tenantNames.some((n, i) => {
+            const matched = personOptions.some(p => (p.fullName || '').trim().toLowerCase() === n.trim().toLowerCase());
+            return !!n.trim() && !matched && emailStatus[i] === 'not_found';
+          });
+          return (
+            <TouchableOpacity
+              style={[styles.primaryButton, { backgroundColor: hasUnknownEmail ? '#9ca3af' : primaryColor }]}
+              onPress={handleNext}
+              disabled={hasUnknownEmail}
+            >
+              <ThemedText style={[styles.primaryButtonText, { color: hasUnknownEmail ? '#fff' : onPrimaryColor }]}>Continue</ThemedText>
+              <MaterialCommunityIcons name="arrow-right" size={20} color={hasUnknownEmail ? '#fff' : onPrimaryColor} />
+            </TouchableOpacity>
+          );
+        })()}
       </View>
     </ThemedView>
   );
