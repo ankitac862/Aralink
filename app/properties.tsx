@@ -59,6 +59,8 @@ export default function PropertiesScreen() {
     useCallback(() => {
       if (user?.id) {
         loadFromSupabase(user.id, true);
+        // Preload tenants so the Tenant Detail button has data on first tap
+        useTenantStore.getState().loadFromSupabase(user.id);
       }
     }, [user?.id])
   );
@@ -158,7 +160,6 @@ export default function PropertiesScreen() {
     const statusColor = isActive ? successColor : dangerColor;
     const { totalUnits, occupiedUnits, roomCount } = getOccupancyStats(property);
     const [togglingStatus, setTogglingStatus] = useState(false);
-    const { getTenantsByProperty } = useTenantStore();
 
     const handleToggleStatus = () => {
       Alert.alert(
@@ -182,8 +183,15 @@ export default function PropertiesScreen() {
       );
     };
 
-    const handleTenantDetail = () => {
-      const tenants = getTenantsByProperty(property.id);
+    const handleTenantDetail = async () => {
+      // Refresh tenants before checking — this screen doesn't load them on mount,
+      // so the store can be empty on first visit
+      if (user?.id) {
+        await useTenantStore.getState().loadFromSupabase(user.id);
+      }
+      const tenants = useTenantStore.getState().tenants.filter(
+        t => String(t.propertyId) === String(property.id)
+      );
       if (tenants.length === 0) {
         Alert.alert('No Tenant', 'No tenant is available for this property.');
         return;
@@ -192,7 +200,8 @@ export default function PropertiesScreen() {
         router.push(`/tenant-detail?id=${tenants[0].id}` as any);
         return;
       }
-      router.push('/tenants' as any);
+      // Show the tenant list scoped to this property only
+      router.push(`/tenants?propertyId=${property.id}` as any);
     };
 
     const showRentAmount =

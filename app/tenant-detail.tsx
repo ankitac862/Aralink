@@ -29,6 +29,7 @@ import {
   fetchTenantTransactions,
   fetchLeasesByProperty,
   createLease,
+  updateLeaseInDb,
   uploadLeaseDocument,
   deleteLeaseWithCleanup,
   replaceLeaseDocument,
@@ -192,22 +193,32 @@ export default function TenantDetailScreen() {
     setLeaseLoading(true);
     try {
       const today = new Date().toISOString().split('T')[0];
+      // An uploaded lease is an already-executed document: treat it as fully
+      // signed by both tenant and landlord (v3 / active), not an unsigned draft.
       const draft = await createLease({
         user_id: user.id,
         property_id: tenantData.propertyId,
         ...(tenantData.unitId ? { unit_id: tenantData.unitId } : {}),
         tenant_id: tenantData.id,
-        status: 'uploaded',
-        version: 1,
+        status: 'active',
+        version: 3,
         effective_date: today,
+        signed_date: today,
       });
       if (!draft) { Alert.alert('Error', 'Failed to create lease record.'); return; }
 
       const uploadResult = await uploadLeaseDocument(picked.assets[0].uri, draft.id, user.id);
       if (!uploadResult.success) { Alert.alert('Error', uploadResult.error ?? 'Upload failed.'); return; }
 
-      setCurrentLease({ ...draft, document_url: uploadResult.url });
-      Alert.alert('Uploaded', 'Lease uploaded. Open lease detail to send it to the tenant.');
+      // The uploaded file carries both signatures, so it is both the lease
+      // document and the signed PDF.
+      await updateLeaseInDb(draft.id, {
+        document_url: uploadResult.url,
+        signed_pdf_url: uploadResult.url,
+      });
+
+      setCurrentLease({ ...draft, status: 'active', document_url: uploadResult.url, signed_pdf_url: uploadResult.url });
+      Alert.alert('Uploaded', 'Lease uploaded and marked as fully signed by both parties.');
       router.push(`/lease-detail?id=${draft.id}` as any);
     } catch {
       Alert.alert('Error', 'Failed to upload lease.');

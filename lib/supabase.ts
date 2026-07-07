@@ -1316,14 +1316,22 @@ export async function addTenantToProperty(params: {
     // Always set status to active for landlord-added tenants
     const status = 'active';
 
-    // First, ensure tenant record exists in tenants table with active status
+    // First, ensure tenant record exists in tenants table with active status.
+    // tenant_property_links.tenant_id references tenants.id, so we must capture
+    // the tenants row id here and use it for the link (NOT the auth-user id).
+    // Resolve by email — tenants.user_id is unreliable (it holds the landlord id
+    // in some rows and the tenant auth id in others).
+    let tenantsRowId: string;
     const { data: existingTenant } = await supabase
       .from('tenants')
-      .select('id, user_id, landlord_id')
-      .eq('user_id', tenant.tenantId)
+      .select('id')
+      .eq('email', params.tenantEmail)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (existingTenant) {
+      tenantsRowId = existingTenant.id;
       // Update existing tenant to active
       await supabase
         .from('tenants')
@@ -1342,7 +1350,7 @@ export async function addTenantToProperty(params: {
         .eq('id', tenant.tenantId)
         .maybeSingle();
 
-      await supabase
+      const { data: newTenant, error: newTenantError } = await supabase
         .from('tenants')
         .insert({
           user_id: tenant.tenantId,
@@ -1354,7 +1362,14 @@ export async function addTenantToProperty(params: {
           status: 'active',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        });
+        })
+        .select('id')
+        .single();
+      if (newTenantError || !newTenant) {
+        console.error('❌ Failed to create tenant record:', newTenantError);
+        return null;
+      }
+      tenantsRowId = newTenant.id;
       console.log('✅ Created new tenant record with active status');
     }
 
@@ -1362,7 +1377,7 @@ export async function addTenantToProperty(params: {
       .from('tenant_property_links')
       .upsert(
         {
-          tenant_id: tenant.tenantId,
+          tenant_id: tenantsRowId,
           property_id: params.propertyId,
           unit_id: params.unitId || null,
           sub_unit_id: params.subUnitId || null,
@@ -1380,7 +1395,7 @@ export async function addTenantToProperty(params: {
     console.log('✅ Tenant property link created:', {
       status: status,
       landlord_id: params.landlordUserId,
-      tenant_id: tenant.tenantId,
+      tenant_id: tenantsRowId,
       link_data: data
     });
 

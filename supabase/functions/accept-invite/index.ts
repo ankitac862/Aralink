@@ -78,17 +78,52 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Invite email mismatch' }), { status: 403 });
     }
 
-    const tenantId = invite.tenant_id || authData.user.id;
-
+    // invites.tenant_id holds the auth-user id — this identity check is correct.
     if (invite.tenant_id && invite.tenant_id !== authData.user.id) {
       return new Response(JSON.stringify({ error: 'Invite does not match tenant' }), { status: 403 });
+    }
+    // Keyed on auth id for the invites row + response contract (unchanged).
+    const authTenantId = invite.tenant_id || authData.user.id;
+
+    // tenant_property_links.tenant_id references tenants.id (NOT the auth-user id).
+    // Resolve the tenants row by email; create one if it doesn't exist yet.
+    let linkTenantId: string;
+    const { data: tenantRows } = await supabase
+      .from('tenants')
+      .select('id')
+      .eq('email', inviteEmail)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (tenantRows?.[0]?.id) {
+      linkTenantId = tenantRows[0].id;
+    } else {
+      const { data: newTenant, error: newTenantError } = await supabase
+        .from('tenants')
+        .insert({
+          user_id: authData.user.id,
+          email: inviteEmail,
+          first_name: inviteEmail.split('@')[0] || '',
+          last_name: '',
+          phone: '',
+          property_id: invite.property_id,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (newTenantError || !newTenant) {
+        return new Response(JSON.stringify({ error: newTenantError?.message || 'Failed to create tenant record' }), { status: 500 });
+      }
+      linkTenantId = newTenant.id;
     }
 
     await supabase
       .from('tenant_property_links')
       .upsert(
         {
-          tenant_id: tenantId,
+          tenant_id: linkTenantId,
           property_id: invite.property_id,
           unit_id: invite.unit_id,
           sub_unit_id: invite.sub_unit_id,
@@ -105,7 +140,7 @@ serve(async (req) => {
       .from('invites')
       .update({
         status: 'accepted',
-        tenant_id: tenantId,
+        tenant_id: authTenantId,
         used_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -120,7 +155,7 @@ serve(async (req) => {
     const response: InviteActionResponse = {
       inviteStatus: updatedInvite.status,
       propertyId: invite.property_id,
-      tenantId: tenantId,
+      tenantId: authTenantId,
     };
 
     return new Response(JSON.stringify(response), { status: 200 });

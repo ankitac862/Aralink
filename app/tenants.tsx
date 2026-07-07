@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -17,6 +17,7 @@ export default function TenantsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
+  const { propertyId } = useLocalSearchParams<{ propertyId?: string }>();
   const { tenants, loadFromSupabase } = useTenantStore();
   const { getPropertyById, getUnitById, loadFromSupabase: loadProperties } = usePropertyStore();
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,7 +40,13 @@ export default function TenantsScreen() {
   const primaryColor = isDark ? '#FFFFFF' : '#111315';
   const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
 
-  const displayTenants = tenants.map(tenant => {
+  // When opened from a property, only show tenants linked to that property
+  // (units / sub-units under the same property all share the same propertyId)
+  const scopedTenants = propertyId
+    ? tenants.filter(t => String(t.propertyId) === String(propertyId))
+    : tenants;
+
+  const displayTenants = scopedTenants.map(tenant => {
     const property = getPropertyById(tenant.propertyId);
     const unit = tenant.unitId ? getUnitById(tenant.unitId) : null;
 
@@ -118,7 +125,7 @@ export default function TenantsScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
         <ThemedText type="subtitle" style={[styles.headerTitle, { color: textColor }]}>
-          Manage Tenants
+          {propertyId ? 'Property Tenants' : 'Manage Tenants'}
         </ThemedText>
         <View style={styles.iconButton} />
       </View>
@@ -144,7 +151,11 @@ export default function TenantsScreen() {
             <MaterialCommunityIcons name="account-group-outline" size={64} color={secondaryTextColor} />
             <ThemedText style={[styles.emptyTitle, { color: textColor }]}>No tenants found</ThemedText>
             <ThemedText style={[styles.emptySubtitle, { color: secondaryTextColor }]}>
-              {searchQuery ? 'Try adjusting your search' : 'Add your first tenant to get started'}
+              {searchQuery
+                ? 'Try adjusting your search'
+                : propertyId
+                ? 'No tenants are assigned to this property yet'
+                : 'Add your first tenant to get started'}
             </ThemedText>
           </View>
         ) : (

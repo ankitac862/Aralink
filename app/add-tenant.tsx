@@ -525,6 +525,24 @@ export default function AddTenantScreen() {
           }
         }
 
+        // Create the tenant record FIRST so the Edge Function can reference it
+        // via FK when inserting into tenant_property_links (autoActivate: true).
+        await addTenant({
+          firstName: formData.firstName.trim(),
+          lastName: formData.lastName.trim(),
+          email: formData.email.trim(),
+          phone: formData.phone.trim(),
+          propertyId: formData.propertyId,
+          unitId: formData.unitId || undefined,
+          unitName: unitName || undefined,
+          startDate: formData.startDate || undefined,
+          endDate: formData.endDate || undefined,
+          rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
+          photo: photoUrl || undefined,
+          idProof1: idProof1Url || undefined,
+          idProof2: idProof2Url || undefined,
+        }, user?.id);
+
         console.log('🔧 Calling inviteTenantToProperty with params:', {
           propertyId: formData.propertyId,
           tenantEmail: formData.email.trim(),
@@ -541,47 +559,16 @@ export default function AddTenantScreen() {
           tenantName: `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim(),
           unitId: formData.unitId || undefined,
           subUnitId: formData.subUnitId || undefined,
-          autoActivate: true, // Always auto-activate when landlord manually adds tenant
+          autoActivate: true,
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
         });
 
         console.log('🔧 inviteTenantToProperty result:', inviteResult);
 
-        if (!inviteResult) {
-          Alert.alert('Error', 'Failed to send invite. Please try again.');
-          setIsSubmitting(false);
-          return;
+        if (!inviteResult || inviteResult.error) {
+          // Tenant row was already created — don't block success, just warn about invite
+          console.warn('Invite failed but tenant record was saved:', inviteResult?.error);
         }
-
-        if (inviteResult.error) {
-          Alert.alert('Error', inviteResult.error);
-          setIsSubmitting(false);
-          return;
-        }
-
-        // Success: Either email sent or notification queued
-        if (!inviteResult.inviteId) {
-          Alert.alert('Error', 'Failed to create invite. Please try again.');
-          setIsSubmitting(false);
-          return;
-        }
-
-        // Add new tenant
-        await addTenant({
-          firstName: formData.firstName.trim(),
-          lastName: formData.lastName.trim(),
-          email: formData.email.trim(),
-          phone: formData.phone.trim(),
-          propertyId: formData.propertyId,
-          unitId: formData.unitId || undefined,
-          unitName: unitName || undefined,
-          startDate: formData.startDate || undefined,
-          endDate: formData.endDate || undefined,
-          rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
-          photo: photoUrl || undefined,
-          idProof1: idProof1Url || undefined,
-          idProof2: idProof2Url || undefined,
-        }, user?.id);
 
         // Force refresh property store to show new tenant immediately
         await usePropertyStore.getState().loadFromSupabase(user?.id!, true);

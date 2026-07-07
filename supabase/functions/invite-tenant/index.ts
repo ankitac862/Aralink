@@ -391,12 +391,49 @@ serve(async (req) => {
         return json({ error: profileUpsertError.message }, 500);
       }
 
+      // tenant_property_links.tenant_id FK references tenants.id (not auth UUID).
+      // Look up the tenants row by email to get the correct id. Use limit(1)
+      // (not maybeSingle) because retries may have created duplicate rows.
+      let linkTenantId = tenantId; // fallback to auth UUID
+      const { data: tenantRows } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('email', tenantEmail)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const tenantRow = tenantRows?.[0];
+
+      if (tenantRow?.id) {
+        linkTenantId = tenantRow.id;
+      } else {
+        // No tenants row yet — create a minimal one with id = authUserId so FK is satisfied.
+        const { error: tenantInsertError } = await supabase.from('tenants').upsert(
+          {
+            id: tenantId,
+            user_id: tenantId,
+            email: tenantEmail,
+            first_name: tenantName.split(' ')[0] || '',
+            last_name: tenantName.split(' ').slice(1).join(' ') || '',
+            phone: '',
+            property_id: propertyId,
+            status: 'active',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+        if (tenantInsertError) {
+          console.error('Error creating tenant row:', tenantInsertError);
+        }
+        linkTenantId = tenantId;
+      }
+
       const linkStatus = autoActivate ? 'active' : 'pending_invite';
       const { error: linkError } = await supabase
         .from('tenant_property_links')
         .upsert(
           {
-            tenant_id: tenantId,
+            tenant_id: linkTenantId,
             property_id: propertyId,
             unit_id: unitId,
             sub_unit_id: subUnitId,
