@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useState } from 'react';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ThemedText } from './themed-text';
@@ -66,6 +67,9 @@ export function LeaseManageDialog({
 }: Props) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
+  // Prevent the touch that opens this modal from immediately firing onCancel
+  // via the backdrop. Only enable backdrop press after the modal's onShow fires.
+  const [backdropEnabled, setBackdropEnabled] = useState(false);
 
   const cardBg = isDark ? '#1A1B1E' : '#FFFFFF';
   const textColor = isDark ? '#f3f4f6' : '#111827';
@@ -106,8 +110,15 @@ export function LeaseManageDialog({
   const confirmColor = isHighRisk ? '#ef4444' : '#137fec';
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel} />
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      onShow={() => setBackdropEnabled(true)}
+      onDismiss={() => setBackdropEnabled(false)}
+    >
+      <Pressable style={styles.backdrop} onPress={backdropEnabled ? onCancel : undefined} />
       <View style={styles.centeredWrapper} pointerEvents="box-none">
         <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
           <View style={[styles.iconCircle, { backgroundColor: iconBg }]}>

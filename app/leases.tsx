@@ -5,7 +5,7 @@
  * Allows viewing, downloading, and managing lease documents.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -62,6 +62,7 @@ export default function LeasesScreen() {
     lease: DbLease | null;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', lease: null, isLoading: false });
+  const isPickingFileRef = useRef(false);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -151,19 +152,29 @@ export default function LeasesScreen() {
       return;
     }
 
-    // replace — pick document first
-    setManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (avoids modal dismiss animation race)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
-    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      await loadLeases();
-      Alert.alert('Replaced', 'The lease document has been replaced successfully.');
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          await loadLeases();
+          Alert.alert('Replaced', 'The lease document has been replaced successfully.');
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+        }
+      } catch (e) {
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 
@@ -441,16 +452,14 @@ export default function LeasesScreen() {
                 </View>
               </View>
 
-              <View style={styles.leaseActions}>
+              <View style={[styles.leaseActions, { borderTopColor: borderColor }]}>
                 {canEditLease(lease) && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: `${warningColor}15` }]}
                     onPress={() => handleEditLease(lease)}
                   >
-                    <MaterialCommunityIcons name="pencil-outline" size={18} color={warningColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: warningColor }]}>
-                      Edit
-                    </ThemedText>
+                    <MaterialCommunityIcons name="pencil-outline" size={16} color={warningColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: warningColor }]}>Edit</ThemedText>
                   </TouchableOpacity>
                 )}
                 {lease.document_url && (
@@ -458,67 +467,55 @@ export default function LeasesScreen() {
                     style={[styles.actionButton, { backgroundColor: `${primaryColor}15` }]}
                     onPress={() => handleViewLease(lease)}
                   >
-                    <MaterialCommunityIcons name="eye-outline" size={18} color={primaryColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>
-                      View
-                    </ThemedText>
+                    <MaterialCommunityIcons name="eye-outline" size={16} color={primaryColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>View</ThemedText>
                   </TouchableOpacity>
                 )}
-                
                 {lease.document_url && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: `${primaryColor}15` }]}
                     onPress={() => Linking.openURL(lease.document_url!)}
                   >
-                    <MaterialCommunityIcons name="download" size={18} color={primaryColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>
-                      Download
-                </ThemedText>
+                    <MaterialCommunityIcons name="download" size={16} color={primaryColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>Download</ThemedText>
                   </TouchableOpacity>
                 )}
-
                 {(lease.status === 'generated' || lease.status === 'uploaded') && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#8b5cf615' }]}
                     onPress={() => handleSendToTenant(lease)}
                   >
-                    <MaterialCommunityIcons name="send" size={18} color="#8b5cf6" />
-                    <ThemedText style={[styles.actionButtonText, { color: '#8b5cf6' }]}>
-                      Send
-                </ThemedText>
+                    <MaterialCommunityIcons name="send" size={16} color="#8b5cf6" />
+                    <ThemedText style={[styles.actionButtonText, { color: '#8b5cf6' }]}>Send</ThemedText>
                   </TouchableOpacity>
                 )}
-
                 {leaseNeedsApplicantTenantConversion(lease) && (
-                    <TouchableOpacity
-                      style={[styles.actionButton, { backgroundColor: '#10b98118' }]}
-                      onPress={() => handleConvertApplicantToTenant(lease)}
-                      disabled={convertingLeaseId === lease.id}>
-                      <MaterialCommunityIcons name="account-switch-outline" size={18} color="#10b981" />
-                      <ThemedText style={[styles.actionButtonText, { color: '#10b981' }]}>
-                        {convertingLeaseId === lease.id ? 'Converting…' : 'Convert to tenant'}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  )}
-
-                {/* Replace document — landlord only, any status except terminated */}
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#10b98118' }]}
+                    onPress={() => handleConvertApplicantToTenant(lease)}
+                    disabled={convertingLeaseId === lease.id}
+                  >
+                    <MaterialCommunityIcons name="account-switch-outline" size={16} color="#10b981" />
+                    <ThemedText style={[styles.actionButtonText, { color: '#10b981' }]}>
+                      {convertingLeaseId === lease.id ? 'Converting…' : 'Convert'}
+                    </ThemedText>
+                  </TouchableOpacity>
+                )}
                 {user?.role === 'landlord' && lease.status !== 'terminated' && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#f59e0b18' }]}
                     onPress={() => openManageDialog('replace', lease)}
                   >
-                    <MaterialCommunityIcons name="file-replace-outline" size={18} color="#f59e0b" />
+                    <MaterialCommunityIcons name="file-replace-outline" size={16} color="#f59e0b" />
                     <ThemedText style={[styles.actionButtonText, { color: '#f59e0b' }]}>Replace</ThemedText>
                   </TouchableOpacity>
                 )}
-
-                {/* Delete — landlord only, any status except terminated */}
                 {user?.role === 'landlord' && lease.status !== 'terminated' && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#ef444418' }]}
                     onPress={() => openManageDialog('delete', lease)}
                   >
-                    <MaterialCommunityIcons name="trash-can-outline" size={18} color="#ef4444" />
+                    <MaterialCommunityIcons name="trash-can-outline" size={16} color="#ef4444" />
                     <ThemedText style={[styles.actionButtonText, { color: '#ef4444' }]}>Delete</ThemedText>
                   </TouchableOpacity>
                 )}
@@ -672,21 +669,22 @@ const styles = StyleSheet.create({
   },
   leaseActions: {
     flexDirection: 'row',
-    padding: 12,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    padding: 10,
     gap: 8,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
     borderRadius: 8,
   },
   actionButtonText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   fab: {

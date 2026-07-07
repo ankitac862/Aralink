@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -84,6 +84,7 @@ export default function TenantDetailScreen() {
     action: LeaseManageAction;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', isLoading: false });
+  const isPickingFileRef = useRef(false);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -232,22 +233,32 @@ export default function TenantDetailScreen() {
       return;
     }
 
-    // replace
-    setLeaseManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (picker presents on top of modal,
+    // avoiding the timing issue of dismissing the modal before the picker can present)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setLeaseManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(currentLease, picked.assets[0].uri, user.id);
-    setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      // Refresh lease from DB via re-fetch
-      const leases = await fetchLeasesByProperty(currentLease.property_id);
-      const updated = leases.find(l => l.id === currentLease.id) ?? null;
-      setCurrentLease(updated);
-      Alert.alert('Replaced', 'Lease document replaced successfully.');
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong.');
+      setLeaseManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(currentLease, picked.assets[0].uri, user.id);
+        setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          const leases = await fetchLeasesByProperty(currentLease.property_id);
+          const updated = leases.find(l => l.id === currentLease.id) ?? null;
+          setCurrentLease(updated);
+          Alert.alert('Replaced', 'Lease document replaced successfully.');
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong.');
+        }
+      } catch (e) {
+        setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 

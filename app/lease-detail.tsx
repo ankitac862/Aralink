@@ -8,7 +8,7 @@
  * - Document version history
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -69,6 +69,7 @@ export default function LeaseDetailScreen() {
     action: LeaseManageAction;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', isLoading: false });
+  const isPickingFileRef = useRef(false);
 
   const handleUploadFinalSignature = async () => {
     try {
@@ -488,19 +489,29 @@ export default function LeaseDetailScreen() {
       return;
     }
 
-    // replace — pick file first
-    setManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (avoids modal dismiss animation race)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
-    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      Alert.alert('Replaced', 'The lease document has been replaced.');
-      loadLease();
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          Alert.alert('Replaced', 'The lease document has been replaced.');
+          loadLease();
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+        }
+      } catch (e) {
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 
@@ -615,7 +626,7 @@ export default function LeaseDetailScreen() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
@@ -781,11 +792,9 @@ export default function LeaseDetailScreen() {
             ))}
           </View>
         )}
-      </ScrollView>
-
-      {/* Footer Actions */}
-      {isOwner && (
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor, backgroundColor: bgColor }]}>
+        {/* Footer Actions */}
+        {isOwner && (
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor }]}>
           {canSend && (
             <TouchableOpacity
               style={[styles.sendButton, { backgroundColor: successColor, marginBottom: 12 }]}
@@ -927,7 +936,8 @@ export default function LeaseDetailScreen() {
             </TouchableOpacity>
           )}
         </View>
-      )}
+        )}
+      </ScrollView>
 
       <LeaseManageDialog
         visible={manageDialog.visible}
@@ -1077,12 +1087,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     paddingHorizontal: 16,
     paddingTop: 16,
+    marginTop: 8,
     borderTopWidth: 1,
   },
   sendButton: {

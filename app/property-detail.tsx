@@ -6,6 +6,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import {
   ActivityIndicator,
   Alert,
+  AlertButton,
   Dimensions,
   FlatList,
   Image,
@@ -322,33 +323,65 @@ export default function PropertyDetailScreen() {
     }
   };
 
-  const handleUploadLeaseFor = (unitId?: string, _roomId?: string) => {
+  const handleUploadLeaseFor = (unitId?: string, subUnitId?: string) => {
     if (!property || !user?.id) return;
 
-    // Instance 1 — no active tenant
+    // Step 1: Multi-unit — ask which unit first
+    if (!unitId && property.propertyType !== 'single_unit' && property.units.length > 0) {
+      const unitBtns: AlertButton[] = [
+        ...property.units.map(u => ({ text: u.name, onPress: () => handleUploadLeaseFor(u.id) })),
+        { text: 'Cancel', style: 'cancel' },
+      ];
+      Alert.alert('Select Unit', 'Which unit do you want to upload a lease for?', unitBtns);
+      return;
+    }
+
+    // Step 2: After unit is known, check if it has rooms — applies to both property types
+    const targetUnit = unitId
+      ? property.units.find(u => u.id === unitId)
+      : property.units[0]; // single_unit has exactly one unit
+    const rooms = targetUnit?.subUnits ?? [];
+    const effectiveUnitId = unitId ?? targetUnit?.id;
+
+    if (!subUnitId && rooms.length > 0) {
+      const roomBtns: AlertButton[] = [
+        ...rooms.map(r => ({
+          text: `Room ${r.name}`,
+          onPress: () => handleUploadLeaseFor(effectiveUnitId, r.id),
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ];
+      Alert.alert('Select Room', 'Which room do you want to upload a lease for?', roomBtns);
+      return;
+    }
+
+    // Step 3: Scope tenants by unit and optionally sub-unit
     const allTenants = getTenantsByProperty(property.id);
-    const scopedTenants = unitId
-      ? allTenants.filter(t => t.unit_id === unitId)
+    let scopedTenants = effectiveUnitId
+      ? allTenants.filter(t => t.unitId === effectiveUnitId)
       : allTenants;
+    if (subUnitId) scopedTenants = scopedTenants.filter(t => t.subUnitId === subUnitId);
     const activeTenants = scopedTenants.filter(t => t.status === 'active');
 
     if (activeTenants.length === 0) {
       Alert.alert(
         'No Active Tenant',
-        'There is no active tenant for this address. Add a tenant first, then upload the lease.',
+        effectiveUnitId
+          ? 'There is no active tenant for this unit. Add a tenant first, then upload the lease.'
+          : 'There is no active tenant for this property. Add a tenant first, then upload the lease.',
       );
       return;
     }
 
-    // Instance 2 — tenant exists but already has a non-terminated lease
+    // Step 4: Check for an existing lease for this unit
     const existingLease = propertyLeases.find(l => {
-      const unitMatch = unitId ? l.unit_id === unitId : true;
+      const unitMatch = effectiveUnitId ? l.unit_id === effectiveUnitId : !l.unit_id;
       return unitMatch && l.status !== 'terminated' && l.status !== 'rejected';
     });
 
     if (existingLease) {
       const t = activeTenants[0];
-      const tenantName = `${t.first_name} ${t.last_name}`.trim();
+      const tenantName = `${t.firstName} ${t.lastName}`.trim();
       Alert.alert(
         'Lease Already Exists',
         `There is already an active lease for ${tenantName}. Do you want to replace it with a new document?`,
@@ -360,8 +393,8 @@ export default function PropertyDetailScreen() {
       return;
     }
 
-    // Instance 3 — tenant exists, no existing lease → upload new
-    doCreateLeaseUpload(unitId);
+    // Step 5: No existing lease — upload new
+    doCreateLeaseUpload(effectiveUnitId);
   };
 
   const handleAddPhotos = async () => {

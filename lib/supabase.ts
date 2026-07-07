@@ -1112,10 +1112,12 @@ export async function fetchTenantById(tenantId: string): Promise<DbTenant | null
 // Create a new tenant
 export async function createTenant(tenant: Omit<DbTenant, 'id' | 'created_at' | 'updated_at'>): Promise<DbTenant | null> {
   try {
+    // sub_unit_id and sub_unit_name are stored in tenant_property_links, not the tenants table
+    const { sub_unit_id, sub_unit_name, ...tenantRow } = tenant as any;
     const { data, error } = await supabase
       .from('tenants')
       .insert({
-        ...tenant,
+        ...tenantRow,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -3745,16 +3747,20 @@ export async function replaceLeaseDocument(
 
   await updateLeaseInDb(existingLease.id, updates);
 
-  // Best-effort cleanup of old storage files
+  // Best-effort cleanup of old storage files — delete both document_url and
+  // signed_pdf_url if they differ (applies to fully-signed leases which have both).
   const oldUrls = [
     existingLease.document_url,
-    !fullySigned && existingLease.signed_pdf_url !== existingLease.document_url
+    existingLease.signed_pdf_url !== existingLease.document_url
       ? existingLease.signed_pdf_url
       : undefined,
   ].filter((u): u is string => !!u && u !== uploadResult.url);
 
   for (const url of oldUrls) {
-    await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS).catch(() => {});
+    const deleted = await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS);
+    if (!deleted) {
+      console.warn('[replaceLeaseDocument] Failed to delete old file:', url);
+    }
   }
 
   return { success: true };
@@ -3795,25 +3801,10 @@ export async function uploadLeaseDocument(
       return { success: true, url: urlData.publicUrl };
     }
 
-    // For native, read as base64
+    // For native: fetch as ArrayBuffer (Hermes doesn't support response.blob() or FileReader)
     const response = await fetch(uri);
-    const blob = await response.blob();
-    
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        resolve(dataUrl.split(',')[1]);
-      };
-      reader.readAsDataURL(blob);
-    });
-
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
 
     const { data, error } = await supabase.storage
       .from(bucket)
