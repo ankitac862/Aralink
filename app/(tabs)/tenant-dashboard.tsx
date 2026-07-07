@@ -558,7 +558,7 @@ export default function TenantDashboardScreen() {
       <View style={[styles.quickLinkIconContainer, { backgroundColor: `${primaryColor}40` }]}>
         <MaterialCommunityIcons name={item.icon as any} size={24} color={primaryColor} />
       </View>
-      <ThemedText style={[styles.quickLinkLabel, { color: textPrimaryColor }]}>
+      <ThemedText style={[styles.quickLinkLabel, { color: textPrimaryColor }]} numberOfLines={2}>
         {item.label}
       </ThemedText>
     </TouchableOpacity>
@@ -801,7 +801,7 @@ export default function TenantDashboardScreen() {
         </TouchableOpacity>}
 
         {!isApplicantOnly && <TouchableOpacity
-          style={[styles.maintenanceButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: primaryColor }]}
+          style={[styles.maintenanceButton, { backgroundColor: cardBgColor, borderWidth: 1, borderColor: primaryColor }]}
           onPress={() => router.push('/tenant-maintenance-status')}>
           <View style={[styles.maintenanceButtonIcon, { backgroundColor: primaryColor + '20' }]}>
             <MaterialCommunityIcons name="clipboard-text" size={20} color={primaryColor} />
@@ -982,6 +982,8 @@ const styles = StyleSheet.create({
   rentAmount: {
     fontSize: 14,
     fontWeight: '400',
+    flexShrink: 1,
+    marginRight: 12,
   },
   payButton: {
     paddingVertical: 8,
@@ -1012,9 +1014,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   maintenanceButtonText: {
-    color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+    flexShrink: 1,
+    textAlign: 'center',
   },
   inviteAddressCard: {
     borderRadius: 12,

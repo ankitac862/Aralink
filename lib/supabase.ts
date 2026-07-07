@@ -4524,6 +4524,13 @@ export async function rejectLease(
         is_read: false,
         created_at: new Date().toISOString(),
       });
+      const tenantLabel = tenantNames.length ? tenantNames[0] : 'The tenant';
+      await triggerPushNotification({
+        userId: lease.user_id,
+        title: 'Lease Rejected',
+        body: `${tenantLabel} rejected the lease. Reason: ${reason}`,
+        data: { type: 'lease', leaseId: lease.id },
+      });
     } catch (_) {
       // Non-fatal — rejection already saved
     }
@@ -5184,6 +5191,13 @@ export async function rejectApplication(applicationId: string, reason?: string) 
           },
           created_at: new Date().toISOString(),
         });
+
+      await triggerPushNotification({
+        userId: application.applicant_id,
+        title: 'Application Update',
+        body: `Your application for ${propertyAddress} has been reviewed.`,
+        data: { type: 'application_rejected', applicationId: application.id },
+      });
 
       console.log('✅ Rejection notification sent to applicant:', application.applicant_id);
     } catch (notifError) {

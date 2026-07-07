@@ -134,7 +134,7 @@ export default function LeaseDetailScreen() {
         };
 
         // Applicant leases: landlord chooses to link tenant_id now or later (not automatic).
-        if (lease.application_id) {
+        if (lease?.application_id) {
           Alert.alert(
             'Lease Finalized',
             'The lease is fully signed! Would you like to add this applicant as an official tenant now? You can do this later from this screen, Applications, or All Leases.',
@@ -288,7 +288,7 @@ export default function LeaseDetailScreen() {
       });
 
       // Mark lease as active
-      await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId });
+      await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId ?? undefined });
 
       Alert.alert('Success', 'Tenant activated successfully for this property!');
       loadLease();

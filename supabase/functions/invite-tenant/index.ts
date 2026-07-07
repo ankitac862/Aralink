@@ -490,6 +490,20 @@ serve(async (req) => {
         } else {
           console.log('Notification created successfully:', notification);
           notificationCreated = true;
+
+          // Push to the tenant's devices (no-op if they have no registered tokens yet)
+          try {
+            await supabase.functions.invoke('send-push-notification', {
+              body: {
+                userId: existingProfile?.id || tenantId,
+                title: notificationTitle,
+                body: notificationMessage,
+                data: { type: 'invite', inviteId: invite.id, propertyId },
+              },
+            });
+          } catch (pushErr) {
+            console.error('Invite push failed (non-fatal):', pushErr);
+          }
         }
       } catch (err) {
         console.error('Failed to create notification:', err);

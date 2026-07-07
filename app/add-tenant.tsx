@@ -1073,7 +1073,7 @@ export default function AddTenantScreen() {
               <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Saving...</ThemedText>
             </View>
           ) : (
-            <ThemedText style={styles.submitButtonText}>
+            <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>
               {isEditing ? 'Save Changes' : 'Add Tenant'}
             </ThemedText>
           )}
