@@ -91,7 +91,7 @@ serve(async (req) => {
     const { data: tenantRows } = await supabase
       .from('tenants')
       .select('id')
-      .eq('email', inviteEmail)
+      .ilike('email', inviteEmail)
       .order('created_at', { ascending: false })
       .limit(1);
 

@@ -188,7 +188,7 @@ export default function ChatScreen() {
             style={[
               styles.messageText,
               {
-                color: isOwn ? '#ffffff' : textPrimaryColor,
+                color: isOwn ? onPrimaryColor : textPrimaryColor,
               },
             ]}>
             {item.text}
@@ -324,9 +324,9 @@ export default function ChatScreen() {
               },
             ]}>
             {sending ? (
-              <ActivityIndicator size="small" color="#ffffff" />
+              <ActivityIndicator size="small" color={onPrimaryColor} />
             ) : (
-              <MaterialCommunityIcons name="send" size={20} color="#ffffff" />
+              <MaterialCommunityIcons name="send" size={20} color={onPrimaryColor} />
             )}
           </TouchableOpacity>
         </View>

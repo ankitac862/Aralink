@@ -527,10 +527,12 @@ export default function AddTenantScreen() {
 
         // Create the tenant record FIRST so the Edge Function can reference it
         // via FK when inserting into tenant_property_links (autoActivate: true).
+        // Email is lowercased so the Edge Function's lookup (which normalizes
+        // to lowercase) always finds this row.
         await addTenant({
           firstName: formData.firstName.trim(),
           lastName: formData.lastName.trim(),
-          email: formData.email.trim(),
+          email: formData.email.trim().toLowerCase(),
           phone: formData.phone.trim(),
           propertyId: formData.propertyId,
           unitId: formData.unitId || undefined,
@@ -570,15 +572,19 @@ export default function AddTenantScreen() {
           console.warn('Invite failed but tenant record was saved:', inviteResult?.error);
         }
 
-        // Force refresh property store to show new tenant immediately
-        await usePropertyStore.getState().loadFromSupabase(user?.id!, true);
-        console.log('🔄 Property store force refreshed after tenant addition');
+        // Force refresh both stores so the new tenant shows up immediately
+        // everywhere (property cards, tenant lists, Tenant Detail button)
+        await Promise.all([
+          usePropertyStore.getState().loadFromSupabase(user?.id!, true),
+          useTenantStore.getState().loadFromSupabase(user?.id!),
+        ]);
+        console.log('🔄 Property + tenant stores force refreshed after tenant addition');
 
         // Show success message — note when email couldn't be sent
-        const emailFailed = inviteResult.emailQueued === false && !inviteResult.notificationQueued;
+        const emailFailed = inviteResult?.emailQueued === false && !inviteResult?.notificationQueued;
         const successMessage = emailFailed
           ? 'Tenant has been saved. The invite email could not be sent — please follow up with them directly or resend later.'
-          : inviteResult.notificationQueued
+          : inviteResult?.notificationQueued
           ? 'Tenant has been assigned to the property. They can now view their property details in the app.'
           : 'Tenant has been assigned to the property and will receive an email confirmation.';
         
@@ -1060,7 +1066,7 @@ export default function AddTenantScreen() {
               <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>Saving...</ThemedText>
             </View>
           ) : (
-            <ThemedText style={styles.submitButtonText}>
+            <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>
               {isEditing ? 'Save Changes' : 'Add Tenant'}
             </ThemedText>
           )}

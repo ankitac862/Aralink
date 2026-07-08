@@ -193,14 +193,15 @@ export default function TenantDetailScreen() {
     setLeaseLoading(true);
     try {
       const today = new Date().toISOString().split('T')[0];
-      // An uploaded lease is an already-executed document: treat it as fully
-      // signed by both tenant and landlord (v3 / active), not an unsigned draft.
+      // An uploaded lease is an already-executed document signed offline by
+      // both tenant and landlord — land it at Fully Signed (v3), ready to
+      // activate, not as an unsigned draft.
       const draft = await createLease({
         user_id: user.id,
         property_id: tenantData.propertyId,
         ...(tenantData.unitId ? { unit_id: tenantData.unitId } : {}),
         tenant_id: tenantData.id,
-        status: 'active',
+        status: 'signed_pending_move_in',
         version: 3,
         effective_date: today,
         signed_date: today,
@@ -217,8 +218,8 @@ export default function TenantDetailScreen() {
         signed_pdf_url: uploadResult.url,
       });
 
-      setCurrentLease({ ...draft, status: 'active', document_url: uploadResult.url, signed_pdf_url: uploadResult.url });
-      Alert.alert('Uploaded', 'Lease uploaded and marked as fully signed by both parties.');
+      setCurrentLease({ ...draft, status: 'signed_pending_move_in', document_url: uploadResult.url, signed_pdf_url: uploadResult.url });
+      Alert.alert('Uploaded', 'Lease uploaded and marked as fully signed by both parties. You can activate it from the lease detail screen.');
       router.push(`/lease-detail?id=${draft.id}` as any);
     } catch {
       Alert.alert('Error', 'Failed to upload lease.');

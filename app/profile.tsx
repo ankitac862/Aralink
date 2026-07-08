@@ -20,13 +20,6 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { supabase } from '@/lib/supabase';
 
-interface PortfolioStats {
-  leaseCount: number;
-  tenantCount: number;
-  propertyCount: number;
-  occupancyRate: number;
-}
-
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -39,7 +32,6 @@ export default function ProfileScreen() {
   const [phone, setPhone] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-  const [portfolioStats, setPortfolioStats] = useState<PortfolioStats | null>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -61,30 +53,6 @@ export default function ProfileScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Load portfolio stats for landlords
-  useEffect(() => {
-    if (!user?.id || user.role !== 'landlord') return;
-    (async () => {
-      const [
-        { count: propertyCount },
-        { count: tenantCount },
-        { count: leaseCount },
-      ] = await Promise.all([
-        supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
-        supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
-        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).not('status', 'in', '(draft,terminated)'),
-      ]);
-      const p = propertyCount || 0;
-      const t = tenantCount || 0;
-      setPortfolioStats({
-        propertyCount: p,
-        tenantCount: t,
-        leaseCount: leaseCount || 0,
-        occupancyRate: p > 0 ? Math.min(100, Math.round((t / p) * 100)) : 0,
-      });
-    })();
-  }, [user?.id, user?.role]);
 
   const getRoleLabel = (role: string) => {
     switch (role) {
@@ -256,43 +224,6 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Portfolio Overview (landlord only) */}
-        {user.role === 'landlord' && (
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
-            <View style={[styles.cardHeader, { borderBottomColor: border }]}>
-              <MaterialCommunityIcons name="chart-bar" size={18} color={primary} />
-              <ThemedText style={[styles.cardTitle, { color: textColor }]}>Portfolio Overview</ThemedText>
-            </View>
-            {portfolioStats === null ? (
-              <View style={styles.statsLoading}>
-                <ActivityIndicator size="small" color={primary} />
-              </View>
-            ) : (
-              <View style={styles.statsRow}>
-                <View style={styles.statItem}>
-                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.propertyCount}</ThemedText>
-                  <ThemedText style={[styles.statLabel, { color: subText }]}>Properties</ThemedText>
-                </View>
-                <View style={[styles.statDivider, { backgroundColor: border }]} />
-                <View style={styles.statItem}>
-                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.leaseCount}</ThemedText>
-                  <ThemedText style={[styles.statLabel, { color: subText }]}>Active Leases</ThemedText>
-                </View>
-                <View style={[styles.statDivider, { backgroundColor: border }]} />
-                <View style={styles.statItem}>
-                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.tenantCount}</ThemedText>
-                  <ThemedText style={[styles.statLabel, { color: subText }]}>Tenants</ThemedText>
-                </View>
-                <View style={[styles.statDivider, { backgroundColor: border }]} />
-                <View style={styles.statItem}>
-                  <ThemedText style={[styles.statValue, { color: textColor }]}>{portfolioStats.occupancyRate}%</ThemedText>
-                  <ThemedText style={[styles.statLabel, { color: subText }]}>Occupancy</ThemedText>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-
         {/* Personal Details Card */}
         <View style={[styles.card, { backgroundColor: cardBg, borderColor: border }]}>
           <View style={[styles.cardHeader, { borderBottomColor: border }]}>
@@ -456,12 +387,6 @@ const styles = StyleSheet.create({
   roleText: { fontSize: 13, fontWeight: '600' },
 
   // Portfolio stats
-  statsLoading: { paddingVertical: 20, alignItems: 'center' },
-  statsRow: { flexDirection: 'row', paddingVertical: 16 },
-  statItem: { flex: 1, alignItems: 'center', gap: 4 },
-  statValue: { fontSize: 22, fontWeight: '700' },
-  statLabel: { fontSize: 11, fontWeight: '500', textAlign: 'center' },
-  statDivider: { width: 1, marginVertical: 4 },
 
   card: { borderRadius: 14, borderWidth: 1, overflow: 'hidden' },
   cardHeader: {

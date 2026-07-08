@@ -121,7 +121,7 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
         {/* Auth Card */}
         <View style={[styles.card, { backgroundColor: cardBgColor }]}>
           {/* Tab Navigation */}
-          <View style={[styles.tabContainer, { backgroundColor: isDark ? '#0f172a' : '#e0e7ff' }]}>
+          <View style={[styles.tabContainer, { backgroundColor: isDark ? '#26282C' : '#E8E8EA' }]}>
             <TouchableOpacity
               style={[
                 styles.tab,

@@ -135,7 +135,7 @@ export default function LeaseDetailScreen() {
         };
 
         // Applicant leases: landlord chooses to link tenant_id now or later (not automatic).
-        if (lease.application_id) {
+        if (lease?.application_id) {
           Alert.alert(
             'Lease Finalized',
             'The lease is fully signed! Would you like to add this applicant as an official tenant now? You can do this later from this screen, Applications, or All Leases.',
@@ -178,6 +178,49 @@ export default function LeaseDetailScreen() {
     if (!lease) return;
     setIsProcessing(true);
     try {
+      // Fast path: the lease already points at an existing tenant record
+      // (e.g. an offline-signed lease uploaded for a tenant who is already
+      // assigned to this property). No applicant conversion needed — make
+      // sure the property link is active, then activate the lease.
+      if (lease.tenant_id) {
+        const { data: linkedTenant } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('id', lease.tenant_id)
+          .maybeSingle();
+        if (linkedTenant) {
+          const { data: existingLink } = await supabase
+            .from('tenant_property_links')
+            .select('id, status')
+            .eq('tenant_id', lease.tenant_id)
+            .eq('property_id', lease.property_id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (existingLink && existingLink.status !== 'active') {
+            await supabase
+              .from('tenant_property_links')
+              .update({ status: 'active', updated_at: new Date().toISOString() })
+              .eq('id', existingLink.id);
+          } else if (!existingLink) {
+            await supabase.from('tenant_property_links').insert({
+              tenant_id: lease.tenant_id,
+              property_id: lease.property_id,
+              unit_id: lease.unit_id || null,
+              status: 'active',
+              created_via: 'lease_creation',
+              created_by_user_id: user!.id,
+              link_start_date: lease.effective_date || new Date().toISOString().split('T')[0],
+              updated_at: new Date().toISOString(),
+            });
+          }
+          await updateLeaseInDb(lease.id, { status: 'active' });
+          Alert.alert('Success', 'Lease activated — the tenancy is now in effect.');
+          loadLease();
+          return;
+        }
+      }
+
       // Resolve target email: prefer form_data, fallback to application
       let targetTenantEmail = lease.form_data?.tenantEmails?.[0];
       let applicantUserId: string | null = null;
@@ -289,7 +332,7 @@ export default function LeaseDetailScreen() {
       });
 
       // Mark lease as active
-      await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId });
+      await updateLeaseInDb(lease.id, { status: 'active', tenant_id: existingTenantId ?? undefined });
 
       Alert.alert('Success', 'Tenant activated successfully for this property!');
       loadLease();
@@ -844,7 +887,9 @@ export default function LeaseDetailScreen() {
               ) : (
                 <>
                   <MaterialCommunityIcons name="account-convert" size={20} color="#fff" />
-                  <ThemedText style={styles.sendButtonText}>Convert to Tenant</ThemedText>
+                  <ThemedText style={styles.sendButtonText}>
+                    {lease.tenant_id ? 'Activate Lease' : 'Convert to Tenant'}
+                  </ThemedText>
                 </>
               )}
             </TouchableOpacity>

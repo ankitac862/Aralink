@@ -395,10 +395,11 @@ serve(async (req) => {
       // Look up the tenants row by email to get the correct id. Use limit(1)
       // (not maybeSingle) because retries may have created duplicate rows.
       let linkTenantId = tenantId; // fallback to auth UUID
-      const { data: tenantRows } = await supabase
+      let tenantInsertErrorMsg: string | null = null;
+      const { data: tenantRows, error: tenantLookupError } = await supabase
         .from('tenants')
         .select('id')
-        .eq('email', tenantEmail)
+        .ilike('email', tenantEmail)
         .order('created_at', { ascending: false })
         .limit(1);
       const tenantRow = tenantRows?.[0];
@@ -406,10 +407,10 @@ serve(async (req) => {
       if (tenantRow?.id) {
         linkTenantId = tenantRow.id;
       } else {
-        // No tenants row yet — create a minimal one with id = authUserId so FK is satisfied.
-        const { error: tenantInsertError } = await supabase.from('tenants').upsert(
-          {
-            id: tenantId,
+        // No tenants row yet — create a minimal one so the FK is satisfied.
+        const { data: newTenantRow, error: tenantInsertError } = await supabase
+          .from('tenants')
+          .insert({
             user_id: tenantId,
             email: tenantEmail,
             first_name: tenantName.split(' ')[0] || '',
@@ -419,13 +420,16 @@ serve(async (req) => {
             status: 'active',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' }
-        );
-        if (tenantInsertError) {
+          })
+          .select('id')
+          .single();
+        if (tenantInsertError || !newTenantRow) {
           console.error('Error creating tenant row:', tenantInsertError);
+          tenantInsertErrorMsg = tenantInsertError?.message ?? 'insert returned no row';
+          // keep fallback linkTenantId = authUserId; the link will surface the failure
+        } else {
+          linkTenantId = newTenantRow.id;
         }
-        linkTenantId = tenantId;
       }
 
       const linkStatus = autoActivate ? 'active' : 'pending_invite';
@@ -449,7 +453,22 @@ serve(async (req) => {
 
       if (linkError) {
         console.error('Error creating tenant-property link:', linkError);
-        return json({ error: linkError.message }, 500);
+        // Surface full Postgres context so the client log shows exactly what
+        // failed: details says which key/table, debug says which id we used.
+        return json({
+          error: linkError.message,
+          details: (linkError as any).details ?? null,
+          hint: (linkError as any).hint ?? null,
+          debug: {
+            fnVersion: 'v46-diagnostic',
+            linkTenantId,
+            authUserId: tenantId,
+            tenantRowFoundByEmail: !!tenantRow,
+            tenantLookupError: tenantLookupError?.message ?? null,
+            tenantInsertError: tenantInsertErrorMsg,
+            emailQueried: tenantEmail,
+          },
+        }, 500);
       }
     }
 
@@ -527,6 +546,20 @@ serve(async (req) => {
         } else {
           console.log('Notification created successfully:', notification);
           notificationCreated = true;
+
+          // Push to the tenant's devices (no-op if they have no registered tokens yet)
+          try {
+            await supabase.functions.invoke('send-push-notification', {
+              body: {
+                userId: existingProfile?.id || tenantId,
+                title: notificationTitle,
+                body: notificationMessage,
+                data: { type: 'invite', inviteId: invite.id, propertyId },
+              },
+            });
+          } catch (pushErr) {
+            console.error('Invite push failed (non-fatal):', pushErr);
+          }
         }
       } catch (err) {
         console.error('Failed to create notification:', err);

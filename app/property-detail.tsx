@@ -277,15 +277,15 @@ export default function PropertyDetailScreen() {
 
       setIsUploadingLease(true);
       const today = new Date().toISOString().split('T')[0];
-      // An uploaded lease is an already-executed document: treat it as fully
-      // signed by both tenant and landlord — the same end state as a completed
-      // in-app signing flow (v3 / active), not an unsigned draft to be sent.
+      // An uploaded lease is an already-executed document signed offline by
+      // both tenant and landlord — land it at Fully Signed (v3), ready for the
+      // landlord to activate, not as an unsigned draft to be sent.
       const draft = await createLease({
         user_id: user.id,
         property_id: property.id,
         ...(unitId ? { unit_id: unitId } : {}),
         ...(tenantId ? { tenant_id: tenantId } : {}),
-        status: 'active',
+        status: 'signed_pending_move_in',
         version: 3,
         effective_date: today,
         signed_date: today,

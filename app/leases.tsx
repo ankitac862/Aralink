@@ -73,19 +73,22 @@ export default function LeasesScreen() {
   const primaryColor = isDark ? '#FFFFFF' : '#111315';
   const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const warningColor = '#f59e0b';
+  const chipBg = isDark ? '#26282C' : '#E8E8EA';
+  const dangerColor = isDark ? '#FF453A' : '#DC2626';
+  const dangerBg = isDark ? '#3B1D1B' : '#FDE8E7';
 
   const property = params.propertyId ? getPropertyById(params.propertyId) : null;
 
   const getLeaseStatusColor = (status: string) => {
     switch (status) {
       case 'draft':
-        return '#6b7280';
+        return '#8E959B';
       case 'generated':
         return '#f59e0b';
       case 'uploaded':
         return '#8E959B';
       case 'sent':
-        return '#8b5cf6';
+        return '#f59e0b';
       case 'signed':
         return '#f59e0b';
       case 'signed_pending_move_in':
@@ -95,7 +98,7 @@ export default function LeasesScreen() {
       case 'terminated':
         return '#ef4444';
       default:
-        return '#6b7280';
+        return '#8E959B';
     }
   };
 
@@ -455,68 +458,77 @@ export default function LeasesScreen() {
               <View style={[styles.leaseActions, { borderTopColor: borderColor }]}>
                 {canEditLease(lease) && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: `${warningColor}15` }]}
+                    style={[styles.actionButton, { backgroundColor: chipBg }]}
                     onPress={() => handleEditLease(lease)}
                   >
-                    <MaterialCommunityIcons name="pencil-outline" size={16} color={warningColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: warningColor }]}>Edit</ThemedText>
+                    <MaterialCommunityIcons name="pencil-outline" size={18} color={textColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: textColor }]}>
+                      Edit
+                    </ThemedText>
                   </TouchableOpacity>
                 )}
                 {lease.document_url && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: `${primaryColor}15` }]}
+                    style={[styles.actionButton, { backgroundColor: chipBg }]}
                     onPress={() => handleViewLease(lease)}
                   >
-                    <MaterialCommunityIcons name="eye-outline" size={16} color={primaryColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>View</ThemedText>
+                    <MaterialCommunityIcons name="eye-outline" size={18} color={textColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: textColor }]}>
+                      View
+                    </ThemedText>
                   </TouchableOpacity>
                 )}
                 {lease.document_url && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: `${primaryColor}15` }]}
+                    style={[styles.actionButton, { backgroundColor: chipBg }]}
                     onPress={() => Linking.openURL(lease.document_url!)}
                   >
-                    <MaterialCommunityIcons name="download" size={16} color={primaryColor} />
-                    <ThemedText style={[styles.actionButtonText, { color: primaryColor }]}>Download</ThemedText>
+                    <MaterialCommunityIcons name="download" size={18} color={textColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: textColor }]}>
+                      Download
+                </ThemedText>
                   </TouchableOpacity>
                 )}
                 {(lease.status === 'generated' || lease.status === 'uploaded') && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: '#8b5cf615' }]}
+                    style={[styles.actionButton, { backgroundColor: primaryColor }]}
                     onPress={() => handleSendToTenant(lease)}
                   >
-                    <MaterialCommunityIcons name="send" size={16} color="#8b5cf6" />
-                    <ThemedText style={[styles.actionButtonText, { color: '#8b5cf6' }]}>Send</ThemedText>
+                    <MaterialCommunityIcons name="send" size={18} color={onPrimaryColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: onPrimaryColor }]}>
+                      Send
+                </ThemedText>
                   </TouchableOpacity>
                 )}
                 {leaseNeedsApplicantTenantConversion(lease) && (
-                  <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: '#10b98118' }]}
-                    onPress={() => handleConvertApplicantToTenant(lease)}
-                    disabled={convertingLeaseId === lease.id}
-                  >
-                    <MaterialCommunityIcons name="account-switch-outline" size={16} color="#10b981" />
-                    <ThemedText style={[styles.actionButtonText, { color: '#10b981' }]}>
-                      {convertingLeaseId === lease.id ? 'Converting…' : 'Convert'}
-                    </ThemedText>
-                  </TouchableOpacity>
-                )}
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: chipBg }]}
+                      onPress={() => handleConvertApplicantToTenant(lease)}
+                      disabled={convertingLeaseId === lease.id}>
+                      <MaterialCommunityIcons name="account-switch-outline" size={18} color={textColor} />
+                      <ThemedText style={[styles.actionButtonText, { color: textColor }]}>
+                        {convertingLeaseId === lease.id ? 'Converting…' : 'Convert to tenant'}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  )}
+
+                {/* Replace document — landlord only, any status except terminated */}
                 {user?.role === 'landlord' && lease.status !== 'terminated' && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: '#f59e0b18' }]}
+                    style={[styles.actionButton, { backgroundColor: chipBg }]}
                     onPress={() => openManageDialog('replace', lease)}
                   >
-                    <MaterialCommunityIcons name="file-replace-outline" size={16} color="#f59e0b" />
-                    <ThemedText style={[styles.actionButtonText, { color: '#f59e0b' }]}>Replace</ThemedText>
+                    <MaterialCommunityIcons name="file-replace-outline" size={18} color={textColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: textColor }]}>Replace</ThemedText>
                   </TouchableOpacity>
                 )}
                 {user?.role === 'landlord' && lease.status !== 'terminated' && (
                   <TouchableOpacity
-                    style={[styles.actionButton, { backgroundColor: '#ef444418' }]}
+                    style={[styles.actionButton, { backgroundColor: dangerBg }]}
                     onPress={() => openManageDialog('delete', lease)}
                   >
-                    <MaterialCommunityIcons name="trash-can-outline" size={16} color="#ef4444" />
-                    <ThemedText style={[styles.actionButtonText, { color: '#ef4444' }]}>Delete</ThemedText>
+                    <MaterialCommunityIcons name="trash-can-outline" size={18} color={dangerColor} />
+                    <ThemedText style={[styles.actionButtonText, { color: dangerColor }]}>Delete</ThemedText>
                   </TouchableOpacity>
                 )}
               </View>
